@@ -1,0 +1,3 @@
+-- SQL scripts dùng trong DAG:
+-- create_tables.sql      : Tạo bảng staging + production trong Postgres/DW
+-- upsert_jobs.sql        : Upsert (INSERT ON CONFLICT) dữ liệu vào bảng jobs

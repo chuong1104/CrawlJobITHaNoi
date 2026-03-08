@@ -1,0 +1,1 @@
+-- Upsert dữ liệu job vào bảng production (INSERT ON CONFLICT DO UPDATE)

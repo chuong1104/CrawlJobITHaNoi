@@ -1,0 +1,4 @@
+# Tests cho lớp Transform
+# - test_cleaner.py    : Test xóa HTML tags, parse ngày tháng
+# - test_normalizer.py : Test chuẩn hóa lương (10tr -> 10_000_000 VND), cấp bậc, job type
+# - test_schemas.py    : Test Pydantic validation schema
