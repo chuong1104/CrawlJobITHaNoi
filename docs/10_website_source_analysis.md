@@ -34,7 +34,7 @@ Tai lieu nay dung de phan tich nguon tung website (portal) theo tung dot cap nha
 |---|---|
 | Portal | CareerViet |
 | Domain | `careerviet.vn` |
-| Endpoint list/detail | List: `https://careerviet.vn/viec-lam/cntt-phan-mem-tai-ha-noi-c1l4-vi.html`; Detail pattern: `https://careerviet.vn/vi/tim-viec-lam/<slug>.<id>.html` |
+| Endpoint list/detail | List: `https://careerviet.vn/viec-lam/ha-noi-l4-vi.html`; Detail pattern: `https://careerviet.vn/vi/tim-viec-lam/<slug>.<id>.html` |
 | Thu vien / cong cu fetch | Scrapling |
 | Muc do anti-bot | Trung binh |
 | Trang thai implementation | File `src/extract/careerviet.py` moi co comment metadata, chua co logic parse |
@@ -179,7 +179,7 @@ Tai lieu nay dung de phan tich nguon tung website (portal) theo tung dot cap nha
 |---|---|
 | Portal | Job123 |
 | Domain | `123job.vn` |
-| Endpoint list/detail | List mau: `https://123job.vn/tuyen-dung?s=0&jt=0&cat=IT+phan+mem&sort=new&type_keyword=0&cityId=1&q=&l=Ha+Noi&city`; Detail pattern: `https://123job.vn/viec-lam/<slug>?codePosition=...` |
+| Endpoint list/detail | List: `https://123job.vn/tuyen-dung?s=0&jt=0&sort=new&type_keyword=0&cityId=1&q=&l=H%C3%A0+N%E1%BB%99i&city=`; Detail pattern: `https://123job.vn/viec-lam/<slug>?codePosition=...` |
 | Thu vien / cong cu fetch | Scrapling HTTP (uu tien), co the fallback browser automation neu can |
 | Muc do anti-bot | Thap -> Trung binh |
 | Trang thai implementation | File `src/extract/job_123.py` moi co metadata comment, chua co logic parse |
@@ -245,7 +245,7 @@ Tai lieu nay dung de phan tich nguon tung website (portal) theo tung dot cap nha
 |---|---|
 | Portal | Joboko |
 | Domain | `vn.joboko.com` |
-| Endpoint list/detail | List: `https://vn.joboko.com/jobs?l=2&ind=124`; Detail pattern: `https://vn.joboko.com/viec-lam-<slug>-xvi<id>` |
+| Endpoint list/detail | List: `https://vn.joboko.com/jobs?l=2`; Detail pattern: `https://vn.joboko.com/viec-lam-<slug>-xvi<id>` |
 | Thu vien / cong cu fetch | Scrapling HTTP (uu tien), co the fallback browser automation neu can |
 | Muc do anti-bot | Thap -> Trung binh |
 | Trang thai implementation | File `src/extract/joboko.py` moi co metadata comment, chua co logic parse |
@@ -312,7 +312,7 @@ Tai lieu nay dung de phan tich nguon tung website (portal) theo tung dot cap nha
 |---|---|
 | Portal | JobsGO |
 | Domain | `jobsgo.vn` |
-| Endpoint list/detail | List: `https://jobsgo.vn/viec-lam-cong-nghe-thong-tin-tai-ha-noi.html`; Detail pattern: `https://jobsgo.vn/viec-lam/<slug>-<id>.html` |
+| Endpoint list/detail | List: `https://jobsgo.vn/viec-lam-tai-ha-noi.html`; Detail pattern: `https://jobsgo.vn/viec-lam/<slug>-<id>.html` |
 | Thu vien / cong cu fetch | Scrapling HTTP (uu tien), co the fallback browser automation neu can |
 | Muc do anti-bot | Thap -> Trung binh |
 | Trang thai implementation | File `src/extract/jobsgo.py` moi co metadata comment, chua co logic parse |
@@ -368,3 +368,33 @@ Tai lieu nay dung de phan tich nguon tung website (portal) theo tung dot cap nha
 - Da co quy tac chuan hoa URL: Da (relative -> absolute voi base `https://jobsgo.vn`).
 - Da co danh gia rui ro anti-bot va giai phap fallback: Mot phan.
 - Da xac dinh strategy retry/rate-limit: Mot phan (da co dieu kien dung crawl, chua co thong so retry cu the).
+
+## 6. Top CV
+| Portal | TopCV |
+| Domain | `topcv.vn` |
+| Endpoint list/detail | List: `https://www.topcv.vn/tim-viec-lam-moi-nhat-tai-ha-noi-l1`; Detail pattern: `https://www.topcv.vn/viec-lam/<slug>` |
+| Thu vien / cong cu fetch | Scrapling |
+| Muc do anti-bot | Trung binh |
+| Trang thai implementation | File `src/extract/topcv.py` moi co comment metadata, chua co logic parse |
+| Nguon thong tin | `src/extract/topcv.py` + thong tin HTML thuc te user cung cap |
+| Ghi chu ky thuat | Selector link job: `div.avatar a::attr(href)`; Mẫu HTML link job: `<div class="avatar"><a ... href="https://www.topcv.vn/viec-lam/..." ...></a></div>`; Selector phân trang: `ul.pagination li a[rel='next']::attr(data-href)`; Mẫu URL phân trang: `https://www.topcv.vn/tim-viec-lam-moi-nhat-tai-ha-noi-l1?page=3`; Nút next: `<li><a data-href="..." rel="next" aria-label="Next »">›</a></li>` |
+
+## 7. Vietnam Works
+| Portal | VietnamWorks |
+| Domain | `vietnamworks.com` |
+| Endpoint list/detail | List: `https://www.vietnamworks.com/viec-lam?l=24`; Detail pattern: `https://www.vietnamworks.com/viec-lam/<slug>` |
+| Thu vien / cong cu fetch | Scrapling + requests (co REST API) |
+| Muc do anti-bot | Trung binh |
+| Trang thai implementation | File `src/extract/vietnamworks.py` moi co comment metadata, chua co logic parse |
+| Nguon thong tin | `src/extract/vietnamworks.py` + thong tin HTML thuc te user cung cap |
+| Ghi chu ky thuat | Selector link job: `div.sc-cdaca-d h2 a::attr(href)`; Mẫu HTML link job: `<div class="sc-cdaca-d ccgnqJ"><h2><a href="/truong-khoa-duoc-vinmec-riverside-2017281-jv?..." ...>...</a></h2></div>`; Selector phân trang: `ul.pagination li.page-item button.clickable`; Mẫu URL phân trang: `https://www.vietnamworks.com/viec-lam?l=24&page=2`; Quy tắc truy cập trang tiếp theo: tăng thêm 1 ở query `page` |
+
+## 8. Ybox
+| Portal | Ybox |
+| Domain | `ybox.vn` |
+| Endpoint list/detail | List: `https://ybox.vn/tuyen-dung-viec-lam-tai-ha-noi-tk-c1e2?keyword=`; Detail pattern: `https://ybox.vn/viec-lam/<slug>` |
+| Thu vien / cong cu fetch | Scrapling |
+| Muc do anti-bot | Thap |
+| Trang thai implementation | File `src/extract/ybox.py` moi co comment metadata, chua co logic parse |
+| Nguon thong tin | `src/extract/ybox.py` + thong tin HTML thuc te user cung cap |
+| Ghi chu ky thuat | Selector link job: `h2.post-title a.internal::attr(href)`; Mẫu HTML link job: `<h2 class="post-title"><a class="internal" href="/tuyen-dung/hn-cong-ty-milwaukee-tool-vietnam-tuyen-dung-thuc-tap-sinh-ho-tro-sales-and-marketing-full-time-2026-69ae4d67cc370d031bd6337f" ...>...</a></h2>`; Da xac dinh URL list, selector job link, pagination pattern va dieu kien dung crawl |
