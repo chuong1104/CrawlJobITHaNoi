@@ -3,16 +3,18 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
 from scrapling.parser import Adaptor
 
-from src.extract.base_scraper import BaseScraper
+from src.extract.job_online.base_scraper import BaseScraper
 
 
-class ITViecScraper(BaseScraper):
-	source_name = "itviec"
-	base_url = "https://itviec.com"
-	batch_size = 15
+class CareerVietScraper(BaseScraper):
+	_block_media = BaseScraper._block_media
+	source_name = "careerviet"
+	base_url = "https://careerviet.vn"
+	batch_size = 10
 
-	# URL list canh theo khu vuc Ha Noi de phu hop du lieu mau ban da xac nhan.
-	DEFAULT_START_URL = "https://itviec.com/it-jobs/ha-noi"
+	DEFAULT_START_URL = (
+		"https://careerviet.vn/viec-lam/ha-noi-l4-vi.html"
+	)
 
 	def __init__(self, start_url: str | None = None, **kwargs) -> None:
 		super().__init__(**kwargs)
@@ -20,49 +22,50 @@ class ITViecScraper(BaseScraper):
 
 	@staticmethod
 	def _clean_list_url(url: str) -> str:
-		"""Bo query tracking dong de co list URL on dinh."""
 		parsed = urlparse(url)
 		return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
 
 	@staticmethod
 	def _drop_tracking_query(url: str) -> str:
-		"""Loai bo query tracking va query dong khong phuc vu dedup."""
 		parsed = urlparse(url)
 		query = parse_qs(parsed.query, keep_blank_values=True)
-
 		keep_keys = {"page"}
 		filtered = {
 			key: value
 			for key, value in query.items()
 			if key in keep_keys and value and value[0] != ""
 		}
-
 		new_query = urlencode(filtered, doseq=True)
 		return urlunparse(
 			(parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, "")
 		)
 
 	def _canonicalize_job_url(self, url: str) -> str:
-		"""
-		Dua URL ve dang canonical:
-		- relative -> absolute
-		- bo query tracking (lab_feature, click_source, job_selected...)
-		- doi /it-jobs/<slug>/content?... -> /it-jobs/<slug>
-		"""
 		full_url = urljoin(self.base_url, (url or "").strip())
-		full_url = self._drop_tracking_query(full_url)
+		return self._drop_tracking_query(full_url)
 
-		parsed = urlparse(full_url)
+	@staticmethod
+	def _build_paginated_url(base_url: str, page_num: int) -> str:
+		if page_num <= 1:
+			return base_url
+
+		parsed = urlparse(base_url)
 		path = parsed.path
-		if path.endswith("/content"):
-			path = path[: -len("/content")]
+
+		# Remove existing -trang-N- token if present.
+		path = path.replace("-trang-2-", "-")
+		for i in range(3, 500):
+			token = f"-trang-{i}-"
+			if token in path:
+				path = path.replace(token, "-")
+
+		if path.endswith("-vi.html"):
+			path = path.replace("-vi.html", f"-trang-{page_num}-vi.html")
 
 		return urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
 
 	def get_list_page_url(self, page_num: int) -> str:
-		if page_num <= 1:
-			return self.start_url
-		return f"{self.start_url}?page={page_num}"
+		return self._build_paginated_url(self.start_url, page_num)
 
 	def get_next_page_url(
 		self,
@@ -71,32 +74,17 @@ class ITViecScraper(BaseScraper):
 		current_url: str,
 	) -> str | None:
 		page = Adaptor(list_page_html)
-		next_href = page.css("div.page.next a[rel='next']::attr(href)").get() or page.css(
-			"a[rel='next']::attr(href)"
-		).get()
+		next_href = page.css("li.next-page a::attr(href)").get()
 		if next_href:
 			return urljoin(self.base_url, next_href)
 		return self.get_list_page_url(page_num + 1)
 
 	def extract_job_urls(self, list_page_html: str) -> list[str]:
 		page = Adaptor(list_page_html)
-
 		candidate_urls: list[str] = []
 
-		# Uu tien attr tren card list.
-		candidate_urls.extend(
-			page.css("div.job-card::attr(data-search--job-selection-job-url-value)").getall()
-		)
-
-		# Fallback tu data-url trong title h3.
-		candidate_urls.extend(page.css("h3[data-url]::attr(data-url)").getall())
-
-		# Fallback tu anchor detail trong selected preview panel.
-		candidate_urls.extend(
-			page.css(
-				"a[data-controller='utm-tracking'][target='_blank'][href*='/it-jobs/']::attr(href)"
-			).getall()
-		)
+		candidate_urls.extend(page.css("a.job_link::attr(href)").getall())
+		candidate_urls.extend(page.css("h2.job-name a::attr(href)").getall())
 
 		links: list[str] = []
 		seen: set[str] = set()
@@ -105,7 +93,7 @@ class ITViecScraper(BaseScraper):
 			if not raw:
 				continue
 			canonical = self._canonicalize_job_url(raw)
-			if "/it-jobs/" not in canonical:
+			if "/tim-viec-lam/" not in canonical:
 				continue
 			if canonical not in seen:
 				seen.add(canonical)
@@ -119,31 +107,50 @@ class ITViecScraper(BaseScraper):
 		text = " ".join(p.strip() for p in parts if p and p.strip())
 		return text or None
 
+	@staticmethod
+	def _first_text(page: Adaptor, selectors: list[str]) -> str | None:
+		for selector in selectors:
+			value = page.css(selector).get()
+			if value and value.strip():
+				return value.strip()
+		return None
+
 	def parse_job_detail(self, detail_html: str, url: str) -> dict:
 		page = Adaptor(detail_html)
 
-		# Salary can be hidden by login wall.
-		salary_raw = page.css("span.ips-2.fw-500::text").get()
-		if salary_raw and "sign in" in salary_raw.lower():
-			salary = None
-		else:
-			salary = salary_raw.strip() if salary_raw else None
-
-		title = page.css("h1[class*='text-it-black']::text").get()
-		if title:
-			title = title.strip()
-
-		company = page.css("a[href*='/companies/'][class*='normal-text']::text").get()
-		if company:
-			company = company.strip()
-
-		location = page.css("div.d-inline-block.text-dark-grey::text").get()
-		if location:
-			location = location.strip()
-
-		industry = page.css("div.d-inline-flex.text-wrap::text").get()
-		if industry:
-			industry = industry.strip()
+		title = self._first_text(page, ["h1.title::text", "h1.job-title::text", "h1::text"])
+		company = self._first_text(
+			page,
+			[
+				"a.employer-name::text",
+				"h2.company-name::text",
+				"a[href*='/cong-ty/']::text",
+			],
+		)
+		salary = self._first_text(
+			page,
+			[
+				"li.salary span::text",
+				"div.salary p::text",
+				"span.salary::text",
+			],
+		)
+		location = self._first_text(
+			page,
+			[
+				"li.location span::text",
+				"div.location p::text",
+				"span.location::text",
+			],
+		)
+		deadline = self._first_text(
+			page,
+			[
+				"li.deadline span::text",
+				"div.expired-date::text",
+				"span.deadline::text",
+			],
+		)
 
 		return {
 			"title": title,
@@ -153,12 +160,16 @@ class ITViecScraper(BaseScraper):
 			"job_type": None,
 			"experience_level": None,
 			"education_level": None,
-			"job_industry": industry,
+			"job_industry": None,
 			"job_position": None,
-			"job_description": self._join_text(page, "section.job-description"),
-			"requirements": self._join_text(page, "section.job-experiences"),
-			"benefits": self._join_text(page, "section.job-why-love-working"),
-			"job_deadline": None,
+			"job_description": self._join_text(
+				page, "section#job-description, div.job-description"
+			),
+			"requirements": self._join_text(
+				page, "section#job-requirement, div.job-requirement"
+			),
+			"benefits": self._join_text(page, "section#job-benefit, div.job-benefit"),
+			"job_deadline": deadline,
 			"job_url": self._canonicalize_job_url(url),
 			"source": self.source_name,
 			"scraped_at": datetime.now().isoformat(),
@@ -166,6 +177,6 @@ class ITViecScraper(BaseScraper):
 
 
 if __name__ == "__main__":
-	scraper = ITViecScraper()
+	scraper = CareerVietScraper()
 	links = scraper.run_links_only()
 	print(f"Total dedup links: {len(links)}")

@@ -13,12 +13,15 @@ import traceback
 from dataclasses import dataclass
 from typing import Callable
 
-from src.extract.careerlink import CareerLinkScraper
-from src.extract.careerviet import CareerVietScraper
-from src.extract.itviec import ITViecScraper
-from src.extract.job_123 import Job123Scraper
-from src.extract.joboko import JobokoScraper
-from src.extract.jobsgo import JobsGoScraper
+from src.extract.job_online.careerlink import CareerLinkScraper
+from src.extract.job_online.careerviet import CareerVietScraper
+from src.extract.job_online.itviec import ITViecScraper
+from src.extract.job_online.job_123 import Job123Scraper
+from src.extract.job_online.joboko import JobokoScraper
+from src.extract.job_online.jobsgo import JobsGoScraper
+from src.extract.job_online.topcv import TopCVScraper
+from src.extract.job_online.vietnamworks import VietnamWorksScraper
+from src.extract.job_online.ybox import YboxScraper
 
 
 @dataclass
@@ -34,6 +37,9 @@ RUNNERS: list[RunnerItem] = [
     RunnerItem("job123", Job123Scraper),
     RunnerItem("joboko", JobokoScraper),
     RunnerItem("jobsgo", JobsGoScraper),
+    RunnerItem("topcv", TopCVScraper),
+    RunnerItem("vietnamworks", VietnamWorksScraper),
+    RunnerItem("ybox", YboxScraper),
 ]
 
 

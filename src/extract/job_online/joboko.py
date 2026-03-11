@@ -3,15 +3,17 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
 from scrapling.parser import Adaptor
 
-from src.extract.base_scraper import BaseScraper
+from src.extract.job_online.base_scraper import BaseScraper
 
 
 class JobokoScraper(BaseScraper):
+	
+	_block_media = BaseScraper._block_media
 	source_name = "joboko"
 	base_url = "https://vn.joboko.com"
 	batch_size = 12
 
-	DEFAULT_START_URL = "https://vn.joboko.com/jobs?l=2&ind=124"
+	DEFAULT_START_URL = "https://vn.joboko.com/jobs?l=2"
 
 	def __init__(self, start_url: str | None = None, **kwargs) -> None:
 		super().__init__(**kwargs)

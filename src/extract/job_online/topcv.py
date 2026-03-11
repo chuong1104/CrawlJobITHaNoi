@@ -2,14 +2,16 @@
 import os
 from urllib.parse import urljoin
 from scrapling.parser import Adaptor
-from src.extract.base_scraper import BaseScraper
+from src.extract.job_online.base_scraper import BaseScraper
 
-class YboxScraper(BaseScraper):
-	source_name = "ybox"
-	base_url = "https://ybox.vn"
+class TopCVScraper(BaseScraper):
+	
+	_block_media = BaseScraper._block_media
+	source_name = "topcv"
+	base_url = "https://www.topcv.vn"
 	batch_size = 10
 
-	DEFAULT_START_URL = "https://ybox.vn/tuyen-dung-viec-lam-tai-ha-noi-tk-c1e2?keyword="
+	DEFAULT_START_URL = "https://www.topcv.vn/tim-viec-lam-moi-nhat-tai-ha-noi-l1"
 
 	def __init__(self, start_url: str | None = None, **kwargs) -> None:
 		super().__init__(**kwargs)
@@ -22,12 +24,14 @@ class YboxScraper(BaseScraper):
 
 	def get_next_page_url(self, list_page_html: str, page_num: int, current_url: str) -> str | None:
 		page = Adaptor(list_page_html)
-		# Ybox không có nút next rõ ràng, dùng query page
+		next_href = page.css("ul.pagination li a[rel='next']::attr(data-href)").get()
+		if next_href:
+			return urljoin(self.base_url, next_href)
 		return self.get_list_page_url(page_num + 1)
 
 	def extract_job_urls(self, list_page_html: str) -> list[str]:
 		page = Adaptor(list_page_html)
-		hrefs = page.css("h2.post-title a.internal::attr(href)").getall()
+		hrefs = page.css("div.avatar a::attr(href)").getall()
 		links: list[str] = []
 		seen: set[str] = set()
 		for href in hrefs:
@@ -43,7 +47,7 @@ class YboxScraper(BaseScraper):
 		raise NotImplementedError("Implement parse_job_detail sau khi xong bước lấy link.")
 
 if __name__ == "__main__":
-	start_url = os.getenv("YBOX_START_URL")
-	scraper = YboxScraper(start_url=start_url)
-	links = scraper.run_links_only(pages=3)
+	start_url = os.getenv("TOPCV_START_URL")
+	scraper = TopCVScraper(start_url=start_url)
+	links = scraper.run_links_only(pages=None)
 	print(f"Total dedup links: {len(links)}")

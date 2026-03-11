@@ -3,19 +3,21 @@ from urllib.parse import urljoin
 
 from scrapling.parser import Adaptor
 
-from src.extract.base_scraper import BaseScraper
+from src.extract.job_online.base_scraper import BaseScraper
 
 
 class CareerLinkScraper(BaseScraper):
+
     source_name = "careerlink"
     base_url = "https://www.careerlink.vn"
     batch_size = 10
 
     # Start URL bạn chọn thủ công theo bộ lọc
     DEFAULT_START_URL = (
-        "https://www.careerlink.vn/tim-viec-lam-tai/ha-noi/HN/c/cntt-phan-mem/19"
+        "https://www.careerlink.vn/tim-viec-lam-tai/ha-noi/HN"
     )
-
+    # Use BaseScraper._block_media for resource blocking
+    _block_media = BaseScraper._block_media
     def __init__(self, start_url: str | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self.start_url = (start_url or self.DEFAULT_START_URL).split("?")[0]

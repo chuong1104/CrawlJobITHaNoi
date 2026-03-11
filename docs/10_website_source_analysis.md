@@ -369,32 +369,51 @@ Tai lieu nay dung de phan tich nguon tung website (portal) theo tung dot cap nha
 - Da co danh gia rui ro anti-bot va giai phap fallback: Mot phan.
 - Da xac dinh strategy retry/rate-limit: Mot phan (da co dieu kien dung crawl, chua co thong so retry cu the).
 
-## 6. Top CV
-| Portal | TopCV |
-| Domain | `topcv.vn` |
-| Endpoint list/detail | List: `https://www.topcv.vn/tim-viec-lam-moi-nhat-tai-ha-noi-l1`; Detail pattern: `https://www.topcv.vn/viec-lam/<slug>` |
-| Thu vien / cong cu fetch | Scrapling |
-| Muc do anti-bot | Trung binh |
-| Trang thai implementation | File `src/extract/topcv.py` moi co comment metadata, chua co logic parse |
-| Nguon thong tin | `src/extract/topcv.py` + thong tin HTML thuc te user cung cap |
-| Ghi chu ky thuat | Selector link job: `div.avatar a::attr(href)`; Mẫu HTML link job: `<div class="avatar"><a ... href="https://www.topcv.vn/viec-lam/..." ...></a></div>`; Selector phân trang: `ul.pagination li a[rel='next']::attr(data-href)`; Mẫu URL phân trang: `https://www.topcv.vn/tim-viec-lam-moi-nhat-tai-ha-noi-l1?page=3`; Nút next: `<li><a data-href="..." rel="next" aria-label="Next »">›</a></li>` |
+## 6. TopCV
+- Portal: TopCV
+- Domain: `topcv.vn`
+- Endpoint:
+	- List: `https://www.topcv.vn/tim-viec-lam-moi-nhat-tai-ha-noi-l1`
+	- Detail: `https://www.topcv.vn/viec-lam/<slug>`
+- Thư viện/công cụ fetch: Scrapling
+- Mức độ anti-bot: Trung bình
+- Trạng thái implementation: File `src/extract/topcv.py` mới có comment metadata, chưa có logic parse
+- Nguồn thông tin: `src/extract/topcv.py` + thông tin HTML thực tế user cung cấp
+- Ghi chú kỹ thuật:
+	- Selector link job: `div.avatar a::attr(href)`
+	- Mẫu HTML link job: `<div class="avatar"><a ... href="https://www.topcv.vn/viec-lam/..." ...></a></div>`
+	- Selector phân trang: `ul.pagination li a[rel='next']::attr(data-href)`
+	- Mẫu URL phân trang: `https://www.topcv.vn/tim-viec-lam-moi-nhat-tai-ha-noi-l1?page=3`
+	- Nút next: `<li><a data-href="..." rel="next" aria-label="Next »">›</a></li>`
 
-## 7. Vietnam Works
-| Portal | VietnamWorks |
-| Domain | `vietnamworks.com` |
-| Endpoint list/detail | List: `https://www.vietnamworks.com/viec-lam?l=24`; Detail pattern: `https://www.vietnamworks.com/viec-lam/<slug>` |
-| Thu vien / cong cu fetch | Scrapling + requests (co REST API) |
-| Muc do anti-bot | Trung binh |
-| Trang thai implementation | File `src/extract/vietnamworks.py` moi co comment metadata, chua co logic parse |
-| Nguon thong tin | `src/extract/vietnamworks.py` + thong tin HTML thuc te user cung cap |
-| Ghi chu ky thuat | Selector link job: `div.sc-cdaca-d h2 a::attr(href)`; Mẫu HTML link job: `<div class="sc-cdaca-d ccgnqJ"><h2><a href="/truong-khoa-duoc-vinmec-riverside-2017281-jv?..." ...>...</a></h2></div>`; Selector phân trang: `ul.pagination li.page-item button.clickable`; Mẫu URL phân trang: `https://www.vietnamworks.com/viec-lam?l=24&page=2`; Quy tắc truy cập trang tiếp theo: tăng thêm 1 ở query `page` |
+## 7. VietnamWorks
+- Portal: VietnamWorks
+- Domain: `vietnamworks.com`
+- Endpoint:
+	- List: `https://www.vietnamworks.com/viec-lam?l=24`
+	- Detail: `https://www.vietnamworks.com/viec-lam/<slug>`
+- Thư viện/công cụ fetch: Scrapling + requests (có REST API)
+- Mức độ anti-bot: Trung bình
+- Trạng thái implementation: File `src/extract/vietnamworks.py` mới có comment metadata, chưa có logic parse
+- Nguồn thông tin: `src/extract/vietnamworks.py` + thông tin HTML thực tế user cung cấp
+- Ghi chú kỹ thuật:
+	- Selector link job: `div.sc-cdaca-d h2 a::attr(href)`
+	- Mẫu HTML link job: `<div class="sc-cdaca-d ccgnqJ"><h2><a href="/truong-khoa-duoc-vinmec-riverside-2017281-jv?..." ...>...</a></h2></div>`
+	- Selector phân trang: `ul.pagination li.page-item button.clickable`
+	- Mẫu URL phân trang: `https://www.vietnamworks.com/viec-lam?l=24&page=2`
+	- Quy tắc truy cập trang tiếp theo: tăng thêm 1 ở query `page`
 
 ## 8. Ybox
-| Portal | Ybox |
-| Domain | `ybox.vn` |
-| Endpoint list/detail | List: `https://ybox.vn/tuyen-dung-viec-lam-tai-ha-noi-tk-c1e2?keyword=`; Detail pattern: `https://ybox.vn/viec-lam/<slug>` |
-| Thu vien / cong cu fetch | Scrapling |
-| Muc do anti-bot | Thap |
-| Trang thai implementation | File `src/extract/ybox.py` moi co comment metadata, chua co logic parse |
-| Nguon thong tin | `src/extract/ybox.py` + thong tin HTML thuc te user cung cap |
-| Ghi chu ky thuat | Selector link job: `h2.post-title a.internal::attr(href)`; Mẫu HTML link job: `<h2 class="post-title"><a class="internal" href="/tuyen-dung/hn-cong-ty-milwaukee-tool-vietnam-tuyen-dung-thuc-tap-sinh-ho-tro-sales-and-marketing-full-time-2026-69ae4d67cc370d031bd6337f" ...>...</a></h2>`; Da xac dinh URL list, selector job link, pagination pattern va dieu kien dung crawl |
+- Portal: Ybox
+- Domain: `ybox.vn`
+- Endpoint:
+	- List: `https://ybox.vn/tuyen-dung-viec-lam-tai-ha-noi-tk-c1e2?keyword=`
+	- Detail: `https://ybox.vn/viec-lam/<slug>`
+- Thư viện/công cụ fetch: Scrapling
+- Mức độ anti-bot: Thấp
+- Trạng thái implementation: File `src/extract/ybox.py` mới có comment metadata, chưa có logic parse
+- Nguồn thông tin: `src/extract/ybox.py` + thông tin HTML thực tế user cung cấp
+- Ghi chú kỹ thuật:
+	- Selector link job: `h2.post-title a.internal::attr(href)`
+	- Mẫu HTML link job: `<h2 class="post-title"><a class="internal" href="/tuyen-dung/hn-cong-ty-milwaukee-tool-vietnam-tuyen-dung-thuc-tap-sinh-ho-tro-sales-and-marketing-full-time-2026-69ae4d67cc370d031bd6337f" ...>...</a></h2>`
+	- Đã xác định URL list, selector job link, pagination pattern và điều kiện dừng crawl

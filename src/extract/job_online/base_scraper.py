@@ -30,6 +30,7 @@ class ScrapingException(Exception):
 
 
 class BaseScraper(abc.ABC):
+       
     """
     Class cha trừu tượng. Subclass phải khai báo:
         source_name = "topcv"
@@ -97,6 +98,13 @@ class BaseScraper(abc.ABC):
     ) -> str | None:
         # Default fallback: tăng page theo quy tắc URL của scraper
         return self.get_list_page_url(page_num + 1)
+    
+    @staticmethod
+    def _block_media(route):
+        if route.request.resource_type in ("image", "media", "font", "stylesheet"):
+            route.abort()
+        else:
+            route.continue_() 
 
     # ------------------------------------------------------------------
     # HTTP fetch (private)
