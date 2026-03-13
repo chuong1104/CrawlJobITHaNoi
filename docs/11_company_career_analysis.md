@@ -5,7 +5,7 @@
 - Thu thập toàn bộ danh sách công ty, địa chỉ, website chính thức từ jobsgo.vn.
 - Truy cập vào từng website chính thức của công ty, đến mục tuyển dụng/career page, lấy toàn bộ thông tin tuyển dụng trực tiếp từ trang công ty (không qua portal trung gian).
 - Chuẩn hóa dữ liệu về schema chung, phục vụ phân tích, tích hợp pipeline ETL.
-
+- https://1900.com.vn/cong-ty?locId=3 chuẩn bị cào ở đây
 ---
 
 ## 1. Lý do & Giá trị
