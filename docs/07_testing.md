@@ -1,10 +1,23 @@
-# Testing Guide - Unit Tests & Integration Tests
+# 07 — Testing Guide — Unit Tests & Integration Tests
+
+> **Cập nhật:** 2026-03-11 | Phiên bản: 2.0  
+> Bổ sung test strategy cho NLP Layer (skill extraction, embedding), Search Layer (hybrid search), và Company Crawler. Làm rõ nguyên tắc tổ chức test theo từng giai đoạn phát triển.
+
+---
 
 ## Tổng quan
 
-Dự án sử dụng **pytest** làm test framework. Tests được chia thành 2 nhóm chính:
-- `tests/test_extract/` — Test logic parsing HTML của scrapers
-- `tests/test_transform/` — Test cleaning, normalizing và schema validation
+Dự án sử dụng **pytest** làm test framework. Chiến lược testing tuân theo nguyên tắc: **test sớm, test độc lập, test theo layer**. Mỗi layer có bộ test riêng, không phụ thuộc vào layer khác khi chạy unit test.
+
+Tests được chia thành bốn nhóm chính, phát triển theo từng giai đoạn:
+
+| Nhóm | Layer | Giai đoạn | Coverage target |
+|---|---|---|---|
+| `test_extract/` | Data Collection | 1 | ≥ 70% |
+| `test_transform/` | Transform | 1 | ≥ 90% |
+| `test_load/` | Load | 1 | ≥ 75% |
+| `test_nlp/` | NLP Processing | 2 | ≥ 80% |
+| `test_search/` | Search | 2 | ≥ 80% |
 
 ---
 
@@ -12,173 +25,110 @@ Dự án sử dụng **pytest** làm test framework. Tests được chia thành 
 
 ```
 tests/
-├── conftest.py                     ← Fixtures dùng chung (pytest fixtures)
+├── conftest.py                         ← Root fixtures dùng chung
+├── fixtures/                           ← HTML mẫu và JSON mẫu
+│   ├── topcv_list.html
+│   ├── topcv_detail.html
+│   ├── itviec_list.html
+│   ├── itviec_detail.html
+│   ├── vietnamworks_api.json
+│   ├── company_list.html               ← JobsGO company list
+│   ├── company_detail.html             ← JobsGO company detail
+│   └── career_page_sample.html         ← Mẫu career page
+│
 ├── test_extract/
 │   ├── __init__.py
-│   ├── conftest.py                 ← Fixtures cho extract (mock HTML, mock responses)
-│   ├── test_base_scraper.py        ← Test retry, delay, save_raw
-│   ├── test_topcv.py               ← Test parse HTML TopCV
-│   ├── test_itviec.py              ← Test parse HTML ITViec
-│   ├── test_vietnamworks.py        ← Test parse API response VietnamWorks
+│   ├── conftest.py
+│   ├── test_base_scraper.py
+│   ├── test_topcv.py
+│   ├── test_itviec.py
+│   ├── test_vietnamworks.py
 │   ├── test_jobsgo.py
 │   ├── test_joboko.py
 │   ├── test_123job.py
 │   ├── test_careerviet.py
 │   ├── test_careerlink.py
-│   └── test_ybox.py
-└── test_transform/
+│   ├── test_ybox.py
+│   └── test_company/
+│       ├── test_company_list_crawler.py
+│       ├── test_company_detail_crawler.py
+│       ├── test_career_page_finder.py
+│       └── test_career_page_scraper.py
+│
+├── test_transform/
+│   ├── __init__.py
+│   ├── test_cleaner.py
+│   ├── test_normalizer.py
+│   └── test_schemas.py
+│
+├── test_load/
+│   ├── __init__.py
+│   └── test_load_to_dw.py
+│
+├── test_nlp/                           ← [Giai đoạn 2]
+│   ├── __init__.py
+│   ├── test_skill_extractor.py
+│   ├── test_embedder.py
+│   └── test_job_classifier.py
+│
+└── test_search/                        ← [Giai đoạn 2]
     ├── __init__.py
-    ├── test_cleaner.py             ← Test strip HTML, parse dates
-    ├── test_normalizer.py          ← Test chuẩn hóa lương, cấp bậc, job type
-    └── test_schemas.py             ← Test Pydantic validation
+    ├── test_bm25.py
+    ├── test_vector_search.py
+    └── test_hybrid_search.py
 ```
 
 ---
 
-## `tests/conftest.py` (Root fixtures)
+## Root Fixtures (`conftest.py`)
 
-```python
-import pytest
-from pathlib import Path
+### Fixture `sample_raw_job`
 
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
+Raw dict từ scraper chưa qua bất kỳ xử lý nào — title có whitespace thừa, location là dạng viết tắt, salary là chuỗi text, description chứa HTML. Đây là trạng thái "bẩn nhất" trước khi vào pipeline Transform.
 
-@pytest.fixture
-def sample_raw_job() -> dict:
-    """Raw dict từ scraper (chưa clean, chưa normalize)."""
-    return {
-        "source": "topcv",
-        "title": "  Senior Data Engineer  ",
-        "company": "Công ty ABC",
-        "location": "TP HCM",
-        "salary_text": "20 - 35 triệu",
-        "level_text": "Chuyên gia",
-        "job_type_text": "Full time",
-        "description_html": "<p>Xây dựng <b>data pipeline</b></p>",
-        "requirements_html": "<ul><li>3+ năm Python</li></ul>",
-        "benefits_html": "",
-        "skills_raw": ["Python", "Airflow", "Spark"],
-        "posted_date_text": "03/03/2026",
-        "deadline_text": "03/04/2026",
-        "job_url": "https://www.topcv.vn/job/123456",
-        "scraped_at": "2026-03-05T08:30:00Z",
-    }
-```
+### Fixture `sample_normalized_job`
+
+Dict đã qua Clean + Normalize, sẵn sàng cho Pydantic validation. Location đã là "Hồ Chí Minh", salary là số nguyên, description là text thuần.
+
+### Fixture `sample_job_schema`
+
+JobSchema object đã validated hoàn chỉnh. Dùng làm input test cho Load layer và NLP layer.
+
+### Fixture `mock_db_connection`
+
+Mock psycopg2 connection cho các test không cần DB thật. Trả về MagicMock cho phép assert số lần gọi và tham số.
 
 ---
 
 ## Test Extract Layer
 
-### `test_base_scraper.py`
+### `test_base_scraper.py` — Test Logic Chung
 
-Kiểm tra các chức năng chung của `BaseScraper` mà không cần request thật ra internet.
+**Test retry mechanism:** Mock HTTP responses trả về 429 hai lần rồi 200 lần thứ ba. Assert scraper gọi đúng 3 lần và trả về kết quả đúng. Test này xác minh exponential backoff hoạt động đúng.
 
-```python
-# Test 1: Retry mechanism
-def test_retry_on_429(mock_responses):
-    """BaseScraper phải retry khi nhận HTTP 429."""
-    mock_responses.add(responses.GET, "https://example.com", status=429)
-    mock_responses.add(responses.GET, "https://example.com", status=429)
-    mock_responses.add(responses.GET, "https://example.com", status=200, body="OK")
+**Test raise sau max retries:** Mock tất cả responses đều trả về 503. Assert `ScrapingException` được raise sau đúng `max_retries` lần thất bại.
 
-    scraper = MockScraper()
-    result = scraper.fetch("https://example.com")
+**Test save_raw:** Sử dụng `tmp_path` fixture của pytest để tạo thư mục tạm. Assert file JSON được tạo đúng path, nội dung parse được, và có đúng số phần tử.
 
-    assert result == "OK"
-    assert mock_responses.call_count == 3
+**Test deduplication:** Mock DB trả về một tập URLs đã tồn tại. Assert `deduplicate_urls()` loại đúng các URLs đó và chỉ giữ lại URLs mới.
 
-# Test 2: Raise sau max retries
-def test_raise_after_max_retries(mock_responses):
-    """BaseScraper phải raise ScrapingException sau max_retries lần thất bại."""
-    for _ in range(4):  # max_retries=3, nên lần 4 là fail hẳn
-        mock_responses.add(responses.GET, "https://example.com", status=503)
+### `test_topcv.py` — Test Portal Scraper
 
-    scraper = MockScraper(max_retries=3)
-    with pytest.raises(ScrapingException):
-        scraper.fetch("https://example.com")
+**Nguyên tắc:** Sử dụng HTML fixture từ file thực tế (lấy từ portal bằng curl), không mock request để test đúng logic selector.
 
-# Test 3: save_raw lưu đúng format
-def test_save_raw_creates_json(tmp_path):
-    """save_raw() phải tạo file JSON đúng path."""
-    scraper = MockScraper(output_dir=tmp_path)
-    data = [{"title": "Job 1"}, {"title": "Job 2"}]
+**Test `parse_job_list`:** Assert kết quả có ≥ 1 phần tử, mỗi phần tử có đủ fields `title`, `company`, `job_url`, và `job_url` bắt đầu bằng `https://`.
 
-    path = scraper.save_raw(data, "2026-03-05")
+**Test `parse_job_detail`:** Assert `description_html` có nội dung có nghĩa (len > 10), `source` đúng là `"topcv"`, các fields không bị None hoàn toàn.
 
-    assert path.exists()
-    assert path.suffix == ".json"
-    loaded = json.loads(path.read_text())
-    assert len(loaded) == 2
-```
+**Test negative case:** HTML bị thay đổi selector không tìm thấy → Assert trả về dict với fields None/empty thay vì raise exception. Scraper không được crash, chỉ trả về dữ liệu thiếu.
 
-### `test_topcv.py`
+### `test_company/test_career_page_finder.py` — Test Company Crawler
 
-```python
-# Dùng fixture HTML thật từ file fixtures/topcv_list.html
-@pytest.fixture
-def topcv_list_html():
-    return (FIXTURES_DIR / "topcv_list.html").read_text(encoding="utf-8")
+**Test path probing:** Mock HTTP responses. Giả lập server có `/careers` trả về 200 với nội dung có từ "jobs". Assert `career_page_finder` tìm được URL đúng.
 
-@pytest.fixture
-def topcv_detail_html():
-    return (FIXTURES_DIR / "topcv_detail.html").read_text(encoding="utf-8")
+**Test ATS detection:** Cung cấp HTML có chứa link `boards.greenhouse.io`. Assert finder nhận diện đúng ATS type là "greenhouse".
 
-# Test 1: parse_job_list trả về đúng số job
-def test_parse_job_list_count(topcv_list_html):
-    scraper = TopCVScraper()
-    jobs = scraper.parse_job_list(topcv_list_html)
-    assert len(jobs) >= 1
-
-# Test 2: parse_job_list lấy đúng fields
-def test_parse_job_list_fields(topcv_list_html):
-    scraper = TopCVScraper()
-    jobs = scraper.parse_job_list(topcv_list_html)
-    job = jobs[0]
-
-    assert "title" in job
-    assert "company" in job
-    assert "job_url" in job
-    assert job["job_url"].startswith("https://")
-
-# Test 3: parse_job_detail lấy đúng description
-def test_parse_job_detail_has_description(topcv_detail_html):
-    scraper = TopCVScraper()
-    job = scraper.parse_job_detail(topcv_detail_html, url="https://topcv.vn/job/1")
-
-    assert len(job.get("description_html", "")) > 10
-    assert job.get("source") == "topcv"
-```
-
-### `test_vietnamworks.py`
-
-```python
-# Mock API response thay vì gọi thật
-@pytest.fixture
-def vnw_api_response():
-    return {
-        "hits": {
-            "hits": [
-                {
-                    "_source": {
-                        "job_title": "Data Engineer",
-                        "company_name": "VNG Corporation",
-                        "location_name_vi": "Hồ Chí Minh",
-                        "salary_min": 2000,
-                        "salary_max": 3500,
-                        ...
-                    }
-                }
-            ]
-        }
-    }
-
-def test_parse_api_response(vnw_api_response):
-    scraper = VietnamWorksScraper()
-    jobs = scraper.parse_api_response(vnw_api_response)
-
-    assert len(jobs) == 1
-    assert jobs[0]["title"] == "Data Engineer"
-```
+**Test not found:** Tất cả paths đều trả về 404, sitemap rỗng, navigation không có từ khóa tuyển dụng. Assert trả về `None` thay vì raise.
 
 ---
 
@@ -186,247 +136,225 @@ def test_parse_api_response(vnw_api_response):
 
 ### `test_cleaner.py`
 
-```python
-from src.transform.cleaner import strip_html, parse_date, normalize_whitespace
+#### TestStripHtml
 
-class TestStripHtml:
-    def test_removes_tags(self):
-        assert strip_html("<p>Hello <b>World</b></p>") == "Hello World"
+Kiểm tra các trường hợp:
+- Xóa thẻ `<strong>`, `<p>`, `<div>` đơn giản
+- Chuyển `<li>` thành `"- item"` giữ cấu trúc list
+- Xóa `<script>` và `<style>` hoàn toàn, không để lại content
+- Decode HTML entities (`&amp;` → `&`, `&nbsp;` → space)
+- Input None → trả về empty string (không raise)
+- Input rỗng → trả về empty string
 
-    def test_converts_li_to_bullet(self):
-        result = strip_html("<ul><li>Item 1</li><li>Item 2</li></ul>")
-        assert "- Item 1" in result
-        assert "- Item 2" in result
+#### TestParseDate
 
-    def test_empty_string(self):
-        assert strip_html("") == ""
+Kiểm tra các format:
+- ISO format `YYYY-MM-DD`
+- Vietnamese format `DD/MM/YYYY`
+- Relative: `"2 ngày trước"`, `"1 tuần trước"`, `"Hôm nay"`
+- English relative: `"2 days ago"`, `"Today"`, `"Just now"`
+- Invalid → None
+- None input → None
 
-    def test_none_input(self):
-        assert strip_html(None) == ""
+**Quan trọng:** Test relative dates phải mock `date.today()` để kết quả deterministic, không phụ thuộc ngày chạy test.
 
-    def test_removes_script_tags(self):
-        result = strip_html('<script>alert("xss")</script>Nội dung')
-        assert "alert" not in result
-        assert "Nội dung" in result
+#### TestNormalizeWhitespace
 
-class TestParseDate:
-    def test_dd_mm_yyyy(self):
-        assert parse_date("03/03/2026") == date(2026, 3, 3)
-
-    def test_iso_format(self):
-        assert parse_date("2026-03-03") == date(2026, 3, 3)
-
-    def test_relative_days_ago(self):
-        result = parse_date("2 ngày trước")
-        expected = date.today() - timedelta(days=2)
-        assert result == expected
-
-    def test_hom_nay(self):
-        assert parse_date("Hôm nay") == date.today()
-
-    def test_invalid_returns_none(self):
-        assert parse_date("không phải ngày") is None
-
-    def test_none_input_returns_none(self):
-        assert parse_date(None) is None
-```
+- Tab → single space
+- Multiple spaces → single space
+- Leading/trailing whitespace bị strip
+- Zero-width characters `\u200b` bị loại bỏ
+- Non-breaking space `\u00a0` được thay bằng space thường
 
 ### `test_normalizer.py`
 
-```python
-from src.transform.normalizer import normalize_salary, normalize_level, normalize_job_type, normalize_location
+#### TestNormalizeSalary
 
-class TestNormalizeSalary:
-    def test_vnd_range(self):
-        min_s, max_s, curr = normalize_salary("10 - 15 triệu")
-        assert min_s == 10_000_000
-        assert max_s == 15_000_000
-        assert curr == "VND"
+Kiểm tra toàn bộ bảng mapping đã định nghĩa trong tài liệu Transform. Đặc biệt cần test:
+- Range có dấu `-` với các khoảng trắng khác nhau: `"10-15 triệu"`, `"10 - 15 triệu"`, `"10- 15triệu"`
+- USD range → kết quả là số dương (đã quy đổi sang VND)
+- salary_min ≤ salary_max trong mọi trường hợp parse được
+- Mọi input "thỏa thuận" dạng → `(None, None, "VND")`
 
-    def test_up_to(self):
-        min_s, max_s, curr = normalize_salary("Lên đến 20 triệu")
-        assert min_s is None
-        assert max_s == 20_000_000
+#### TestNormalizeLevel (parametrize)
 
-    def test_negotiable(self):
-        min_s, max_s, curr = normalize_salary("Thỏa thuận")
-        assert min_s is None
-        assert max_s is None
+Sử dụng `@pytest.mark.parametrize` với bảng đầy đủ mapping từ tài liệu. Đảm bảo không có input hợp lệ nào bị map về giá trị không đúng.
 
-    def test_usd_range(self):
-        min_s, max_s, curr = normalize_salary("1000 - 1500 USD")
-        assert curr == "USD"
-        assert min_s > 0  # Đã quy đổi sang VND
+#### TestNormalizeLocation
 
-    def test_empty_string(self):
-        min_s, max_s, curr = normalize_salary("")
-        assert min_s is None
-        assert max_s is None
-
-class TestNormalizeLevel:
-    @pytest.mark.parametrize("input_text,expected", [
-        ("Thực tập sinh", "INTERN"),
-        ("Intern", "INTERN"),
-        ("Fresher", "FRESHER"),
-        ("Mới ra trường", "FRESHER"),
-        ("Junior", "JUNIOR"),
-        ("Nhân viên", "JUNIOR"),
-        ("Senior", "SENIOR"),
-        ("Chuyên viên cao cấp", "SENIOR"),
-        ("Team Lead", "LEAD"),
-        ("Trưởng nhóm", "LEAD"),
-        ("Manager", "MANAGER"),
-        ("Quản lý", "MANAGER"),
-    ])
-    def test_mapping(self, input_text, expected):
-        assert normalize_level(input_text) == expected
-
-class TestNormalizeLocation:
-    @pytest.mark.parametrize("input_text,expected", [
-        ("TP HCM", "Hồ Chí Minh"),
-        ("HCM", "Hồ Chí Minh"),
-        ("Hồ Chí Minh", "Hồ Chí Minh"),
-        ("HN", "Hà Nội"),
-        ("Ha Noi", "Hà Nội"),
-        ("Đà Nẵng", "Đà Nẵng"),
-        ("Remote", "Remote"),
-        ("Toàn quốc", "Remote"),
-    ])
-    def test_mapping(self, input_text, expected):
-        assert normalize_location(input_text) == expected
-```
+Test toàn bộ aliases: HCM/TP HCM/Hồ Chí Minh/Ho Chi Minh → "Hồ Chí Minh". Test case-insensitive matching. Test location không trong mapping → trả về text gốc (đã capitalized), không raise.
 
 ### `test_schemas.py`
 
-```python
-from src.transform.schemas import JobSchema
-from pydantic import ValidationError
+#### TestJobSchema
 
-class TestJobSchema:
-    def test_valid_job(self, sample_normalized_job):
-        job = JobSchema.model_validate(sample_normalized_job)
-        assert job.source == "topcv"
-        assert job.job_id is not None
-        assert len(job.job_id) == 16
+**Test job_id deterministic:** Tạo hai JobSchema từ cùng một dict, assert `job1.job_id == job2.job_id`.
 
-    def test_job_id_is_deterministic(self, sample_normalized_job):
-        """Cùng source + url phải cho cùng job_id."""
-        job1 = JobSchema.model_validate(sample_normalized_job)
-        job2 = JobSchema.model_validate(sample_normalized_job)
-        assert job1.job_id == job2.job_id
+**Test validation errors:**
+- Title rỗng → `ValidationError`
+- `job_url` không phải URL → `ValidationError`
+- `salary_max < salary_min` → `ValidationError`
+- `posted_date` trong tương lai → `ValidationError`
 
-    def test_missing_title_raises(self, sample_normalized_job):
-        sample_normalized_job["title"] = ""
-        with pytest.raises(ValidationError):
-            JobSchema.model_validate(sample_normalized_job)
+**Test default values:** Không cung cấp `job_type` → mặc định là `"FULL_TIME"`. Không cung cấp `level` → mặc định là `"MID"`.
 
-    def test_invalid_url_raises(self, sample_normalized_job):
-        sample_normalized_job["job_url"] = "not-a-url"
-        with pytest.raises(ValidationError):
-            JobSchema.model_validate(sample_normalized_job)
+**Test truncation:** Description dài hơn 10,000 ký tự → được truncate, không raise.
 
-    def test_salary_max_less_than_min_raises(self, sample_normalized_job):
-        sample_normalized_job["salary_min"] = 20_000_000
-        sample_normalized_job["salary_max"] = 10_000_000
-        with pytest.raises(ValidationError):
-            JobSchema.model_validate(sample_normalized_job)
+**Test source "direct":** Tạo JobSchema với `source = "direct"` → hợp lệ, job_id khác với cùng job từ portal.
 
-    def test_future_posted_date_raises(self, sample_normalized_job):
-        from datetime import date, timedelta
-        sample_normalized_job["posted_date"] = date.today() + timedelta(days=1)
-        with pytest.raises(ValidationError):
-            JobSchema.model_validate(sample_normalized_job)
-```
+---
+
+## Test Load Layer
+
+### `test_load_to_dw.py`
+
+**Test batch splitting:** Cung cấp 1,100 jobs, assert `execute_values` được gọi đúng 3 lần (batch 500 + 500 + 100).
+
+**Test upsert idempotency (integration):** Dùng PostgreSQL test database (pytest-postgresql hoặc docker test container). Load cùng một danh sách jobs hai lần, assert bảng `jobs` chỉ có số bản ghi của lần đầu, không bị duplicate.
+
+**Test NLP flag reset:** Load một job, sau đó update `nlp_processed=TRUE` trong DB. Load lại job đó với `description` khác, assert `nlp_processed` được reset về `FALSE`.
+
+**Test partial failure:** Trong batch có một record vi phạm constraint. Assert batch được rollback và thử lại từng record, chỉ record lỗi bị skip, các record còn lại được insert thành công.
+
+**Test scrape_log được ghi:** Assert bảng `scrape_logs` có bản ghi mới sau mỗi lần `load_jobs()` với `status="SUCCESS"` và số liệu thống kê chính xác.
+
+---
+
+## Test NLP Layer (Giai đoạn 2)
+
+### `test_skill_extractor.py`
+
+**Test dictionary matching:** Cung cấp text `"Yêu cầu: Python, SQL, và kinh nghiệm với Apache Spark"`. Assert kết quả extract chứa đúng ba skill: Python, SQL, Apache Spark. Assert confidence của exact match là 1.0.
+
+**Test fuzzy matching:** Cung cấp text có lỗi chính tả nhỏ `"Pyhton"` hoặc viết tắt `"PySpark"`. Assert skill được nhận diện với confidence < 1.0 nhưng vẫn vượt ngưỡng.
+
+**Test no false positive:** Text không liên quan `"Công ty có văn hóa tốt và môi trường thân thiện"`. Assert không extract ra kỹ năng kỹ thuật nào có confidence cao.
+
+**Test position tagging:** Cùng một kỹ năng xuất hiện ở cả title lẫn description → assert position được ghi nhận đúng.
+
+### `test_embedder.py`
+
+**Test output shape:** Embed một job, assert kết quả là vector có dimension đúng với model (768 cho multilingual-e5-base).
+
+**Test semantic similarity:** Embed hai jobs có mô tả tương tự nhau (cùng là Data Engineer), embed một job khác hoàn toàn (Marketing). Assert cosine similarity của hai jobs cùng loại cao hơn similarity với job khác loại.
+
+**Test batch consistency:** Embed 10 jobs theo batch, embed từng job riêng lẻ, assert kết quả giống nhau (batch không làm thay đổi output).
+
+**Test với mock model:** Trong unit test, mock SentenceTransformer để trả về vector ngẫu nhiên có đúng dimension. Không cần load model thật để test pipeline logic.
+
+---
+
+## Test Search Layer (Giai đoạn 2)
+
+### `test_bm25.py`
+
+**Test basic retrieval:** Index 10 job documents, query "Python data engineer", assert kết quả có job liên quan ở top và không có job hoàn toàn không liên quan ở top 3.
+
+**Test IDF weighting:** Document có từ hiếm được tìm kiếm → nên xếp hạng cao hơn document có nhiều từ phổ biến nhưng ít liên quan.
+
+### `test_vector_search.py`
+
+**Test với mock pgvector:** Mock `execute()` của psycopg2 để trả về list (job_id, similarity_score) giả. Assert hàm search parse kết quả đúng và sort theo score giảm dần.
+
+### `test_hybrid_search.py`
+
+**Test score fusion:** Cung cấp BM25 results và vector results với scores giả. Assert Reciprocal Rank Fusion tính điểm đúng theo công thức `1/(k + rank)`.
+
+**Test deduplication:** Cùng job_id xuất hiện trong cả BM25 và vector results. Assert kết quả cuối chỉ có một bản ghi, không bị duplicate.
 
 ---
 
 ## Chạy Tests
 
-### Chạy toàn bộ
-
 ```bash
+# Toàn bộ test suite
 pytest tests/ -v
-```
 
-### Chạy theo nhóm
-
-```bash
-# Chỉ test transform
+# Theo nhóm
 pytest tests/test_transform/ -v
-
-# Chỉ test extract
 pytest tests/test_extract/ -v
+pytest tests/test_nlp/ -v
 
-# Chỉ test cleaner
-pytest tests/test_transform/test_cleaner.py -v
-```
+# Với coverage
+pytest tests/ --cov=src --cov-report=html --cov-report=term-missing
 
-### Chạy với coverage report
+# Chỉ test nhanh (skip integration tests cần DB)
+pytest tests/ -v -m "not integration"
 
-```bash
-pytest tests/ --cov=src --cov-report=html
-# Mở htmlcov/index.html để xem báo cáo chi tiết
-```
-
-### Chạy trong Docker
-
-```bash
+# Chạy trong Docker
 docker-compose exec airflow-worker pytest /opt/airflow/tests/ -v
+
+# Chạy parallel (cần pytest-xdist)
+pytest tests/ -n auto
+```
+
+### Đánh dấu Test
+
+```python
+@pytest.mark.integration   # Test cần DB thật
+@pytest.mark.slow          # Test chạy lâu (NLP model)
+@pytest.mark.unit          # Test thuần logic, không cần external
 ```
 
 ---
 
 ## Fixtures HTML
 
-Lưu HTML mẫu thực tế từ các portal vào `tests/fixtures/`:
+Lưu HTML mẫu thực tế vào `tests/fixtures/`. Cần cập nhật định kỳ vì portal thay đổi HTML structure.
 
-```
-tests/
-└── fixtures/
-    ├── topcv_list.html          ← Trang list jobs của TopCV
-    ├── topcv_detail.html        ← Trang detail 1 job TopCV
-    ├── itviec_list.html
-    ├── itviec_detail.html
-    ├── vietnamworks_api.json    ← Response mẫu của API VietnamWorks
-    └── ...
-```
-
-**Cách lấy HTML mẫu:**
 ```bash
-# Lưu HTML trang list
-curl -A "Mozilla/5.0" "https://www.topcv.vn/viec-lam?page=1" > tests/fixtures/topcv_list.html
+# Cập nhật HTML fixtures
+curl -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0" \
+     "https://www.topcv.vn/viec-lam?page=1" \
+     -o tests/fixtures/topcv_list.html
 ```
+
+**Chú ý:** HTML fixtures được commit vào git. Khi portal thay đổi cấu trúc HTML và tests bắt đầu fail, đó là tín hiệu cần cập nhật selector trong scraper.
 
 ---
 
-## Mục tiêu coverage
+## Mục tiêu Coverage
 
-| Module | Target coverage |
-|---|---|
-| `src/transform/cleaner.py` | ≥ 90% |
-| `src/transform/normalizer.py` | ≥ 90% |
-| `src/transform/schemas.py` | ≥ 85% |
-| `src/extract/base_scraper.py` | ≥ 80% |
-| `src/extract/*.py` (mỗi portal) | ≥ 70% |
-| `src/load/load_to_dw.py` | ≥ 75% |
+| Module | Target | Ghi chú |
+|---|---|---|
+| `src/transform/cleaner.py` | ≥ 90% | Nhiều nhánh edge case |
+| `src/transform/normalizer.py` | ≥ 90% | Nhiều regex pattern |
+| `src/transform/schemas.py` | ≥ 85% | Validation rules |
+| `src/extract/base_scraper.py` | ≥ 80% | Retry logic |
+| `src/extract/portals/*.py` | ≥ 70% | Mỗi portal scraper |
+| `src/extract/company/*.py` | ≥ 70% | Company crawlers |
+| `src/load/load_to_dw.py` | ≥ 75% | Batch logic + error handling |
+| `src/nlp/skill_extractor.py` | ≥ 80% | NLP logic |
+| `src/search/hybrid_search.py` | ≥ 80% | Fusion logic |
 
 ---
 
-## CI/CD (Tùy chọn)
+## CI/CD Pipeline
 
-Thêm file `.github/workflows/test.yml` để tự động chạy tests khi push code:
+File `.github/workflows/test.yml` tự động chạy test khi push hoặc pull request:
 
-```yaml
-name: Run Tests
-on: [push, pull_request]
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - run: pip install -r requirements.txt
-      - run: pytest tests/test_transform/ -v --cov=src/transform
-```
+**Job 1 — Unit Tests (nhanh, không cần DB):**
+- Python 3.11, install dependencies
+- `pytest tests/test_transform/ tests/test_extract/ -v -m "not integration" --cov=src/transform --cov=src/extract`
+
+**Job 2 — Integration Tests (chậm hơn, cần PostgreSQL):**
+- Khởi động PostgreSQL service trong GitHub Actions
+- `pytest tests/test_load/ -v -m "integration"`
+
+**Job 3 — NLP Tests (rất chậm, chạy ít hơn):**
+- Chỉ chạy khi có thay đổi trong `src/nlp/`
+- `pytest tests/test_nlp/ -v -m "not slow"` (bỏ qua test cần load model thật)
+
+---
+
+## Nguyên tắc Viết Test Tốt cho Dự án Này
+
+Không test third-party libraries: không test Scrapling hoạt động đúng, không test Pydantic validate đúng. Chỉ test logic của code chúng ta viết.
+
+Dùng fixture HTML thực: test scraper trên HTML thật từ portal, không mock HTMLParser. Điều này đảm bảo test phản ánh đúng reality và catch được khi portal thay đổi cấu trúc.
+
+Mock ở ranh giới hệ thống: mock HTTP request (không gọi Internet), mock DB connection (không cần DB thật trong unit test), mock NLP model (không load weights thật trong unit test).
+
+Parametrize thay vì copy-paste: mọi bảng mapping trong Normalizer đều phải được test bằng `@pytest.mark.parametrize`, không viết 15 test function riêng lẻ.
+
+Test edge cases trước happy path: khi dữ liệu thực tế 30% là "lạ" (salary=thỏa thuận, date=không rõ, location=null), edge cases quan trọng hơn happy path.

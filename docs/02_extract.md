@@ -1,485 +1,288 @@
-# Extract Layer - Scraping dữ liệu việc làm
+# 02 — Extract Layer — Thu thập Dữ liệu
+
+> **Cập nhật:** 2026-03-11 | Phiên bản: 2.0  
+> Lớp Extract đã được mở rộng từ 11 portal scrapers ban đầu thành hệ thống thu thập hai tầng, bổ sung Company Career Page Crawlers phục vụ thu thập dữ liệu tuyển dụng trực tiếp từ website công ty.
+
+---
 
 ## Tổng quan
 
-Lớp Extract chịu trách nhiệm **cào dữ liệu thô** từ 11 trang tuyển dụng theo **luồng 3 giai đoạn**: thu thập URL → lọc trùng → batch cào chi tiết. Mọi scraper kế thừa từ `BaseScraper` và override các phương thức parse tương ứng.
+Lớp Extract chịu trách nhiệm thu thập dữ liệu thô từ hai nguồn song song:
+
+**Tier 1 — Portal Scrapers:** Thu thập tin tuyển dụng từ 11 portal tuyển dụng lớn tại Việt Nam. Đây là nguồn dữ liệu có volume cao nhất và cập nhật nhanh nhất.
+
+**Tier 2 — Company Career Page Crawlers:** Thu thập danh sách công ty từ JobsGO, tìm career page chính thức của từng công ty, và cào tin tuyển dụng trực tiếp. Đây là nguồn dữ liệu "gốc" hơn — nhiều công ty không đăng trên portal trung gian, hoặc có thông tin chi tiết hơn trên trang riêng.
+
+Cả hai nguồn đều đi qua cùng một luồng Transform → Load và đều được chuẩn hóa về `JobSchema` thống nhất.
 
 ---
 
-## Luồng cào 3 giai đoạn
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│  PHASE 1: Collect URLs (nhẹ, nhanh)                                 │
-│                                                                     │
-│  Cào N trang list → extract href của từng job card                  │
-│  Output: list[str] (raw URLs, có thể trùng)                         │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  PHASE 2: Deduplicate URLs                                          │
-│                                                                     │
-│  1. Loại trùng trong batch hiện tại (set)                           │
-│  2. Loại URL đã tồn tại trong DB (query bảng jobs theo job_url)     │
-│  Output: list[str] (URLs mới, chưa có trong DB)                     │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  PHASE 3: Batch fetch detail pages (song song, tối ưu tốc độ)      │
-│                                                                     │
-│  - Chia URLs thành batches (mặc định: 10 URLs/batch)                │
-│  - Mỗi batch: fetch song song bằng asyncio / ThreadPoolExecutor     │
-│  - Tắt load image, video, font, stylesheet                          │
-│  - Parse HTML thuần → dict raw job                                  │
-│  Output: list[dict] (raw job data, sẵn sàng cho Transform)          │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-**Lợi ích của luồng này:**
-- Phase 1 cực nhanh: chỉ đọc thẻ `<a>` trên trang list, không cần cào từng detail
-- Phase 2 tránh cào lại job đã có → tiết kiệm request, giảm nguy cơ bị chặn
-- Phase 3 song song: giảm tổng thời gian từ `N × t_request` xuống `ceil(N/batch) × t_request`
-- Tắt media: giảm 30–70% thời gian load mỗi trang detail
-
----
-
-## Cấu trúc thư mục
+## Cấu trúc Thư mục
 
 ```
 src/extract/
-├── __init__.py
-├── base_scraper.py     ← Class cha chứa logic chung
-├── topcv.py
-├── itviec.py
-├── vietnamworks.py
-├── jobsgo.py
-├── joboko.py
-├── job_123.py          ← (123job.vn - không đặt tên bắt đầu bằng số)
-├── careerviet.py
-├── careerlink.py
-├── ybox.py
-├── jobstreet.py        ← Playwright mode
-└── linkedin.py         ← Playwright mode + proxy
+├── job_online/                  # Tier 1: Portal Scrapers
+│   ├── base_scraper.py
+│   ├── topcv.py
+│   ├── itviec.py
+│   ├── vietnamworks.py
+│   ├── jobsgo.py
+│   ├── joboko.py
+│   ├── job_123.py
+│   ├── careerviet.py
+│   ├── careerlink.py
+│   ├── ybox.py
+│   └── linkedin.py
+│
+├── company/                     # Tier 2: Company Crawlers
+│   ├── jobsgo_company_crawler.py
+│   └── ...
+```
+
+---
+
+## Luồng Thu thập Ba Giai đoạn
+
+Mọi scraper (cả Tier 1 lẫn Tier 2) đều tuân theo luồng ba giai đoạn sau:
+
+```
+Phase 1: collect_urls()
+  └─ Duyệt N trang list / API → lấy toàn bộ job URLs của ngày
+
+Phase 2: deduplicate_urls()
+  └─ Loại URL trùng nội bộ (trong batch hiện tại)
+  └─ Loại URL đã có trong PostgreSQL (query: SELECT job_url FROM jobs WHERE source = ?)
+  └─ Chỉ giữ lại URLs thực sự mới → tiết kiệm bandwidth và tránh spam
+
+Phase 3: fetch_details_batch()
+  └─ Chia URLs thành batches (mặc định 10 URLs/batch)
+  └─ ThreadPoolExecutor: fetch song song trong batch
+  └─ Giữa các batch: random delay 1–3s (anti-detection)
+  └─ Tắt tải: image, video, font, stylesheet (giảm 40–70% thời gian)
+  └─ parse_job_detail() → dict raw
 ```
 
 ---
 
 ## BaseScraper (`base_scraper.py`)
 
-Class cha cung cấp toàn bộ cơ sở hạ tầng chung: fetch, dedup, batch, tắt media. Các scraper con chỉ cần implement 2 phương thức parse.
+### Vai trò
 
-### Thuộc tính
+Lớp trừu tượng định nghĩa contract chung, xử lý các vấn đề kỹ thuật nền tảng (retry, delay, logging, lưu file) để các scraper cụ thể chỉ cần tập trung vào logic parse.
 
-| Thuộc tính | Kiểu | Mô tả |
+### Thuộc tính Cấu hình
+
+| Thuộc tính | Mặc định | Mô tả |
 |---|---|---|
-| `source_name` | str | Tên portal (ví dụ: `"topcv"`) |
-| `base_url` | str | URL gốc của portal |
-| `max_retries` | int | Số lần retry tối đa (mặc định: 3) |
-| `delay_range` | tuple | Khoảng delay ngẫu nhiên giây (mặc định: `(1, 3)`) |
-| `proxy` | str \| None | Proxy URL nếu có |
-| `output_dir` | Path | Thư mục lưu raw data (`data/raw/{source_name}/`) |
-| `batch_size` | int | Số URL cào song song mỗi batch (mặc định: 10) |
-| `block_resources` | list[str] | Loại tài nguyên bị chặn (mặc định: image, media, font, stylesheet) |
+| `source_name` | (bắt buộc) | Tên định danh nguồn dữ liệu |
+| `batch_size` | 10 | Số URL fetch song song |
+| `max_retries` | 3 | Số lần thử lại khi gặp lỗi |
+| `delay_min` | 1.0 | Thời gian delay tối thiểu (giây) |
+| `delay_max` | 3.0 | Thời gian delay tối đa (giây) |
+| `output_dir` | `data/raw/` | Thư mục lưu JSON thô |
+| `use_playwright` | False | Bật Playwright cho portal cần JS |
+| `block_resources` | `[image, media, font, stylesheet]` | Tài nguyên bị chặn |
 
-### Phương thức
+### Các Phương thức Trừu tượng (phải override)
 
-```python
-class BaseScraper:
+`collect_urls(pages: int) -> list[str]` — Thu thập danh sách job URLs từ trang list.
 
-    # ─── Bắt buộc override ────────────────────────────────────────────────
+`parse_job_detail(html: str, url: str) -> dict` — Parse HTML/JSON của trang chi tiết thành raw dict.
 
-    def extract_job_urls(self, list_page_html: str) -> list[str]:
-        """Phase 1: Parse trang list → trả về list URL của từng job card."""
-        raise NotImplementedError
+### Các Phương thức Kế thừa Sẵn
 
-    def parse_job_detail(self, detail_html: str, url: str) -> dict:
-        """Phase 3: Parse trang detail 1 job → dict raw đầy đủ fields."""
-        raise NotImplementedError
+`fetch(url: str) -> str | None` — Fetch một URL với retry và exponential backoff. Tự động chọn Scrapling HTTP mode hoặc Playwright mode tùy cấu hình.
 
-    # ─── Phase 1: Collect URLs ────────────────────────────────────────────
+`fetch_details_batch(urls: list[str]) -> list[dict]` — Gọi `fetch()` song song cho danh sách URLs, gom kết quả, bỏ qua URL thất bại.
 
-    def collect_urls(self, pages: int) -> list[str]:
-        """Cào N trang list, gộp tất cả job URLs lại thành 1 list."""
+`deduplicate_urls(urls: list[str]) -> list[str]` — Truy vấn DB lấy các URL đã tồn tại, loại khỏi danh sách đầu vào.
 
-    # ─── Phase 2: Deduplicate ─────────────────────────────────────────────
+`run(pages: int) -> list[dict]` — Gọi tuần tự Phase 1 → 2 → 3, trả về list raw dicts.
 
-    def deduplicate_urls(self, urls: list[str]) -> list[str]:
-        """
-        1. Loại trùng trong chính batch (dedup nội bộ bằng set).
-        2. Query DB: loại các URL đã tồn tại trong bảng jobs.
-        Trả về chỉ các URL mới cần cào.
-        """
-
-    # ─── Phase 3: Batch detail fetch ─────────────────────────────────────
-
-    def fetch_details_batch(self, urls: list[str]) -> list[dict]:
-        """
-        Chia urls thành batches (batch_size), mỗi batch fetch song song
-        bằng ThreadPoolExecutor. Tổng hợp kết quả thành list[dict].
-        """
-
-    def fetch_one(self, url: str) -> str:
-        """
-        Fetch HTML một trang detail.
-        - HTTP mode : Scrapling HttpUrl (tắt image/media/font/css)
-        - Playwright: PlaywrightFetcher (block_resources theo cấu hình)
-        Có retry + exponential backoff.
-        """
-
-    # ─── Utility ──────────────────────────────────────────────────────────
-
-    def save_raw(self, data: list[dict], date_str: str) -> Path:
-        """Lưu list dict ra data/raw/{source}/{date}.json."""
-
-    def run(self, pages: int = 5) -> list[dict]:
-        """
-        Điểm vào chính — chạy toàn bộ 3 giai đoạn:
-          collect_urls → deduplicate_urls → fetch_details_batch → save_raw
-        """
-```
-
-### Tắt tài nguyên không cần thiết (block_resources)
-
-Khi fetch trang detail, BaseScraper chặn các loại tài nguyên không chứa dữ liệu text:
-
-| Resource type | Lý do chặn |
-|---|---|
-| `image` | Không cần thiết, chiếm băng thông lớn nhất |
-| `media` | Video/audio – không bao giờ cần |
-| `font` | File `.woff2`, `.ttf` – không ảnh hưởng HTML text |
-| `stylesheet` | File `.css` – không cần thiết cho parse dữ liệu |
-
-**Với Scrapling HTTP mode** (các portal ít chặn): truyền header `Accept` tối giản, không request thêm sub-resources.
-
-**Với Playwright mode** (JobStreet, LinkedIn): dùng `route.abort()` để hủy request trước khi gửi:
-
-```
-Browser phát hiện request tài nguyên
-        │
-        ├── type: "image"      → abort() → trang không load ảnh
-        ├── type: "media"      → abort()
-        ├── type: "font"       → abort()
-        ├── type: "stylesheet" → abort()
-        └── type: "document"   → fulfill() → cho phép load HTML
-            type: "script"     → fulfill() (giữ lại để render JS nếu cần)
-```
-
-**Kết quả thực tế:** thời gian load trang detail giảm 40–70% tùy portal.
-
-### Cơ chế Batch song song
-
-```
-urls = [url_1, url_2, ..., url_100]
-batch_size = 10
-
-Batch 1: [url_1..url_10]   → ThreadPoolExecutor(10 workers) → [html_1..html_10]
-Batch 2: [url_11..url_20]  → ThreadPoolExecutor(10 workers) → [html_11..html_20]
-...
-Batch 10:[url_91..url_100] → ThreadPoolExecutor(10 workers) → [html_91..html_100]
-
-Tổng thời gian: 10 × t_single_batch  (thay vì 100 × t_single_request)
-```
-
-- Giữa các batch: sleep random trong `delay_range` để tránh rate limit
-- Nếu 1 request trong batch lỗi: log warning + skip, không block cả batch
-
-### Cơ chế Deduplicate
-
-```
-Phase 1 output: [url_A, url_B, url_A, url_C, url_D]  (có trùng)
-                       │
-             Step 1: dedup nội bộ (set)
-                       │
-                       ▼
-              [url_A, url_B, url_C, url_D]
-                       │
-             Step 2: query DB
-             SELECT job_url FROM jobs
-             WHERE job_url IN (url_A, url_B, url_C, url_D)
-             → DB đã có: [url_A]
-                       │
-                       ▼
-              [url_B, url_C, url_D]  ← chỉ cào 3 thay vì 5
-```
+`save_raw(data: list[dict], date_str: str) -> Path` — Lưu kết quả vào `data/raw/{source_name}/{date_str}.json`.
 
 ### Cơ chế Retry
 
 ```
-fetch_one(url)
-    │ Lỗi (429 / 503 / timeout)
-    ▼
-Sleep 2^1 = 2s + jitter ngẫu nhiên
-Retry lần 2
-    │ Lỗi
-    ▼
-Sleep 2^2 = 4s + jitter
-Retry lần 3 (max_retries=3)
-    │ Lỗi
-    ▼
-Trả về None → batch bỏ qua URL này, ghi log warning
+Request thất bại (timeout / 429 / 503)
+  └─ Lần 1: wait 2^1 = 2s
+  └─ Lần 2: wait 2^2 = 4s
+  └─ Lần 3: wait 2^3 = 8s
+  └─ Lần 4: raise ScrapingException → log + skip URL này
 ```
 
 ---
 
-## Danh sách Scrapers
+## Tier 1 — Portal Scrapers
 
-> Mỗi scraper chỉ cần implement **2 phương thức**:
-> - `extract_job_urls(list_page_html)` → lấy URLs từ trang list
-> - `parse_job_detail(detail_html, url)` → parse trang detail 1 job
->
-> Toàn bộ logic collect → dedup → batch → retry do `BaseScraper` xử lý.
+### Bảng Tổng hợp 11 Portal
 
-### 1. TopCV (`topcv.py`)
+| Portal | Mode | Batch Size | Đặc điểm Kỹ thuật |
+|---|---|---|---|
+| TopCV | HTTP | 10 | HTML parsing, ít chống bot, data phong phú |
+| ITViec | HTTP + JSON | 15 | Có internal API, tập trung IT |
+| VietnamWorks | JSON API | N/A | Token auth, structured JSON, không cần Phase 1–3 |
+| JobsGO | HTTP | 15 | Đồng thời là nguồn company list |
+| Joboko | HTTP | 15 | Nhiều ngành nghề |
+| 123Job | HTTP | 10 | Volume lớn |
+| CareerViet | HTTP | 10 | Tập trung mid-senior |
+| CareerLink | HTTP | 10 | Ngành FDI, logistics |
+| Ybox | HTTP | 15 | Tập trung fresher, sinh viên |
+| JobStreet | Playwright | 5 | JavaScript challenge, cần browser |
+| LinkedIn | Playwright + session | 3 | Login required, rate limit nghiêm ngặt |
 
-| Thuộc tính | Giá trị |
-|---|---|
-| URL list | `https://www.topcv.vn/viec-lam?page=N` |
-| Anti-bot | Trung bình |
-| Phương thức | Scrapling HTTP |
-| URL selector | `a.job-item-title` hoặc `a[href*="/viec-lam/"]` |
-| batch_size | 10 |
+### Ví dụ: TopCVScraper
 
-**Phase 1 - extract_job_urls:**
-- Tìm tất cả thẻ `<a>` có `href` trỏ đến trang detail job
-- Trả về absolute URL (prefix `https://www.topcv.vn` nếu là relative path)
+TopCVScraper kế thừa BaseScraper và override hai phương thức cốt lõi.
 
-**Phase 3 - parse_job_detail (fields lấy được):**
-- `title`, `company`, `location`, `salary_text`, `deadline`
-- `description`, `requirements`, `benefits` (các section riêng biệt)
-- `skills` (tags trong sidebar)
-- `level`, `job_type` (sidebar trang detail)
+`collect_urls()` duyệt N trang list tại `topcv.vn/viec-lam?page={i}`, dùng Scrapling selector `a.job-item-title` để lấy href, trả về list URLs tuyệt đối.
 
----
+`parse_job_detail()` extract các trường từ trang chi tiết: tiêu đề từ `h1.job-detail__info--title`, công ty từ `div.job-detail__company--name`, lương từ `div.job-detail__info--salary`, kỹ năng từ `span.tag__content`, và nội dung mô tả/yêu cầu/phúc lợi từ các div tương ứng.
 
-### 2. ITViec (`itviec.py`)
+Output là raw dict chứa HTML nguyên bản trong các trường `*_html`, chưa qua cleaning — việc làm sạch sẽ do lớp Transform đảm nhiệm.
 
-| Thuộc tính | Giá trị |
-|---|---|
-| URL list | `https://itviec.com/it-jobs?page=N` |
-| Anti-bot | Thấp |
-| Phương thức | Scrapling HTTP |
-| URL selector | `a.job-title__text` hoặc `h3.imy-job-card__title a` |
-| batch_size | 15 (anti-bot thấp → batch lớn hơn) |
+### Ví dụ: VietnamWorksScraper
 
-**Phase 3 - parse_job_detail (fields lấy được):**
-- `title`, `company`, `location`, `salary_text`, `skills` (trang list đã có nhưng lấy lại từ detail cho đầy đủ)
-- `description`, `requirements`, `benefits`
-- `posted_date` (dạng "2 days ago")
+VietnamWorks cung cấp API nội bộ trả về JSON structured, cho phép bỏ qua Phase 1–3 thông thường. Scraper gọi thẳng endpoint tìm kiếm với pagination, mỗi response chứa danh sách jobs đầy đủ thông tin. Cần gửi kèm token xác thực trong header.
+
+### Ví dụ: LinkedInScraper
+
+LinkedIn yêu cầu xác thực và giám sát bot nghiêm ngặt nhất. Scraper sử dụng Playwright với stealth plugin để ẩn dấu hiệu automation, duy trì session cookies từ lần đăng nhập trước, và giới hạn batch size xuống 3 với delay dài hơn (3–8s). Scraper này được bật/tắt qua Airflow Variable `ENABLE_LINKEDIN`.
 
 ---
 
-### 3. VietnamWorks (`vietnamworks.py`)
+## Tier 2 — Company Career Page Crawlers
 
-| Thuộc tính | Giá trị |
-|---|---|
-| URL | `https://www.vietnamworks.com/hrais/jobs/searches` |
-| Anti-bot | Trung bình |
-| Phương thức | **REST API** (ưu tiên hơn scraping HTML) |
-| Phân trang | JSON body `{"from": 0, "size": 20}` |
+### Bước 1 — Thu thập Danh sách Công ty (`company_list_crawler.py`)
 
-> **Đặc biệt:** VietnamWorks có REST API trả về JSON đầy đủ, **không cần Phase 1-2-3**. Gọi API trực tiếp, mỗi response đã chứa đủ fields. Chỉ áp dụng dedup theo `job_url` trước khi load.
+Crawl toàn bộ danh sách công ty từ `jobsgo.vn/cong-ty.html` qua phân trang.
 
-**API Request:**
-```http
-POST https://www.vietnamworks.com/hrais/jobs/searches
-Content-Type: application/json
+**Dữ liệu thu thập:**
+- `company_name`: từ `h3` hoặc attribute `title` trong thẻ `a.grid-item`
+- `jobsgo_url`: href → `/tuyen-dung/{company-slug}.html`
+- `num_jobs`: số tin tuyển dụng hiện tại
+- `business_sector`: ngành nghề chính
 
-{
-  "query": "",
-  "location_ids": [],
-  "industry_ids": [],
-  "from": 0,
-  "size": 20,
-  "sort": "posted_date"
-}
-```
+**Xử lý phân trang:** Kiểm tra `li.next` trong `ul.pagination` để xác định còn trang tiếp theo. Lặp đến khi không còn nút next.
 
-**Response:** `hits.hits[]._source` → object chứa đầy đủ thông tin job.
+**Output:** Bảng `companies` trong PostgreSQL với các trường trên, dùng làm input cho Bước 2.
 
----
+### Bước 2 — Cào Chi tiết Công ty (`company_detail_crawler.py`)
 
-### 4. JobsGO (`jobsgo.py`)
+Với mỗi URL từ Bước 1, cào trang chi tiết công ty để lấy website chính thức.
 
-| Thuộc tính | Giá trị |
-|---|---|
-| URL list | `https://jobsgo.vn/viec-lam.html?page=N` |
-| Anti-bot | Thấp |
-| Phương thức | Scrapling HTTP |
-| URL selector | `.job-item a.title` hoặc `h3.job-title a` |
-| batch_size | 15 |
+**Mapping selector (JobsGO):**
+- Tên: `h1.mb-3` hoặc `div.company-name h1`
+- Địa chỉ: `li > i.pb-heroicons-map-pin + span`
+- Website: `a[target="_blank"][rel="nofollow"]` (lấy href)
+- Lĩnh vực: `div.company-category-list a`
 
----
+**Xử lý đặc thù:** Một công ty có thể có nhiều địa chỉ (multi-branch) hoặc nhiều website. Lưu tất cả, ưu tiên website đầu tiên cho Bước 3.
 
-### 5. Joboko (`joboko.py`)
+**Output:** Cập nhật bảng `companies` với trường `website` và `address`.
 
-| Thuộc tính | Giá trị |
-|---|---|
-| URL list | `https://joboko.com/tim-kiem-viec-lam?page=N` |
-| Anti-bot | Thấp |
-| Phương thức | Scrapling HTTP |
-| URL selector | `.job-name a`, `h2.title a` |
-| batch_size | 15 |
+### Bước 3 — Tìm Career Page (`career_page_finder.py`)
 
----
+Từ `website` chính thức, áp dụng chiến lược đa tầng để tìm trang tuyển dụng:
 
-### 6. 123job (`job_123.py`)
+**Tầng 1 — Path Probing:** Thử lần lượt các đường dẫn phổ biến: `/careers`, `/jobs`, `/tuyen-dung`, `/work-with-us`, `/join-us`, `/about/careers`, `/en/careers`. Kiểm tra HTTP status 200 và nội dung có chứa từ khóa tuyển dụng.
 
-| Thuộc tính | Giá trị |
-|---|---|
-| URL list | `https://123job.vn/tim-viec-lam?page=N` |
-| Anti-bot | Trung bình |
-| Phương thức | Scrapling HTTP |
-| URL selector | `.job-title a`, `a.name-job` |
-| batch_size | 10 |
-| Ghi chú | File đặt tên `job_123.py` (Python không cho phép tên bắt đầu bằng số) |
+**Tầng 2 — Navigation Parsing:** Fetch trang chủ, parse menu navigation (thẻ `nav`, `header`), tìm link có text chứa "career", "tuyển dụng", "việc làm", "join", "work with us".
 
----
+**Tầng 3 — Sitemap Analysis:** Fetch `/sitemap.xml`, tìm URL chứa các từ khóa tuyển dụng trong danh sách URL.
 
-### 7. CareerViet (`careerviet.py`)
+**Tầng 4 — ATS Detection:** Nhận diện hệ thống ATS qua đặc điểm URL hoặc DOM: Workable (workable.com/jobs), Greenhouse (boards.greenhouse.io), Lever (jobs.lever.co), BambooHR (bamboohr.com/jobs), SmartRecruiters (jobs.smartrecruiters.com). Nếu phát hiện, chuyển sang adapter tương ứng.
 
-| Thuộc tính | Giá trị |
-|---|---|
-| URL list | `https://careerviet.vn/viec-lam/tim-kiem.html?page=N` |
-| Anti-bot | Trung bình |
-| Phương thức | Scrapling HTTP |
-| URL selector | `a.job-title`, `.job-item h3 a` |
-| batch_size | 10 |
+**Output:** Trường `career_url` trong bảng `companies`. Nếu không tìm được, đánh dấu `career_url = NULL` và ghi log.
+
+### Bước 4 — Cào Tin Tuyển dụng (`career_page_scraper.py`)
+
+Từ `career_url`, cào danh sách tin tuyển dụng và chi tiết từng tin.
+
+**Thách thức:** Mỗi công ty có cấu trúc HTML khác nhau hoàn toàn. Giải pháp áp dụng kỹ thuật phỏng đoán có cấu trúc:
+- Tìm các thẻ lặp lại có chứa cả tên vị trí lẫn link chi tiết (likely job cards)
+- Ưu tiên các CSS pattern phổ biến: `.job-item`, `.position`, `[data-job]`, `article`, `li` trong `ul.jobs`
+- Nếu là ATS đã biết, dùng adapter chuyên biệt với selector cứng
+
+**Output:** Raw dict với `source = "direct"` và `company_website = {domain}`, đưa vào cùng pipeline Transform → Load với Tier 1.
+
+### ATS Adapters
+
+Mỗi adapter chuyên biệt cho một hệ thống ATS:
+
+| ATS | Đặc điểm nhận dạng | Endpoint list | Selector/Format |
+|---|---|---|---|
+| Workable | URL chứa `workable.com` | `/jobs` | JSON widget API |
+| Greenhouse | URL chứa `boards.greenhouse.io` | `/jobs` | HTML có cấu trúc chuẩn |
+| Lever | URL chứa `jobs.lever.co` | Root page | HTML + JSON-LD |
+| BambooHR | URL chứa `bamboohr.com` | `/jobs` | JSON API công khai |
+| SmartRecruiters | URL chứa `smartrecruiters.com` | `/jobs` | REST API |
 
 ---
 
-### 8. CareerLink (`careerlink.py`)
+## Chiến lược Chống Phát hiện Chi tiết
 
-| Thuộc tính | Giá trị |
-|---|---|
-| URL list | `https://www.careerlink.vn/tim-viec-lam?page=N` |
-| Anti-bot | Thấp - Trung bình |
-| Phương thức | Scrapling HTTP |
-| URL selector | `.job-title a`, `h2.title a` |
-| batch_size | 10 |
+### Theo Mức độ Rủi ro
 
----
+**Rủi ro thấp (TopCV, JobsGO, Ybox):** Chỉ cần Random User-Agent và delay ngẫu nhiên 1–2s là đủ.
 
-### 9. Ybox (`ybox.py`)
+**Rủi ro trung bình (ITViec, VietnamWorks, CareerViet):** Bổ sung proxy rotation sau mỗi 50–100 request, block tài nguyên không cần thiết.
 
-| Thuộc tính | Giá trị |
-|---|---|
-| URL list | `https://ybox.vn/viec-lam?page=N` |
-| Anti-bot | Thấp |
-| Phương thức | Scrapling HTTP |
-| URL selector | `.job-name a`, `.job_item h3 a` |
-| batch_size | 15 |
-| Đặc điểm | Nhắm đến đối tượng sinh viên / fresher |
+**Rủi ro cao (JobStreet, LinkedIn):** Playwright Stealth Mode (ẩn `navigator.webdriver`, fake GPU/screen info), session persistence, delay dài hơn (3–8s), batch size nhỏ hơn (3–5), proxy xoay vòng thường xuyên hơn.
 
----
+### Random User-Agent Pool
 
-### 10. JobStreet (`jobstreet.py`) ⚠️
+Duy trì pool 20+ User-Agent strings của các trình duyệt phổ biến (Chrome, Firefox, Safari, Edge), xoay vòng ngẫu nhiên mỗi request. Cập nhật pool định kỳ để phản ánh phiên bản trình duyệt mới nhất.
 
-| Thuộc tính | Giá trị |
-|---|---|
-| URL list | `https://www.jobstreet.vn/vi-vn/job-search/?page=N` |
-| Anti-bot | **RẤT MẠNH** - Cloudflare, TLS fingerprinting |
-| Phương thức | Scrapling **Playwright mode** |
-| URL selector | `a[data-automation="jobTitle"]` |
-| batch_size | 5 (Playwright chậm hơn, giảm batch để tránh timeout) |
-| block_resources | image, media, font, stylesheet (áp dụng qua `route.abort()`) |
+### Resource Blocking
 
-**Chiến lược Phase 1:**
-- Dùng `PlaywrightFetcher` với stealth patches để vượt Cloudflare
-- Sau khi có list URLs → switch sang fetch detail bằng HTTP nếu detail page không cần JS
-- Nếu detail page cần JS: tiếp tục dùng Playwright với `block_resources`
+Tắt tải các tài nguyên không cần thiết cho việc extract text:
+- Image và video → tiết kiệm ~60% bandwidth
+- CSS stylesheet → không ảnh hưởng đến HTML structure
+- Web font → giảm thêm ~10% thời gian
+- Analytics scripts → tránh bị track
+
+Kết quả: thời gian fetch mỗi trang giảm 40–70%, giảm đáng kể "browser fingerprint" so với load đầy đủ.
 
 ---
 
-### 11. LinkedIn (`linkedin.py`) ⚠️⚠️
+## Xử lý Lỗi và Độ Bền Vững
 
-| Thuộc tính | Giá trị |
-|---|---|
-| URL list | `https://www.linkedin.com/jobs/search/?location=Vietnam&start=N` |
-| Anti-bot | **CỰC MẠNH** - login required, IP ban |
-| Phương thức | Playwright + cookies + proxy |
-| URL selector | `a.job-card-list__title` |
-| batch_size | 3 (rate limit rất nghiêm ngặt) |
-| block_resources | image, media, font, stylesheet |
+### Phân loại Lỗi
 
-**Chiến lược:**
-1. Đăng nhập thủ công một lần, lưu cookies → `keys/linkedin_cookies.json`
-2. Load cookies vào Playwright session
-3. Phase 1 cào tối đa 2-3 trang list (rate limit: ~30–50 job URLs/phiên)
-4. Dedup trước, chỉ fetch detail những job thực sự mới
-5. Batch size = 3, delay 5-10s giữa các batch
-
-> **Lưu ý:** Cân nhắc LinkedIn Jobs API nếu có thể xin access.
-
----
-
-## Output format (Raw Data)
-
-Mỗi scraper lưu dữ liệu thô ra `data/raw/{source}/{YYYY-MM-DD}.json` sau Phase 3:
-
-```json
-[
-  {
-    "source": "topcv",
-    "title": "Senior Data Engineer",
-    "company": "Công ty ABC",
-    "location": "Hà Nội",
-    "salary_text": "20 - 35 triệu",
-    "job_type_text": "Toàn thời gian",
-    "level_text": "Trưởng nhóm / Giám sát",
-    "description_html": "<p>Mô tả công việc...</p>",
-    "requirements_html": "<ul><li>3+ năm kinh nghiệm...</li></ul>",
-    "benefits_html": "<p>Bảo hiểm đầy đủ...</p>",
-    "skills_raw": ["Python", "Spark", "Airflow"],
-    "posted_date_text": "03/03/2026",
-    "deadline_text": "03/04/2026",
-    "job_url": "https://www.topcv.vn/viec-lam/senior-data-engineer-abc/123456.html",
-    "scraped_at": "2026-03-05T08:30:00Z"
-  }
-]
-```
-
-> **Lưu ý:** Chỉ chứa HTML thuần của các thẻ nội dung (`<p>`, `<ul>`, `<li>`, `<h3>`, `<strong>`, ...). Không có `<img>`, `<video>`, `<style>`, `<script>` trong output vì đã bị chặn từ lúc fetch.
-
----
-
-## Tóm tắt cấu hình batch_size theo portal
-
-| Portal | batch_size | Lý do |
+| Loại Lỗi | Hành động | Ghi log |
 |---|---|---|
-| ITViec | 15 | Anti-bot thấp, cho phép batch lớn |
-| JobsGO | 15 | Anti-bot thấp |
-| Ybox | 15 | Anti-bot thấp |
-| TopCV | 10 | Anti-bot trung bình |
-| 123job | 10 | Anti-bot trung bình |
-| CareerViet | 10 | Anti-bot trung bình |
-| CareerLink | 10 | Anti-bot trung bình |
-| Joboko | 15 | Anti-bot thấp |
-| JobStreet | 5 | Playwright chậm hơn, anti-bot mạnh |
-| LinkedIn | 3 | Rate limit cực nghiêm, Playwright |
-| VietnamWorks | N/A | API — không cần batch detail |
+| HTTP 429 (Rate limit) | Retry với backoff, tăng delay | WARNING |
+| HTTP 503 (Server error) | Retry 3 lần, sau đó skip | WARNING |
+| Timeout | Retry 2 lần, sau đó skip | WARNING |
+| Parse error (selector không tìm thấy) | Skip job này, tiếp tục | ERROR |
+| Playwright crash | Restart browser, retry | ERROR |
+| Network offline | Raise ngay, báo lỗi DAG | CRITICAL |
+
+### Partial Success
+
+Nếu một portal thất bại hoàn toàn, pipeline vẫn tiếp tục với các portal còn lại. Airflow DAG dùng trigger rule `all_done` cho task transform, cho phép xử lý dữ liệu từ các portal thành công ngay cả khi một số portal gặp lỗi. Kết quả được ghi đầy đủ vào bảng `scrape_logs`.
 
 ---
 
-## Xử lý lỗi
+## Output và Lưu trữ
 
-| Loại lỗi | HTTP Code | Xử lý |
-|---|---|---|
-| Rate limit | 429 | Retry với exponential backoff + tăng delay |
-| Server error | 500, 503 | Retry 3 lần, sau đó skip + log warning |
-| Blocked / CAPTCHA | 403 | Chuyển sang proxy khác, retry |
-| Timeout | - | Retry với timeout cao hơn |
-| Parse error | - | Log warning, skip job đó, tiếp tục batch |
-| URL đã có trong DB | - | Bỏ qua trong Phase 2 (dedup), không fetch |
-| Portal down | - | Fail task Airflow, gửi alert |
+### Format File Raw
 
----
-
-## Biến môi trường liên quan
-
-```bash
-PROXY_URL=http://proxy-provider.com:port
-PROXY_USERNAME=your_username
-PROXY_PASSWORD=your_password
 ```
+data/raw/
+├── topcv/
+│   ├── 2026-03-10.json
+│   └── 2026-03-11.json
+├── itviec/
+│   └── 2026-03-11.json
+├── direct/                  ← Company career pages
+│   └── 2026-03-11.json
+└── ...
+```
+
+Mỗi file JSON là một mảng các raw dict. Cấu trúc raw dict thay đổi theo từng portal/scraper nhưng sau Transform sẽ đồng nhất về JobSchema.
+
+### Retention Policy
+
+File raw trong `data/raw/` giữ lại 30 ngày rồi xóa tự động để tiết kiệm disk. File processed trong `data/processed/` có thể xóa sau khi đã load vào PostgreSQL thành công.

@@ -1,153 +1,195 @@
-# Kiến trúc Tổng thể - Job Scraper DE Project
+# 01 — Kiến trúc Tổng thể — JobInsight Platform
 
-## Mục tiêu
-
-Xây dựng một **ETL Pipeline tự động** thu thập dữ liệu việc làm từ nhiều trang tuyển dụng Việt Nam, chuẩn hóa về schema thống nhất, và lưu vào Data Warehouse để phục vụ phân tích.
-
----
-
-## Sơ đồ kiến trúc
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Apache Airflow (Orchestrator)               │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │              DAG: etl_job_portals_dag                    │   │
-│  │                                                          │   │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │   │
-│  │  │   EXTRACT    │→ │  TRANSFORM   │→ │     LOAD     │   │   │
-│  │  │  (Scraping)  │  │  (Cleaning)  │  │  (Upsert DW) │   │   │
-│  │  └──────────────┘  └──────────────┘  └──────────────┘   │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-         │                     │                    │
-         ▼                     ▼                    ▼
-┌─────────────────┐   ┌──────────────────┐  ┌─────────────────┐
-│  Job Portals    │   │   data/raw/       │  │   PostgreSQL    │
-│  (11 websites)  │   │   data/processed/ │  │   Data Warehouse│
-└─────────────────┘   └──────────────────┘  └─────────────────┘
-```
+> **Cập nhật:** 2026-03-11 | Phiên bản: 2.0  
+> Tài liệu này mô tả kiến trúc toàn hệ thống, bao gồm cả lớp ETL Pipeline cốt lõi lẫn các lớp NLP, Search, Recommendation và Web Application được bổ sung theo tầm nhìn nền tảng tình báo thị trường việc làm.
 
 ---
 
-## Các lớp chức năng
+## Mục tiêu Hệ thống
 
-### 1. Extract Layer (`src/extract/`)
-- **Mục tiêu**: Cào dữ liệu thô từ 11 trang tuyển dụng theo luồng 3 giai đoạn: thu thập URL → lọc trùng → batch cào chi tiết
-- **Công nghệ**: [Scrapling](https://github.com/D4Vinci/Scrapling) (HTTP mode & Playwright mode), ThreadPoolExecutor
-- **Tối ưu**: Tắt load image/video/font/stylesheet → giảm 40–70% thời gian fetch mỗi trang
-- **Output**: File JSON thô lưu vào `data/raw/{portal}/{YYYY-MM-DD}.json`
+Xây dựng **JobInsight Platform** — một nền tảng tích hợp gồm hai phần liên kết chặt chẽ:
 
-### 2. Transform Layer (`src/transform/`)
-- **Mục tiêu**: Làm sạch và chuẩn hóa dữ liệu thô về schema thống nhất
-- **Công nghệ**: Python, Pydantic v2, pandas
-- **Output**: List các `JobSchema` object đã validated, lưu vào `data/processed/`
+**Phần 1 — Data Engineering Core:** ETL Pipeline tự động thu thập dữ liệu việc làm từ ≥ 11 portal tuyển dụng Việt Nam và từ career page trực tiếp của các công ty, chuẩn hóa về schema thống nhất, và lưu vào Data Warehouse.
 
-### 3. Load Layer (`src/load/`)
-- **Mục tiêu**: Đẩy dữ liệu đã chuẩn hóa vào Data Warehouse
-- **Công nghệ**: psycopg2, SQLAlchemy, PostgreSQL `INSERT ON CONFLICT`
-- **Output**: Dữ liệu được upsert vào bảng `jobs` trong PostgreSQL
+**Phần 2 — Intelligence Layer:** Ứng dụng NLP, Information Retrieval, Recommendation System, và Learning Path Guidance trên nền dữ liệu đã thu thập, phục vụ tìm kiếm thông minh và hỗ trợ định hướng nghề nghiệp cho sinh viên mới tốt nghiệp và người có 0–2 năm kinh nghiệm.
 
 ---
 
-## Luồng dữ liệu chi tiết
+## Sơ đồ Kiến trúc Tổng thể
 
 ```
-Portal HTML/API
-      │
-      ▼
-Phase 1: collect_urls()      ← Cào N trang list, lấy list job URLs
-      │
-      ▼
-Phase 2: deduplicate_urls()  ← Loại trùng nội bộ + loại URL đã có trong DB
-      │
-      ▼
-Phase 3: fetch_details_batch()  ← Batch song song (10 URLs/batch)
-         block image/video/font/stylesheet → HTML thuần
-      │
-      ▼
-*Scraper.parse_job_detail()  ← Scrapling selectors → dict raw
-      │
-      ▼
-List[Dict] (raw)             ← Lưu vào data/raw/
-      │
-      ▼
-Cleaner.clean()              ← Xóa HTML tags, chuẩn hóa text
-      │
-      ▼
-Normalizer.normalize()       ← Chuẩn hóa lương, cấp bậc, job type
-      │
-      ▼
-JobSchema.model_validate()   ← Pydantic validation + type coercion
-      │
-      ▼
-List[JobSchema]              ← Lưu vào data/processed/
-      │
-      ▼
-load_jobs(batch)             ← Batch upsert vào PostgreSQL
-      │
-      ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                   ORCHESTRATION LAYER — Apache Airflow                   │
+│                                                                          │
+│   DAG: etl_job_portals   DAG: nlp_processing   DAG: recommendation_update│
+└──────────────────────────────────┬───────────────────────────────────────┘
+                                   │
+            ┌──────────────────────▼──────────────────────┐
+            │           DATA COLLECTION LAYER              │
+            │                                              │
+            │  ┌──────────────────┐  ┌──────────────────┐ │
+            │  │  Portal Scrapers  │  │  Company Crawlers│ │
+            │  │  (11 websites)    │  │  (Career Pages)  │ │
+            │  └────────┬─────────┘  └────────┬─────────┘ │
+            └───────────┼────────────────────┼────────────┘
+                        │                    │
+                        ▼                    ▼
+            ┌───────────────────────────────────────────────┐
+            │          DATA PIPELINE & WAREHOUSE            │
+            │                                               │
+            │  data/raw/  →  Transform  →  PostgreSQL DW   │
+            │  (JSON thô)    (Clean +       (jobs, skills,  │
+            │                Normalize +    companies,      │
+            │                Validate)      embeddings)     │
+            └───────────────────────┬───────────────────────┘
+                                    │
+            ┌───────────────────────▼───────────────────────┐
+            │             NLP PROCESSING LAYER              │
+            │                                               │
+            │  Skill Extraction (NER + Dictionary)          │
+            │  Text Embedding (PhoBERT / multilingual-e5)   │
+            │  Job Classification · Salary Analysis         │
+            └───────────────────────┬───────────────────────┘
+                                    │
+       ┌────────────────────────────▼────────────────────────────┐
+       │              INTELLIGENCE & SEARCH LAYER                │
+       │                                                         │
+       │  Hybrid Search (BM25 + Semantic + Structured Filter)    │
+       │  Recommendation Engine (Content + Collab + Knowledge)   │
+       │  Skill Gap Analysis · Learning Path Generator           │
+       └────────────────────────────┬────────────────────────────┘
+                                    │
+            ┌───────────────────────▼───────────────────────┐
+            │           WEB APPLICATION LAYER               │
+            │                                               │
+            │  FastAPI Backend (REST API)                   │
+            │  Next.js Frontend (SSR)                       │
+            │  Redis Cache · pgvector Search                │
+            └───────────────────────────────────────────────┘
+```
+
+---
+
+## Các Lớp Chức năng Chi tiết
+
+### Lớp 1 — Data Collection (`src/extract/`)
+
+**Mục tiêu:** Thu thập dữ liệu thô theo luồng ba giai đoạn — thu thập URL danh sách → lọc trùng → batch cào chi tiết song song.
+
+**Hai nguồn dữ liệu song song:**
+- **Tier 1 — Portal Scrapers:** 11 scraper cho các portal tuyển dụng lớn, sử dụng Scrapling (HTTP mode) và Playwright (JS-heavy portals).
+- **Tier 2 — Company Crawlers:** Crawler thu thập danh sách công ty từ JobsGO → tìm career page chính thức → cào tin tuyển dụng trực tiếp, đánh dấu `source = "direct"`.
+
+**Tối ưu hiệu suất:** Tắt tải image/video/font/stylesheet → giảm 40–70% thời gian fetch. Batch song song 10 URLs/batch với ThreadPoolExecutor.
+
+**Output:** File JSON thô tại `data/raw/{source}/{YYYY-MM-DD}.json`.
+
+### Lớp 2 — Data Pipeline & Warehouse (`src/transform/`, `src/load/`)
+
+**Mục tiêu:** Biến dữ liệu thô, không đồng nhất từ nhiều nguồn thành tập dữ liệu sạch, nhất quán trong một schema duy nhất.
+
+**Ba bước xử lý nối tiếp:**
+- **Cleaner:** Xóa HTML tags, chuẩn hóa encoding, parse ngày tháng đa format.
+- **Normalizer:** Chuẩn hóa lương về VND, cấp bậc về Enum, địa điểm về tên chuẩn.
+- **Schema Validator (Pydantic v2):** Type coercion, business rule validation, tạo `job_id` idempotent bằng SHA256(source + job_url).
+
+**Load chiến lược:** `INSERT ... ON CONFLICT DO UPDATE` vào PostgreSQL, chỉ cập nhật khi `scraped_at` mới hơn, tránh ghi thừa.
+
+### Lớp 3 — NLP Processing (`src/nlp/`)
+
+**Mục tiêu:** Trích xuất thông tin có cấu trúc từ văn bản mô tả công việc, tạo ra biểu diễn ngữ nghĩa phục vụ tìm kiếm và gợi ý.
+
+Bốn thành phần chính: Skill Extraction (NER + dictionary matching), Text Embedding (vector hóa ngữ nghĩa), Job Classification (phân ngành), Salary Analysis (parse và impute lương ẩn). Chi tiết trong tài liệu `05_nlp_processing.md`.
+
+### Lớp 4 — Intelligence & Search (`src/search/`, `src/recommendation/`, `src/learning/`)
+
+**Mục tiêu:** Tạo ra giá trị thực cho người dùng cuối từ dữ liệu đã được xử lý.
+
+- **Hybrid Search:** Kết hợp BM25 (sparse) và Semantic Search (dense vector) qua Reciprocal Rank Fusion, cho phép tìm kiếm theo kỹ năng/công cụ xuất hiện trong mô tả thay vì chỉ theo tiêu đề.
+- **Recommendation Engine:** Đa tầng — Content-based → Collaborative → Knowledge-based → Hybrid Ensemble.
+- **Skill Gap & Learning Path:** Phân tích khoảng cách kỹ năng theo Skill Dependency Graph, sinh lộ trình học có thứ tự và nguồn học cụ thể.
+
+### Lớp 5 — Web Application (`app/`)
+
+**Mục tiêu:** Giao diện người dùng cho nền tảng tìm việc thông minh.
+
+FastAPI backend phục vụ REST API, Next.js frontend với SSR cho SEO. Redis cache kết quả tìm kiếm và session. Chi tiết trong tài liệu `08_web_application.md`.
+
+---
+
+## Luồng Dữ liệu Chi tiết — ETL Core
+
+```
+Portal HTML / API / Career Page
+          │
+          ▼
+Phase 1: collect_urls()
+  └─ Cào N trang list, lấy danh sách job URLs
+
+          │
+          ▼
+Phase 2: deduplicate_urls()
+  └─ Loại trùng nội bộ + loại URL đã có trong DB (query PostgreSQL)
+
+          │
+          ▼
+Phase 3: fetch_details_batch()
+  └─ Batch song song (10 URLs/batch)
+  └─ Block: image / video / font / stylesheet
+
+          │
+          ▼
+*Scraper.parse_job_detail()
+  └─ Scrapling selectors → dict raw
+
+          │
+          ▼
+List[Dict] (raw)  →  Lưu vào data/raw/
+
+          │
+          ▼
+Cleaner.clean()
+  └─ Xóa HTML, parse date, chuẩn hóa whitespace
+
+          │
+          ▼
+Normalizer.normalize()
+  └─ Chuẩn hóa lương, cấp bậc, job type, location
+
+          │
+          ▼
+JobSchema.model_validate()
+  └─ Pydantic v2 validation + tạo job_id (SHA256)
+
+          │
+          ▼
+List[JobSchema]  →  Lưu vào data/processed/
+
+          │
+          ▼
+load_jobs(batch)
+  └─ Batch upsert vào PostgreSQL (INSERT ON CONFLICT)
+
+          │
+          ▼
 Table: jobs (PostgreSQL)
+          │
+          ▼ (async — NLP DAG)
+NLP Pipeline
+  └─ Skill Extraction → job_skills table
+  └─ Text Embedding   → job_embeddings table (pgvector)
 ```
 
 ---
 
-## Chiến lược chống bị chặn (Anti-detection)
+## Schema Thống nhất (JobSchema)
 
-| Kỹ thuật | Mô tả | Áp dụng cho |
-|---|---|---|
-| Random User-Agent | Xoay vòng User-Agent mỗi request | Tất cả |
-| Random Delay | Sleep ngẫu nhiên 1-3s giữa các batch | Tất cả |
-| Retry + Backoff | Exponential backoff khi gặp lỗi 429/503 | Tất cả |
-| Deduplicate trước khi fetch | Không request URL đã có trong DB | Tất cả |
-| Block Resources | Chặn image/video/font/stylesheet → giảm tải và vân tay trình duyệt | Tất cả |
-| Proxy Rotation | Đổi IP sau N request | Portal chặn mạnh |
-| Playwright Stealth | Bypass JavaScript challenge, TLS fingerprinting | JobStreet, LinkedIn |
-| Session Cookies | Giữ session đăng nhập | LinkedIn |
-
----
-
-## Cấu trúc thư mục
-
-```
-job_scraper_de_project/
-├── docs/                   # 📄 Tài liệu dự án (thư mục này)
-├── dags/                   # ✈️  Airflow DAGs & SQL scripts
-│   ├── etl_job_portals_dag.py
-│   └── sql/
-│       ├── create_tables.sql
-│       └── upsert_jobs.sql
-├── plugins/                # 🔌 Custom Airflow Plugins
-│   ├── hooks/
-│   └── operators/
-│       └── scrape_operator.py
-├── src/                    # 💻 Business logic chính
-│   ├── extract/            #   → 11 scrapers + BaseScraper
-│   ├── transform/          #   → Cleaner, Normalizer, Schemas
-│   └── load/               #   → DBConnection, load_to_dw
-├── data/
-│   ├── raw/                # 📥 JSON thô (không commit)
-│   └── processed/          # 📤 JSON đã chuẩn hóa (không commit)
-├── tests/                  # 🧪 Unit tests
-│   ├── test_extract/
-│   └── test_transform/
-├── logs/                   # 📋 Airflow logs (không commit)
-├── .env                    # 🔑 Credentials (không commit)
-├── Dockerfile
-├── docker-compose.yml
-└── requirements.txt
-```
-
----
-
-## Schema thống nhất (JobSchema)
-
-Mọi dữ liệu từ tất cả portal đều được chuẩn hóa về schema này:
+Mọi dữ liệu từ tất cả nguồn đều được chuẩn hóa về schema này trước khi lưu vào warehouse:
 
 | Field | Type | Mô tả |
 |---|---|---|
-| `job_id` | str | Hash duy nhất: SHA256(source + job_url) |
-| `source` | str | Tên portal: "topcv", "itviec", ... |
+| `job_id` | str | SHA256(source + job_url)[:16] — idempotent |
+| `source` | str | Tên portal: "topcv", "itviec", "direct", ... |
 | `title` | str | Tên vị trí tuyển dụng |
 | `company` | str | Tên công ty |
 | `location` | str | Tỉnh/thành phố (đã chuẩn hóa) |
@@ -156,28 +198,181 @@ Mọi dữ liệu từ tất cả portal đều được chuẩn hóa về schem
 | `salary_currency` | str | "VND" hoặc "USD" |
 | `job_type` | Enum | FULL_TIME / PART_TIME / CONTRACT / REMOTE |
 | `level` | Enum | INTERN / FRESHER / JUNIOR / MID / SENIOR / LEAD / MANAGER |
-| `skills` | list[str] | Danh sách kỹ năng yêu cầu |
+| `skills` | list[str] | Kỹ năng từ scraper (raw, chưa qua NLP extraction) |
 | `description` | str | Mô tả công việc (đã clean HTML) |
 | `requirements` | str | Yêu cầu ứng viên |
 | `benefits` | str | Phúc lợi |
 | `posted_date` | date | Ngày đăng (ISO 8601) |
 | `deadline` | date \| None | Hạn nộp hồ sơ |
-| `job_url` | str | URL gốc của job |
-| `scraped_at` | datetime | Thời điểm cào dữ liệu |
+| `job_url` | str | URL gốc |
+| `scraped_at` | datetime | Thời điểm cào |
 
 ---
 
-## Công nghệ sử dụng
+## Chiến lược Chống Phát hiện (Anti-detection)
+
+| Kỹ thuật | Mô tả | Áp dụng cho |
+|---|---|---|
+| Random User-Agent | Xoay vòng mỗi request | Tất cả |
+| Random Delay | Sleep 1–3s giữa các batch | Tất cả |
+| Retry + Exponential Backoff | Khi nhận 429/503 | Tất cả |
+| Deduplicate trước khi fetch | Không request URL đã có trong DB | Tất cả |
+| Block Resources | Chặn image/video/font/stylesheet | Tất cả |
+| Proxy Rotation | Đổi IP sau N request | Portal chặn mạnh |
+| Playwright Stealth | Bypass JS challenge, TLS fingerprint | JobStreet, LinkedIn |
+| Session Cookies | Giữ session đăng nhập | LinkedIn |
+| robots.txt compliance | Tuân thủ giới hạn tốc độ theo ToS | Tất cả |
+
+---
+
+## Cấu trúc Thư mục Dự án
+
+```
+job_scraper_de_project/
+├── docs/                        # Tài liệu dự án
+│   ├── 00_project_overview.md
+│   ├── 01_architecture.md       ← File này
+│   ├── 02_extract.md
+│   ├── 03_transform.md
+│   ├── 04_load.md
+│   ├── 05_airflow_dags.md
+│   ├── 06_infrastructure.md
+│   ├── 07_testing.md
+│   ├── 08_scrapling_portals_reference.md
+│   ├── 09_scrapling_usage_guide.md
+│   └── 10_website_source_analysis.md
+│   └── 11_company_career_analysis.md
+│   └── README.md
+│
+├── dags/                        # Airflow DAGs
+│   ├── etl_job_portals_dag.py
+│   ├── nlp_processing_dag.py    ← [Giai đoạn 2]
+│   ├── recommendation_dag.py    ← [Giai đoạn 4]
+│   └── sql/
+│       ├── create_tables.sql
+│       └── upsert_jobs.sql
+│
+├── plugins/                     # Custom Airflow Plugins
+│   ├── hooks/
+│   └── operators/
+│       ├── __init__.py
+│       └── scrape_operator.py
+│
+├── src/                         # Business logic
+│   ├── extract/
+│   │   ├── job_online/          # 11 portal scrapers
+│   │   │   ├── base_scraper.py
+│   │   │   ├── topcv.py
+│   │   │   ├── itviec.py
+│   │   │   ├── vietnamworks.py
+│   │   │   ├── jobsgo.py
+│   │   │   ├── joboko.py
+│   │   │   ├── job_123.py
+│   │   │   ├── careerviet.py
+│   │   │   ├── careerlink.py
+│   │   │   ├── ybox.py
+│   │   │   └── linkedin.py
+│   │   ├── company/
+│   │   │   └── jobsgo_company_crawler.py
+│   ├── transform/
+│   │   ├── cleaner.py
+│   │   ├── normalizer.py
+│   │   └── schemas.py
+│   ├── load/
+│   │   ├── db_connection.py
+│   │   └── load_to_dw.py
+│   ├── config.py
+│   ├── utils.py
+│
+├── data/
+│   ├── raw/
+│   │   ├── careerlink/
+│   │   ├── careerviet/
+│   │   ├── itviec/
+│   │   ├── job123/
+│   │   ├── joboko/
+│   │   ├── jobsgo/
+│   │   ├── topcv/
+│   │   ├── vietnamworks/
+│   │   ├── ybox/
+│   │   └── ...
+│   ├── processed/
+│   ├── company_list_jobsgo.csv
+│   ├── company_url_list_jobsgo.csv
+│
+├── tests/
+│   ├── test_extract/
+│   ├── test_transform/
+│   └── ...
+│
+├── logs/
+├── Dockerfile
+├── docker-compose.yml
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## Data Model Mở rộng
+
+Ngoài bảng `jobs` cốt lõi, hệ thống bổ sung các bảng phục vụ tính năng NLP và Intelligence:
+
+```
+jobs (job_id PK, source, title, company, location, salary_*, job_type, level,
+      skills[], description, requirements, benefits, posted_date, deadline,
+      job_url, scraped_at, created_at, updated_at)
+
+job_skills (job_id FK, skill_id FK, confidence FLOAT, position: title|desc|req)
+
+skills (skill_id PK, name, category, aliases[], parent_skill_id, difficulty_level)
+
+skill_prerequisites (skill_id FK, prerequisite_skill_id FK, is_hard_requirement BOOL)
+
+job_embeddings (job_id FK, embedding VECTOR(768), model_name, created_at)
+
+companies (company_id PK, name, website, career_url, industry, size, location,
+           source_portal, crawled_at)
+
+users (user_id PK, email, target_role, experience_years, location_pref,
+       salary_expectation, created_at, last_active_at)
+
+user_skills (user_id FK, skill_id FK, proficiency_level, source: declared|inferred)
+
+user_interactions (interaction_id PK, user_id FK, job_id FK,
+                   action_type: view|save|apply|skip, timestamp, session_id)
+
+user_learning_paths (user_id FK, target_role, progress_pct, milestone_completions[],
+                     created_at, updated_at)
+
+learning_resources (resource_id PK, title, url, platform, resource_type,
+                    duration_hours, cost, language, rating, skills_covered[],
+                    last_verified_at)
+
+scrape_logs (id PK, run_id, source, started_at, finished_at, status,
+             jobs_scraped, jobs_inserted, jobs_updated, jobs_skipped, error_message)
+```
+
+---
+
+## Công nghệ Sử dụng
 
 | Thành phần | Công nghệ | Phiên bản |
 |---|---|---|
 | Orchestrator | Apache Airflow | 2.8.x |
-| Scraping | Scrapling | ≥ 0.2.0 |
-| Browser automation | Playwright | ≥ 1.43.0 |
-| HTML parsing | BeautifulSoup4 + lxml | ≥ 4.12.0 |
-| Data validation | Pydantic | v2 |
-| Data processing | pandas | ≥ 2.2.0 |
+| Scraping (HTTP) | Scrapling | ≥ 0.2.0 |
+| Scraping (JS) | Playwright | ≥ 1.43.0 |
+| HTML Parsing | BeautifulSoup4 + lxml | ≥ 4.12.0 |
+| Data Validation | Pydantic | v2 |
+| Data Processing | pandas | ≥ 2.2.0 |
+| NLP (Vietnamese) | PhoBERT (VinAI) | — |
+| NLP (Multilingual) | multilingual-e5 | — |
+| NLP (NER) | spaCy | ≥ 3.7.0 |
+| Vector Storage | pgvector (PostgreSQL ext) | — |
 | Database | PostgreSQL | 15 |
-| Message broker | Redis | 7.2 |
-| Container | Docker + Compose | - |
+| Cache / Broker | Redis | 7.2 |
+| Backend API | FastAPI | ≥ 0.110.0 |
+| Frontend | Next.js | 14.x |
+| Container | Docker + Compose | — |
+| Monitoring | Prometheus + Grafana | — |
 | Testing | pytest | ≥ 8.1.0 |
