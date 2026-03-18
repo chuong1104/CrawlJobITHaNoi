@@ -1,7 +1,8 @@
-# JobInsight Platform — Tài liệu Tổng quan Dự án
 
-> **Phiên bản:** 1.0 — **Cập nhật:** 2026-03-11  
-> **Mục tiêu:** Xây dựng nền tảng thu thập, xử lý, và khai thác dữ liệu việc làm Việt Nam, kết hợp NLP, Information Retrieval, Recommendation System và Learning Path Guidance phục vụ sinh viên mới tốt nghiệp và người có ít kinh nghiệm (0–2 năm).
+# Job Scraper DE Project — Tổng quan Dự án
+
+> **Phiên bản:** 1.0 — **Cập nhật:** 2026-03-14  
+> **Mục tiêu:** Xây dựng pipeline ETL tự động thu thập, chuẩn hóa, và phân tích dữ liệu việc làm Việt Nam từ các portal lớn và career page công ty, phục vụ phân tích thị trường, gợi ý nghề nghiệp, và phát triển hệ thống thông minh hỗ trợ sinh viên, người mới đi làm.
 
 ---
 
@@ -28,7 +29,7 @@
 
 ### 1.1 Tuyên bố Sứ mệnh
 
-JobInsight Platform hướng đến việc trở thành **nền tảng tình báo thị trường việc làm** (Job Market Intelligence Platform) dành riêng cho thị trường Việt Nam, với trọng tâm phục vụ hai nhóm đối tượng chính: sinh viên mới tốt nghiệp và người đi làm có ít kinh nghiệm (1–2 năm). Thay vì chỉ là một trang tổng hợp việc làm thông thường, nền tảng cung cấp **trải nghiệm tìm kiếm thông minh**, **gợi ý cá nhân hóa**, và **lộ trình học tập có định hướng** dựa trên nhu cầu thực tế của thị trường lao động.
+JobInsight Platform hướng đến việc trở thành **nền tảng tình báo thị trường việc làm** (Job Market Intelligence Platform) dành riêng cho thị trường Việt Nam, với trọng tâm phục vụ hai nhóm đối tượng chính: sinh viên năm 3/4, mới tốt nghiệp và người đi làm có ít kinh nghiệm (1–2 năm). Thay vì chỉ là một trang tổng hợp việc làm thông thường, nền tảng cung cấp **trải nghiệm tìm kiếm thông minh**, **gợi ý cá nhân hóa**, và **lộ trình học tập có định hướng cá nhân hóa** dựa trên nhu cầu thực tế của thị trường lao động.
 
 ### 1.2 Các Mục tiêu Cốt lõi
 
@@ -57,7 +58,7 @@ Hệ thống được chia thành sáu lớp chức năng độc lập nhưng li
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │              ORCHESTRATION LAYER (Apache Airflow)                   │
-│  ETL DAG · NLP Processing DAG · Recommendation Update DAG          │
+│  ETL DAG · NLP Processing DAG · IR Index Rebuild DAG · Recommendation Update DAG          │
 └────────────────────────────┬────────────────────────────────────────┘
                              │
           ┌──────────────────▼──────────────────┐
@@ -67,19 +68,21 @@ Hệ thống được chia thành sáu lớp chức năng độc lập nhưng li
                              │
           ┌──────────────────▼──────────────────┐
           │      DATA PIPELINE & WAREHOUSE       │
-          │  Raw Storage → Transform → PostgreSQL│
+          │  Raw Storage → Transform → PostgreSQL|
+          │  normalized_tokens · job_embeddings|
           └──────────────────┬──────────────────┘
                              │
           ┌──────────────────▼──────────────────┐
           │         NLP PROCESSING LAYER         │
-          │  Skill Extraction · Text Embedding   │
-          │  Entity Recognition · Classification │
+          │     Normalization · Skill Extraction │          
+          │  Embedding · Classification · QScore │          
+          │  Implicit Inference · Exp. Level     │
           └──────────────────┬──────────────────┘
                              │
        ┌─────────────────────▼─────────────────────┐
        │      INTELLIGENCE & SEARCH LAYER           │
-       │  Information Retrieval · Recommendation    │
-       │  Skill Gap Analysis · Learning Path Engine │
+       │  IR Custom (BM25 in-process + pgvector)    │       
+       │  Recommendation · Skill Gap · Learning Path │
        └─────────────────────┬─────────────────────┘
                              │
           ┌──────────────────▼──────────────────┐
@@ -94,28 +97,29 @@ Hệ thống được chia thành sáu lớp chức năng độc lập nhưng li
 
 ### 3.1 Nguồn Dữ liệu Portal (Tier 1)
 
-Các portal tuyển dụng trực tuyến là nguồn dữ liệu chính, bao gồm:
+Các portal tuyển dụng trực tuyến là nguồn dữ liệu chính; dưới đây là danh sách đã được chuẩn hóa theo các scraper hiện có trong dự án (`src/extract/job_online`).
 
-| Portal | Phương thức | Đặc điểm kỹ thuật |
-|---|---|---|
-| TopCV | HTTP + HTML parsing | Dữ liệu phong phú, ít chống bot |
-| ITViec | HTTP + JSON API | Có API nội bộ, tập trung IT |
-| VietnamWorks | HTTP + JSON | Structured JSON, token auth |
-| CareerBuilder | HTTP | Nhiều ngành nghề |
-| JobsGO | HTTP + HTML | Có danh sách công ty |
-| Glints | HTTP + GraphQL | API GraphQL |
-| JobStreet | Playwright | JavaScript challenge |
-| LinkedIn | Playwright + Session | Login required, rate limit nghiêm ngặt |
-| MyWork | HTTP | Nhiều việc làm mới |
-| TimViecNhanh | HTTP | Volume lớn |
-| Bất cẩn.vn / Topcv clone | HTTP | Dữ liệu phụ |
+| Portal | Phương thức | Ghi chú kỹ thuật |
+|---|---:|---|
+| TopCV | HTTP (+ infinite-scroll / HTML parsing) | HTML-heavy, cần xử lý pagination/scroll; nhiều listing động |
+| ITviec | HTTP + JSON API | Có API/JSON endpoints nội bộ; ưu tiên JSON nếu khả dụng |
+| VietnamWorks | HTTP + JSON | Structured JSON responses; xác thực token/headers khi cần |
+| JobsGO | HTTP + HTML | Trang HTML với list company; pagination rõ ràng |
+| Job123 | HTTP + HTML | HTML parsing; đa dạng cấu trúc trường mô tả |
+| Joboko | HTTP + HTML | HTML parsing, đôi khi có client-side rendering nhẹ |
+| CareerLink | HTTP + HTML | Cần xử lý encoding và tag HTML không chuẩn |
+| Careerviet | HTTP + HTML | HTML parsing với trường cấu trúc khác biệt giữa company |
+| YBox | HTTP (+ infinite-scroll) | Infinite-scroll / AJAX load; throttle requests carefully |
+| LinkedIn | Playwright (headless browser) | Yêu cầu session/login, rate-limit cao, dùng cho các trường hợp cần thiết |
+| Company career pages (direct) | HTTP / Custom crawler | Crawl trực tiếp từ `website`/`/careers`/sitemap; phát hiện ATS (Greenhouse, Lever, Workable...) |
 
+Ghi chú: danh sách trên phản ánh các scraper đã triển khai trong codebase; các portal khác (Glints, JobStreet, MyWork, TimViecNhanh, CareerBuilder, v.v.) có thể được thêm vào sau khi triển khai scraper tương ứng hoặc khi cần mở rộng coverage.
 ### 3.2 Nguồn Dữ liệu Company Career Page (Tier 2)
 
 Đây là điểm khác biệt quan trọng so với các nền tảng thông thường. Quy trình thu thập từ career page công ty gồm bốn bước:
 
 **Bước 1 — Xây dựng Company Master List:**  
-Thu thập danh sách công ty từ JobsGO (jobsgo.vn/cong-ty.html), bao gồm tên công ty, URL chi tiết, số lượng tin tuyển dụng, và lĩnh vực hoạt động. Kết quả được lưu vào bảng `companies` trong database làm nguồn gốc.
+Thu thập danh sách công ty từ 1900 (1900.com.vn/cong-ty?locId=3), bao gồm tên công ty, URL chi tiết, số lượng tin tuyển dụng, và lĩnh vực hoạt động. Kết quả được lưu vào bảng `companies` trong database làm nguồn gốc.
 
 **Bước 2 — Cào Chi tiết Công ty:**  
 Với mỗi công ty, thu thập địa chỉ, website chính thức, lĩnh vực, quy mô. Trường `website` là đầu ra quan trọng nhất để thực hiện bước tiếp theo.
@@ -137,6 +141,28 @@ Hệ thống áp dụng nhiều kỹ thuật chống phát hiện theo mức đ�
 - **Trung bình:** Block tài nguyên không cần thiết (ảnh, font, CSS), Deduplication trước khi request
 - **Nâng cao:** Proxy Rotation, Playwright Stealth Mode, Session Cookie management
 
+### 3.4 Chế độ xử lý — Batch (Portals) vs Streaming (Career Pages)
+
+Để tối ưu hiệu suất và độ tươi của dữ liệu, hệ thống tách hai chế độ xử lý chính:
+
+- **Batch processing (Portals):**
+    - Dùng cho các portal tuyển dụng lớn (TopCV, ITviec, JobsGO, Joboko, v.v.) có phân trang rõ ràng.
+    - Luồng: collect_urls (theo trang) → deduplicate → fetch_details_batch (chia theo `batch_size`, mặc định 10–15).
+    - Thực thi theo lịch (Airflow DAG `etl_job_portals`) hoặc chạy theo lệnh bằng `run_scrapers_once.py --mode links|full`.
+    - Ưu điểm: hiệu suất cao khi xử lý volume lớn; dễ tập trung retry/batching và giảm tải DB.
+
+- **Streaming (Career Pages / Company Crawlers):**
+    - Dùng cho career page công ty (source = "direct") nơi tin tuyển dụng xuất hiện rải rác và cần phản hồi nhanh.
+    - Triển khai dưới dạng long-running crawler hoặc worker pool: khám phá career page liên tục, đẩy URL mới vào queue/message bus (Redis/RabbitMQ), worker nhận URL và xử lý ngay (fetch → parse → load).
+    - Hỗ trợ: polling interval, webhook (nếu có), hoặc change-detection (sitemap/ETag) để giảm request thừa.
+    - Ưu điểm: giảm độ trễ giữa khi tin xuất hiện và khi có trong DB; thích hợp cho các trang có ít tin nhưng cần tươi.
+
+**Gợi ý cấu hình:**
+- `batch_size` (portals): 10–15
+- `poll_interval` (career page crawler): 5–30 phút (tùy nguồn)
+- `max_scrolls` / `scroll_pause` cho infinite-scroll portals (TopCV/Ybox/VietnamWorks)
+- Sử dụng queue để tách discovery (I/O nhẹ) và fetch/parse (CPU/IO nặng)
+
 ---
 
 ## 4. Data Pipeline & Warehouse
@@ -147,27 +173,31 @@ Toàn bộ pipeline được điều phối bởi Apache Airflow, chạy theo l�
 
 **Extract:** Thu thập dữ liệu thô từ các nguồn, lưu dưới dạng JSON tại `data/raw/{portal}/{YYYY-MM-DD}.json`. Giai đoạn này ưu tiên tốc độ và độ đầy đủ, chấp nhận dữ liệu "bẩn".
 
-**Transform:** Làm sạch HTML tags, chuẩn hóa encoding, chuẩn hóa lương về đơn vị VND, chuẩn hóa tên địa điểm, phân loại job_type và level qua Enum. Pydantic v2 đảm bảo type safety và validation ở cuối giai đoạn này.
-
+**Transform:** Làm sạch HTML tags, chuẩn hóa encoding, chuẩn hóa lương về đơn vị VND, chuẩn hóa tên địa điểm, phân loại job_type và level qua Enum, chạy Text Normalization Pipeline để sinh normalized_tokens (xem Mục 6.3).
 **Load:** Upsert dữ liệu vào PostgreSQL sử dụng `INSERT ON CONFLICT` với `job_id` là SHA256 hash của (source + job_url), đảm bảo idempotency.
 
 ### 4.2 Schema Dữ liệu Cốt lõi
 
 Ngoài bảng `jobs` cơ bản đã được định nghĩa trong tài liệu kiến trúc, hệ thống mở rộng thêm các bảng phục vụ tính năng NLP và AI:
 
-**Bảng `jobs`** — Lưu trữ thông tin cơ bản đã chuẩn hóa (xem JobSchema trong tài liệu kiến trúc).
-
+**Bảng jobs** — Thông tin cơ bản đã chuẩn hóa, bổ sung hai cột phục vụ IR:
+    -normalized_tokens TEXT[] — Output của Text Normalization Pipeline, dùng để build BM25 index.
+    -tokens_updated_at TIMESTAMP — Thời điểm normalization lần cuối, dùng cho incremental rebuild.
 **Bảng `job_skills`** — Lưu mapping nhiều-nhiều giữa job và skill (job_id, skill_id, confidence_score, extracted_by).
 
-**Bảng `skills`** — Danh mục kỹ năng chuẩn hóa (skill_id, skill_name, skill_category, aliases).
+**Bảng `skills`** — Danh mục kỹ năng chuẩn hóa (skill_id, skill_name, skill_category, aliases
+TEXT[], parent_skill_id, difficulty_level). Trường aliases là từ điển ánh xạ trực tiếp phục vụ IR Alias Normalization.
 
 **Bảng `job_embeddings`** — Lưu vector embedding của mỗi job (job_id, embedding vector, model_version, created_at).
+**Bảng ir_index_versions** — Quản lý phiên bản BM25 index (version_id, build_started,
+build_finished, doc_count, index_file_path, status).
 
 **Bảng `companies`** — Thông tin công ty (company_id, name, website, career_url, industry, size, location).
 
 **Bảng `users`** — Hồ sơ người dùng (user_id, target_role, current_skills, experience_years, location_preference).
 
-**Bảng `user_interactions`** — Log tương tác (user_id, job_id, action_type: view/save/apply/skip, timestamp).
+**Bảng user_interactions_hot** — Log tương tác 30 ngày gần nhất (chi tiết schema tại Mục 4.4).
+**Bảng user_interactions_cold** — Archive tương tác > 30 ngày, export định kỳ sang S3 Parquet.
 
 **Bảng `learning_resources`** — Nguồn học liệu (resource_id, title, url, platform, resource_type, skills_covered, cost).
 
