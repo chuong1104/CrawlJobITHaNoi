@@ -11,7 +11,7 @@ class TopCVScraper(BaseScraper):
 	base_url = "https://www.topcv.vn"
 	batch_size = 10
 
-	DEFAULT_START_URL = "https://www.topcv.vn/tim-viec-lam-moi-nhat-tai-ha-noi-l1"
+	DEFAULT_START_URL = "https://www.topcv.vn/tim-viec-lam-data-science-tai-ha-noi-l1cr257cb261?type_keyword=1&sba=1&category_family=r257~b260_b261&locations=l1"
 
 	def __init__(self, start_url: str | None = None, **kwargs) -> None:
 		super().__init__(**kwargs)

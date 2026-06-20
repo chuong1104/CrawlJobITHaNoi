@@ -13,7 +13,7 @@ class CareerVietScraper(BaseScraper):
 	batch_size = 10
 
 	DEFAULT_START_URL = (
-		"https://careerviet.vn/viec-lam/ha-noi-l4-vi.html"
+		"https://careerviet.vn/viec-lam/cntt-phan-mem-tai-ha-noi-c1l4-vi.html"
 	)
 
 	def __init__(self, start_url: str | None = None, **kwargs) -> None:

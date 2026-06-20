@@ -14,7 +14,7 @@ class CareerLinkScraper(BaseScraper):
 
     # Start URL bạn chọn thủ công theo bộ lọc
     DEFAULT_START_URL = (
-        "https://www.careerlink.vn/tim-viec-lam-tai/ha-noi/HN"
+        "https://www.careerlink.vn/tim-viec-lam-tai/ha-noi/HN/c/cntt-phan-mem/19?career_levels=I%2CN%2CL%2CT&experience_levels=A%2CB"
     )
     # Use BaseScraper._block_media for resource blocking
     _block_media = BaseScraper._block_media

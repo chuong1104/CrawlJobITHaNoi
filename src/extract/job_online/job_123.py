@@ -14,7 +14,7 @@ class Job123Scraper(BaseScraper):
 	batch_size = 10
 
 	DEFAULT_START_URL = (
-		"https://123job.vn/tuyen-dung?s=0&jt=0&sort=new&type_keyword=0&cityId=1&q=&l=H%C3%A0+N%E1%BB%99i&city="
+		"https://123job.vn/tuyen-dung?s=0&jt=0&cat=IT+ph%E1%BA%A7n+m%E1%BB%81m&sort=new&type_keyword=0&cityId=1&q=data&l=H%C3%A0+N%E1%BB%99i&city="
 		
 	)
 

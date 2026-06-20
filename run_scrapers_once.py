@@ -1,12 +1,5 @@
-"""Run scraper modules once in sequence.
+from src.extract.job_online.vietnamworks import VietnamWorksScraper
 
-Usage:
-    python run_scrapers_once.py
-    python run_scrapers_once.py --pages 3
-    python run_scrapers_once.py --mode full --pages 2
-"""
-
-from __future__ import annotations
 
 import argparse
 import traceback
@@ -21,7 +14,6 @@ from src.extract.job_online.joboko import JobokoScraper
 from src.extract.job_online.jobsgo import JobsGoScraper
 from src.extract.job_online.topcv import TopCVScraper
 from src.extract.job_online.vietnamworks import VietnamWorksScraper
-from src.extract.job_online.ybox import YboxScraper
 from src.extract.job_online.linkedin import LinkedInScraper
 
 
@@ -41,7 +33,6 @@ RUNNERS: list[RunnerItem] = [
     RunnerItem("jobsgo", JobsGoScraper),
     RunnerItem("topcv", TopCVScraper),
     RunnerItem("vietnamworks", VietnamWorksScraper),
-    RunnerItem("ybox", YboxScraper),
     RunnerItem("linkedin", LinkedInScraper),
 ]
 

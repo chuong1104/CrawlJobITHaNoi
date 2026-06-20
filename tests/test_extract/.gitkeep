@@ -1,6 +1,0 @@
-# Tests cho lớp Extract
-# - test_base_scraper.py  : Test retry logic, proxy rotation
-# - test_topcv.py         : Test parse HTML TopCV có lấy đúng fields không
-# - test_itviec.py        : Test parse HTML ITViec
-# - test_vietnamworks.py  : Test gọi API VietnamWorks
-# (tương tự cho các portal khác)

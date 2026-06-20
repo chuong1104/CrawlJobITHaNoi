@@ -15,7 +15,7 @@ class VietnamWorksScraper(BaseScraper):
     batch_size = 10
 
     # l=24 là bộ lọc Hà Nội — KHÔNG strip query string
-    DEFAULT_START_URL = "https://www.vietnamworks.com/viec-lam?l=24"
+    DEFAULT_START_URL = "https://www.vietnamworks.com/viec-lam?q=data&l=24"
     MAX_SCROLLS = 100
     SCROLL_PAUSE = (1.5, 3.0)
 

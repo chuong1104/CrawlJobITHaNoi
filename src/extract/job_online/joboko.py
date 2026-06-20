@@ -13,7 +13,7 @@ class JobokoScraper(BaseScraper):
 	base_url = "https://vn.joboko.com"
 	batch_size = 12
 
-	DEFAULT_START_URL = "https://vn.joboko.com/jobs?l=2"
+	DEFAULT_START_URL = "https://vn.joboko.com/jobs?l=2&ind=30"
 
 	def __init__(self, start_url: str | None = None, **kwargs) -> None:
 		super().__init__(**kwargs)
