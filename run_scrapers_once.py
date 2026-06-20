@@ -22,6 +22,8 @@ from src.extract.job_online.jobsgo import JobsGoScraper
 from src.extract.job_online.topcv import TopCVScraper
 from src.extract.job_online.vietnamworks import VietnamWorksScraper
 from src.extract.job_online.ybox import YboxScraper
+from src.extract.job_online.linkedin import LinkedInScraper
+
 
 
 @dataclass
@@ -40,6 +42,7 @@ RUNNERS: list[RunnerItem] = [
     RunnerItem("topcv", TopCVScraper),
     RunnerItem("vietnamworks", VietnamWorksScraper),
     RunnerItem("ybox", YboxScraper),
+    RunnerItem("linkedin", LinkedInScraper),
 ]
 
 

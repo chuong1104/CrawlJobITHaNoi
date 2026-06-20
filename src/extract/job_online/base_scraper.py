@@ -301,7 +301,7 @@ class BaseScraper(abc.ABC):
             unique = [u for u in unique if u not in existing_urls]
 
         self.logger.info(
-            f"[Phase 2] {len(urls)} raw → {before} unique → {len(unique)} mới chưa có trong DB"
+            f"[Phase 2] {len(urls)} raw -> {before} unique -> {len(unique)} mới chưa có trong DB"
         )
         return unique
 
@@ -400,7 +400,7 @@ class BaseScraper(abc.ABC):
             json.dump(merged, f, ensure_ascii=False, indent=2)
 
         self.logger.info(
-            f"Saved {len(results)} records → {out_path} "
+            f"Saved {len(results)} records -> {out_path} "
             f"(tổng cộng trong file: {len(merged)})"
         )
         return out_path
