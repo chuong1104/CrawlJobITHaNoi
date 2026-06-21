@@ -19,7 +19,7 @@ python-dateutil>=2.9.0
 
 # --- Database ---
 psycopg2-binary>=2.9.9
-SQLAlchemy>=2.0.0
+SQLAlchemy>=1.4.0,<2.0.0
 
 # --- Transformation (dbt + DuckDB) ---
 dbt-core>=1.7.0
