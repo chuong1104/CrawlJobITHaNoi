@@ -1,27 +1,31 @@
 # ============================================================
-# Dockerfile - Custom Airflow image
-# Base: apache/airflow:2.8.1-python3.11
-# Thêm: Scrapling, Playwright, BeautifulSoup, pandas, pydantic
+
+# Airflow + Playwright + DuckDB + dbt
+
 # ============================================================
 
-FROM apache/airflow:2.8.1-python3.11
+FROM apache/airflow:2.10.5-python3.11
 
 USER root
 
-# Cài system dependencies cho Playwright (headless Chromium)
-RUN apt-get update && apt-get install -y \
-    wget curl gnupg ca-certificates \
-    libnss3 libatk1.0-0 libatk-bridge2.0-0 \
-    libcups2 libdrm2 libxkbcommon0 libxcomposite1 \
-    libxdamage1 libxfixes3 libxrandr2 libgbm1 \
-    libasound2 libpangocairo-1.0-0 libpango-1.0-0 \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && 
+apt-get install -y --no-install-recommends 
+build-essential 
+curl 
+wget 
+git && 
+apt-get clean && 
+rm -rf /var/lib/apt/lists/*
 
 USER airflow
 
-# Cài Python packages
-COPY requirements.txt /requirements.txt
-RUN pip install --no-cache-dir -r /requirements.txt
+COPY requirements.txt /tmp/requirements.txt
 
-# Cài Playwright browsers (Chromium)
-RUN playwright install chromium
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+RUN pip install --no-cache-dir 
+-r /tmp/requirements.txt
+
+RUN playwright install --with-deps chromium
+
+WORKDIR /opt/airflow

@@ -1,33 +1,14 @@
-# 14. Project Structure
+# 14. Project Structure (Local AWS Lakehouse)
 
 ## 1. Mục tiêu
 
-Mục tiêu của cấu trúc thư mục:
+Kiến trúc thư mục mới được tinh gọn tối đa để phục vụ cho mô hình **ELT (Extract, Load, Transform)** sử dụng Data Lakehouse.
 
-* Dễ mở rộng khi thêm website tuyển dụng mới.
-* Dễ bảo trì khi số lượng pipeline tăng lên.
-* Tách biệt crawler, ETL, warehouse và serving layer.
-* Hỗ trợ Docker.
-* Hỗ trợ Airflow.
-* Hỗ trợ CI/CD sau này.
-* Giống với cấu trúc Data Platform thực tế.
-
-Nguyên tắc:
-
-```text
-Một thư mục = một trách nhiệm.
-```
-
-Không trộn:
-
-```text
-Crawler
-SQL
-API
-Dashboard
-```
-
-vào cùng một nơi.
+Mục tiêu của cấu trúc:
+* **Tách biệt Storage và Compute:** Không lưu dữ liệu rác (JSON, CSV) trong thư mục code. Mọi dữ liệu đẩy thẳng lên Floci S3.
+* **Quy hoạch rõ ràng:** Phân biệt rõ phần code cào dữ liệu (Python/Playwright) và phần code xử lý dữ liệu (dbt/SQL).
+* **Chuẩn hóa Enterprise:** Thư mục giống hệt cách các công ty công nghệ tổ chức project Data Engineering thực tế.
+* **Hỗ trợ Docker và Airflow:** Đóng gói dễ dàng.
 
 ---
 
@@ -35,893 +16,97 @@ vào cùng một nơi.
 
 ```text
 job-it-data-platform/
-
-├── airflow/
-├── configs/
-├── data/
-├── docker/
-├── docs/
-├── logs/
-├── notebooks/
-├── scripts/
-├── sql/
-├── src/
-├── tests/
-├── .env
-├── .gitignore
-├── docker-compose.yml
-├── Makefile
-├── pyproject.toml
-├── requirements.txt
-└── README.md
+├── dags/                  # Airflow DAGs (Điều phối)
+├── dbt_jobitvn/           # dbt Project (Data Transformation)
+├── docs/                  # Tài liệu thiết kế hệ thống
+├── logs/                  # Log files của hệ thống
+├── plugins/               # Airflow Plugins & Custom Operators
+├── src/                   # Mã nguồn Python (Crawler & AWS Utils)
+├── tests/                 # Unit Tests cho Python
+├── docker-compose.yml     # Khởi chạy toàn bộ hệ thống
+├── README.md              # Giới thiệu dự án
+└── requirements.txt       # Các thư viện Python
 ```
 
 ---
 
-# 3. Thư mục airflow
+# 3. Thư mục `src` (Python Layer)
 
-```text
-airflow/
-
-├── dags/
-├── plugins/
-├── logs/
-└── config/
-```
-
----
-
-## dags
-
-```text
-airflow/dags/
-
-├── daily_job_pipeline.py
-├── weekly_maintenance.py
-├── monthly_cleanup.py
-├── search_reindex.py
-└── recommendation_refresh.py
-```
-
-Mỗi file là một DAG.
-
-Không viết toàn bộ logic ETL trong DAG.
-
-DAG chỉ gọi service.
-
-Ví dụ:
-
-```python
-PythonOperator(
-    python_callable=run_silver_pipeline
-)
-```
-
----
-
-## plugins
-
-```text
-airflow/plugins/
-
-├── operators/
-├── hooks/
-└── sensors/
-```
-
-Chứa custom component.
-
-Ví dụ:
-
-```text
-PostgresBulkLoadOperator
-S3FileSensor
-```
-
----
-
-# 4. Thư mục configs
-
-```text
-configs/
-
-├── crawler/
-├── database/
-├── logging/
-├── airflow/
-└── app/
-```
-
----
-
-Ví dụ:
-
-```text
-configs/crawler/topcv.yaml
-configs/crawler/itviec.yaml
-configs/crawler/jobsgo.yaml
-```
-
----
-
-Ví dụ:
-
-```yaml
-source_name: topcv
-
-base_url: https://www.topcv.vn
-
-request_delay: 2
-
-max_retries: 3
-
-headless: true
-```
-
----
-
-# 5. Thư mục data
-
-```text
-data/
-
-├── raw/
-├── staging/
-├── silver/
-├── gold/
-└── exports/
-```
-
-Chỉ dùng cho local development.
-
-Production sẽ dùng:
-
-```text
-S3
-MinIO
-Floci S3
-```
-
----
-
-## raw
-
-```text
-data/raw/
-
-├── topcv/
-├── itviec/
-├── jobsgo/
-└── ...
-```
-
-Chứa:
-
-```text
-html
-json
-response
-```
-
----
-
-## staging
-
-```text
-data/staging/
-```
-
-Dữ liệu đã parse.
-
----
-
-## silver
-
-```text
-data/silver/
-```
-
-Dữ liệu sạch.
-
----
-
-## gold
-
-```text
-data/gold/
-```
-
-Dataset phục vụ BI.
-
----
-
-# 6. Thư mục docker
-
-```text
-docker/
-
-├── airflow/
-├── postgres/
-├── minio/
-├── fastapi/
-└── nginx/
-```
-
----
-
-Ví dụ:
-
-```text
-docker/postgres/init.sql
-```
-
-Khởi tạo database.
-
----
-
-Ví dụ:
-
-```text
-docker/airflow/Dockerfile
-```
-
-Image Airflow.
-
----
-
-# 7. Thư mục docs
-
-```text
-docs/
-
-├── 01_business_problem.md
-├── 02_system_architecture.md
-├── ...
-└── 15_future_improvements.md
-```
-
-Toàn bộ tài liệu dự án.
-
----
-
-# 8. Thư mục logs
-
-```text
-logs/
-
-├── crawler/
-├── pipeline/
-├── airflow/
-└── api/
-```
-
----
-
-Ví dụ:
-
-```text
-logs/crawler/topcv.log
-logs/crawler/itviec.log
-```
-
----
-
-# 9. Thư mục notebooks
-
-```text
-notebooks/
-
-├── exploration/
-├── quality/
-├── recommendation/
-└── experiments/
-```
-
----
-
-Mục đích:
-
-```text
-EDA
-Prototype
-Experiment
-```
-
-Không dùng notebook cho production.
-
----
-
-# 10. Thư mục scripts
-
-```text
-scripts/
-
-├── setup/
-├── migrations/
-├── maintenance/
-└── deployment/
-```
-
----
-
-Ví dụ:
-
-```text
-create_schemas.py
-seed_sources.py
-vacuum_database.py
-```
-
----
-
-# 11. Thư mục sql
-
-```text
-sql/
-
-├── ddl/
-├── dml/
-├── dwh/
-├── marts/
-├── quality/
-└── indexes/
-```
-
----
-
-# 12. SQL DDL
-
-```text
-sql/ddl/
-
-├── create_sources.sql
-├── create_companies.sql
-├── create_jobs.sql
-├── create_job_snapshots.sql
-├── create_skills.sql
-└── ...
-```
-
----
-
-# 13. SQL DWH
-
-```text
-sql/dwh/
-
-├── create_dimensions.sql
-├── create_facts.sql
-├── load_dimensions.sql
-└── load_facts.sql
-```
-
----
-
-# 14. SQL Data Mart
-
-```text
-sql/marts/
-
-├── create_bi_marts.sql
-├── create_search_mart.sql
-├── create_recommendation_mart.sql
-└── refresh_marts.sql
-```
-
----
-
-# 15. SQL Quality Checks
-
-```text
-sql/quality/
-
-├── duplicate_jobs.sql
-├── missing_salary.sql
-├── invalid_experience.sql
-└── null_title.sql
-```
-
----
-
-# 16. Thư mục src
-
-Đây là phần quan trọng nhất.
+Phần này chỉ chịu trách nhiệm **Extract & Load** (Cào dữ liệu và đẩy lên Data Lake). Không có logic làm sạch dữ liệu ở đây.
 
 ```text
 src/
+├── extract/               # Code thu thập dữ liệu
+│   ├── base/              # Các class nền tảng (BaseCrawler)
+│   └── job_online/        # Logic cào từng trang cụ thể
+│       ├── topcv.py
+│       ├── linkedin.py
+│       └── itviec.py
+└── aws/                   # Các hàm tương tác với AWS S3
+    ├── s3_client.py       # Helper functions dùng boto3
+    └── exceptions.py
+```
 
-├── common/
-├── crawler/
-├── ingestion/
-├── staging/
-├── silver/
-├── warehouse/
-├── marts/
-├── search/
-├── recommendation/
-├── api/
-└── monitoring/
+*Lưu ý:* Các thư mục cũ như `src/transform` (làm sạch dữ liệu bằng Pandas) hay `src/load` (lưu vào Postgres) đã bị xóa bỏ vì dbt đảm nhận toàn bộ vai trò này.
+
+---
+
+# 4. Thư mục `dbt_jobitvn` (Transformation Layer)
+
+Đây là "bộ não" xử lý dữ liệu của toàn bộ dự án, sử dụng `dbt-duckdb` để biến đổi dữ liệu trên S3.
+
+```text
+dbt_jobitvn/
+├── models/
+│   ├── staging/           # Tầng Silver: Làm sạch, parse salary, format date
+│   │   ├── stg_topcv.sql
+│   │   └── stg_itviec.sql
+│   ├── intermediate/      # Lọc trùng lặp (Deduplication), nối các nguồn
+│   │   └── int_deduped_jobs.sql
+│   └── marts/             # Tầng Gold: Dimension và Fact tables
+│       ├── dim_company.sql
+│       ├── dim_skill.sql
+│       └── fct_job_posting.sql
+├── seeds/                 # Dữ liệu tĩnh (CSV) như danh sách kỹ năng chuẩn
+│   └── dim_skill_mapping.csv
+├── tests/                 # Các bài test chất lượng dữ liệu (Data Quality)
+├── macros/                # Các hàm Jinja tái sử dụng
+├── dbt_project.yml        # Cấu hình chính của dbt project
+└── profiles.yml           # Thông tin kết nối DuckDB -> S3
 ```
 
 ---
 
-# 17. common
+# 5. Thư mục `dags` (Orchestration Layer)
 
-Chứa code dùng chung.
+Chứa mã nguồn định nghĩa luồng chạy của Apache Airflow.
 
 ```text
-src/common/
-
-├── config.py
-├── constants.py
-├── logger.py
-├── hashing.py
-├── text_utils.py
-├── db.py
-├── s3.py
-└── exceptions.py
+dags/
+├── daily_job_pipeline.py  # DAG chính chạy hàng ngày
+└── scripts/               # Các shell script hỗ trợ cho DAG
 ```
+
+Một DAG chuẩn sẽ kích hoạt theo trình tự:
+1. Gọi script Python trong `src/extract/` để cào dữ liệu.
+2. Gọi `BashOperator` để chạy lệnh `dbt run --project-dir dbt_jobitvn` làm sạch dữ liệu.
 
 ---
 
-## Vai trò
+# 6. Các thay đổi quan trọng so với kiến trúc cũ
 
-Ví dụ:
+### Đã loại bỏ thư mục `data/`
+Trong các kiến trúc cũ, thường có thư mục `data/raw/` và `data/processed/` để lưu file CSV, JSON trên máy tính cá nhân. Việc này làm thư mục project rất nặng và dễ vô tình push data nhạy cảm lên Github.
+Với kiến trúc Lakehouse, mọi dữ liệu thô cào về được `boto3` đẩy thẳng lên **Floci S3** (một Docker container riêng mô phỏng AWS S3).
 
-```python
-from src.common.db import get_db
-```
-
-Tái sử dụng toàn dự án.
-
----
-
-# 18. crawler
-
-```text
-src/crawler/
-
-├── base/
-├── topcv/
-├── itviec/
-├── jobsgo/
-├── topdev/
-├── glints/
-└── ...
-```
+### Đã loại bỏ thư mục `sql/`
+Các file SQL DDL (Create Table) truyền thống đã bị loại bỏ vì `dbt` tự động tạo bảng hoặc view trong quá trình chạy. Không cần viết script tạo bảng thủ công nữa.
 
 ---
 
-# 19. Base Crawler
-
-Đây là phần rất quan trọng.
-
-```text
-src/crawler/base/
-
-├── base_crawler.py
-├── base_playwright_crawler.py
-├── base_scrapy_spider.py
-└── request_manager.py
-```
-
----
-
-## base_crawler.py
-
-Mọi crawler kế thừa.
-
-```python
-class BaseCrawler:
-    pass
-```
-
-Chứa:
-
-```text
-retry
-logging
-headers
-save raw
-metrics
-```
-
----
-
-Ví dụ:
-
-```python
-class TopCVCrawler(BaseCrawler):
-    pass
-```
-
----
-
-# 20. Ingestion Layer
-
-```text
-src/ingestion/
-
-├── raw_loader.py
-├── raw_validator.py
-├── crawl_metadata.py
-└── source_registry.py
-```
-
----
-
-Mục tiêu:
-
-```text
-Crawler
-↓
-Raw Table
-```
-
----
-
-# 21. Staging Layer
-
-```text
-src/staging/
-
-├── parsers/
-├── normalizers/
-├── mappers/
-└── loaders/
-```
-
----
-
-Ví dụ:
-
-```text
-salary_parser.py
-experience_parser.py
-location_parser.py
-```
-
----
-
-# 22. Silver Layer
-
-```text
-src/silver/
-
-├── deduplication/
-├── cdc/
-├── scd/
-├── lifecycle/
-└── loaders/
-```
-
----
-
-Đây là nơi xử lý:
-
-```text
-duplicate jobs
-job expiration
-job changes
-SCD Type 2
-```
-
----
-
-# 23. Warehouse Layer
-
-```text
-src/warehouse/
-
-├── dimensions/
-├── facts/
-├── loaders/
-└── sql/
-```
-
----
-
-Ví dụ:
-
-```text
-dim_company_loader.py
-dim_skill_loader.py
-fact_job_posting_loader.py
-```
-
----
-
-# 24. Data Mart Layer
-
-```text
-src/marts/
-
-├── bi/
-├── search/
-├── recommendation/
-└── refresh/
-```
-
----
-
-Ví dụ:
-
-```text
-build_skill_demand_mart.py
-build_salary_mart.py
-```
-
----
-
-# 25. Search Service
-
-```text
-src/search/
-
-├── indexing/
-├── ranking/
-├── query/
-└── api/
-```
-
----
-
-Ví dụ:
-
-```text
-etl
-```
-
-sẽ map sang:
-
-```text
-Data Engineer
-Data Analyst
-ETL Developer
-BI Engineer
-```
-
----
-
-# 26. Recommendation Service
-
-```text
-src/recommendation/
-
-├── feature_store/
-├── retrieval/
-├── ranking/
-└── training/
-```
-
----
-
-Ban đầu:
-
-```text
-Rule Based
-```
-
-Sau đó:
-
-```text
-Embedding
-Hybrid Search
-```
-
----
-
-# 27. API Layer
-
-```text
-src/api/
-
-├── routers/
-├── schemas/
-├── services/
-├── repositories/
-└── main.py
-```
-
----
-
-Ví dụ:
-
-```text
-GET /jobs
-GET /search
-GET /recommendations
-```
-
----
-
-# 28. Monitoring Layer
-
-```text
-src/monitoring/
-
-├── metrics.py
-├── alerts.py
-├── healthcheck.py
-└── dashboards.py
-```
-
----
-
-Theo dõi:
-
-```text
-crawl success rate
-duplicates
-pipeline runtime
-```
-
----
-
-# 29. Tests
-
-```text
-tests/
-
-├── unit/
-├── integration/
-├── e2e/
-└── fixtures/
-```
-
----
-
-## Unit Tests
-
-```text
-salary parser
-experience parser
-hashing
-normalization
-```
-
----
-
-## Integration Tests
-
-```text
-crawler → raw
-
-raw → silver
-
-silver → warehouse
-```
-
----
-
-## E2E
-
-```text
-crawl
-
-↓
-
-warehouse
-
-↓
-
-search
-
-↓
-
-API
-```
-
----
-
-# 30. Environment Variables
-
-```text
-.env
-```
-
-Ví dụ:
-
-```env
-POSTGRES_HOST=postgres
-
-POSTGRES_PORT=5432
-
-POSTGRES_DB=job_platform
-
-POSTGRES_USER=admin
-
-POSTGRES_PASSWORD=password
-
-MINIO_ENDPOINT=minio:9000
-
-MINIO_ACCESS_KEY=minio
-
-MINIO_SECRET_KEY=minio123
-```
-
----
-
-# 31. Docker Compose
-
-```text
-docker-compose.yml
-```
-
-Triển khai:
-
-```text
-Airflow
-PostgreSQL
-MinIO
-FastAPI
-Redis
-```
-
----
-
-# 32. Cấu trúc cuối cùng
-
-```text
-job-it-data-platform/
-
-├── airflow/
-├── configs/
-├── data/
-├── docker/
-├── docs/
-├── logs/
-├── notebooks/
-├── scripts/
-├── sql/
-├── src/
-│
-│   ├── common/
-│   ├── crawler/
-│   ├── ingestion/
-│   ├── staging/
-│   ├── silver/
-│   ├── warehouse/
-│   ├── marts/
-│   ├── search/
-│   ├── recommendation/
-│   ├── api/
-│   └── monitoring/
-│
-├── tests/
-├── .env
-├── docker-compose.yml
-├── requirements.txt
-└── README.md
-```
-
----
-
-# 33. Kiến trúc thư mục theo luồng dữ liệu
-
-```text
-crawler
-    ↓
-
-ingestion
-    ↓
-
-staging
-    ↓
-
-silver
-    ↓
-
-warehouse
-    ↓
-
-marts
-    ↓
-
-search
-recommendation
-BI
-web app
-```
-
-Đây là cấu trúc đủ lớn để mô phỏng một Data Platform thực tế nhưng vẫn có thể triển khai hoàn toàn trên máy cá nhân bằng Docker, Airflow, PostgreSQL và MinIO/Floci.
+# 7. Deployment / Khởi chạy
+Chỉ cần chạy file `docker-compose.yml`, các service sau sẽ được khởi tạo:
+* `floci`: Local AWS (Cung cấp endpoint S3 ở cổng 4566).
+* `airflow-webserver`: Giao diện điều phối (Cổng 8080).
+* `airflow-scheduler`: Động cơ lập lịch.
+* `api-serving`: FastAPI để cung cấp dữ liệu cho ứng dụng bên ngoài.
