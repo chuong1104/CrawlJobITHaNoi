@@ -9,6 +9,10 @@ playwright>=1.43.0
 lxml>=5.1.0
 httpx>=0.27.0          # REST API calls (VietnamWorks), scrapling dùng nội bộ
 curl_cffi>=0.7.0
+msgspec>=0.18.0
+browserforge>=1.0.0
+patchright>=0.0.1
+
 
 # --- Data Processing ---
 pandas>=2.2.0

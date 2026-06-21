@@ -26,11 +26,13 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir \
     -r /tmp/requirements.txt
 
-# Switch to root to install playwright system dependencies
+# Switch to root to install playwright and patchright system dependencies
 USER root
-RUN python -m playwright install-deps chromium
+RUN python -m playwright install-deps chromium && python -m patchright install-deps chromium
 
 USER airflow
-RUN playwright install chromium
+RUN playwright install chromium && python -m patchright install chromium && python -m browserforge update
 
 WORKDIR /opt/airflow
+
+

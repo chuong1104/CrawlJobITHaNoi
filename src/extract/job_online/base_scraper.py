@@ -403,6 +403,20 @@ class BaseScraper(abc.ABC):
             f"Saved {len(results)} records -> {out_path} "
             f"(tổng cộng trong file: {len(merged)})"
         )
+
+        # Upload to S3 Bronze
+        try:
+            from src.aws.s3_client import S3ClientWrapper
+            s3 = S3ClientWrapper()
+            s3_key = f"raw/{self.source_name}/{date_str}.json"
+            uploaded = s3.upload_file(out_path, "jobit-bronze", s3_key)
+            if uploaded:
+                self.logger.info(f"Successfully uploaded {out_path.name} to S3 bucket 'jobit-bronze' with key '{s3_key}'")
+            else:
+                self.logger.warning(f"Failed to upload {out_path.name} to S3 bucket 'jobit-bronze'")
+        except Exception as e:
+            self.logger.error(f"Error during S3 upload of {out_path.name}: {e}")
+
         return out_path
 
     # ------------------------------------------------------------------
