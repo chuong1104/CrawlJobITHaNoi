@@ -1,6 +1,7 @@
 
 import argparse
 import traceback
+import concurrent.futures
 from dataclasses import dataclass
 from typing import Callable
 
@@ -45,6 +46,19 @@ def _run_full(scraper: object, pages: int | None) -> int:
     return len(records)
 
 
+def _run_single_scraper(item: RunnerItem, run_fn: Callable, pages: int | None) -> tuple[str, bool, int, Exception | None]:
+    print(f"\n=== [{item.name}] START ===")
+    try:
+        scraper = item.factory()
+        count = run_fn(scraper, pages)
+        print(f"=== [{item.name}] DONE | total={count} ===")
+        return (item.name, True, count, None)
+    except Exception as exc:
+        err_msg = traceback.format_exc()
+        print(f"=== [{item.name}] FAILED | {exc} ===\n{err_msg}")
+        return (item.name, False, 0, exc)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run all configured scrapers one time.")
     parser.add_argument(
@@ -64,6 +78,12 @@ def main() -> int:
         action="store_true",
         help="Stop immediately when one scraper fails.",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="Number of concurrent scrapers to run. Default is 4.",
+    )
     args = parser.parse_args()
 
     run_fn = _run_links_only if args.mode == "links" else _run_full
@@ -71,22 +91,34 @@ def main() -> int:
     success = 0
     failed = 0
 
-    print(f"Start run mode={args.mode}, pages={args.pages}")
-    for item in RUNNERS:
-        print(f"\n=== [{item.name}] START ===")
-        try:
-            # CareerLink now implements parse_job_detail.
-            scraper = item.factory()
-            count = run_fn(scraper, args.pages)
-            print(f"=== [{item.name}] DONE | total={count} ===")
-            success += 1
-        except Exception as exc:
-            failed += 1
-            print(f"=== [{item.name}] FAILED | {exc} ===")
-            traceback.print_exc()
-            if args.stop_on_error:
-                print("Stop because --stop-on-error is enabled.")
-                break
+    print(f"Start run mode={args.mode}, pages={args.pages}, workers={args.workers}")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
+        futures = {
+            executor.submit(_run_single_scraper, item, run_fn, args.pages): item
+            for item in RUNNERS
+        }
+        
+        for future in concurrent.futures.as_completed(futures):
+            item = futures[future]
+            try:
+                name, is_success, count, exc = future.result()
+                if is_success:
+                    success += 1
+                else:
+                    failed += 1
+                    if args.stop_on_error:
+                        print("Stop because --stop-on-error is enabled.")
+                        for f in futures:
+                            f.cancel()
+                        break
+            except Exception as exc:
+                failed += 1
+                print(f"Unexpected error retrieving result for {item.name}: {exc}")
+                if args.stop_on_error:
+                    for f in futures:
+                        f.cancel()
+                    break
 
     print("\n--- SUMMARY ---")
     print(f"Success: {success}")
