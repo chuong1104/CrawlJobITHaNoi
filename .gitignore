@@ -4,6 +4,8 @@
 .env
 .env.*
 !.env.example
+*_session.json
+*linkedin.com*.json
 
 # =========================
 # Python
