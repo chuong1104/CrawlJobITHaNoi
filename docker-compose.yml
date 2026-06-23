@@ -21,6 +21,8 @@ x-airflow-common: &airflow-common
     - ./plugins:/opt/airflow/plugins
     - ./src:/opt/airflow/src
     - ./data:/opt/airflow/data
+    - ./scratch:/opt/airflow/scratch
+    - ./run_scrapers_once.py:/opt/airflow/run_scrapers_once.py
 
 services:
   postgres:

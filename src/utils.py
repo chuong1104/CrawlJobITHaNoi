@@ -52,20 +52,15 @@ def get_date_str(dt: Optional[datetime] = None) -> str:
 
 
 # ---------------------------------------------------------------------------
-# URL helpers
-# ---------------------------------------------------------------------------
+from urllib.parse import urljoin
+
+
 def make_absolute_url(url: str, base_url: str) -> str:
     """
     Đảm bảo URL là tuyệt đối.
-    Nếu url đã có scheme (http/https) → giữ nguyên.
-    Nếu url bắt đầu bằng '/' → ghép với base_url.
+    Sử dụng urljoin để ghép relative URL với base_url một cách chính xác.
     """
-    url = url.strip()
-    if url.startswith("http"):
-        return url
-    if url.startswith("/"):
-        return base_url.rstrip("/") + url
-    return url
+    return urljoin(base_url, url.strip())
 
 
 def normalize_url(url: str) -> str:

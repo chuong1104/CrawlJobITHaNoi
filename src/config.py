@@ -32,6 +32,42 @@ class ScraperConfig:
 
 
 # ---------------------------------------------------------------------------
+# Proxy Config
+# ---------------------------------------------------------------------------
+class ProxyConfig:
+    URL: str = os.getenv("PROXY_URL", "")
+    USERNAME: str = os.getenv("PROXY_USERNAME", "")
+    PASSWORD: str = os.getenv("PROXY_PASSWORD", "")
+
+
+# ---------------------------------------------------------------------------
+# AWS / Floci Config
+# ---------------------------------------------------------------------------
+class AWSConfig:
+    ENDPOINT_URL: str = os.getenv("AWS_ENDPOINT_URL", "http://localhost:4566")
+    ACCESS_KEY_ID: str = os.getenv("AWS_ACCESS_KEY_ID", "test")
+    SECRET_ACCESS_KEY: str = os.getenv("AWS_SECRET_ACCESS_KEY", "test")
+    DEFAULT_REGION: str = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+
+
+# ---------------------------------------------------------------------------
+# LinkedIn Credentials
+# ---------------------------------------------------------------------------
+class LinkedInConfig:
+    USERNAME: str = os.getenv("LINKEDIN_USERNAME") or os.getenv("LINKEDIN_EMAIL", "")
+    PASSWORD: str = os.getenv("LINKEDIN_PASSWORD") or os.getenv("LINKEDIN_PASS", "")
+
+
+# ---------------------------------------------------------------------------
+# Google Cloud Platform (BigQuery) Config
+# ---------------------------------------------------------------------------
+class GCPConfig:
+    CREDENTIALS: str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+    PROJECT_ID: str = os.getenv("BIGQUERY_PROJECT_ID", "")
+    DATASET: str = os.getenv("BIGQUERY_DATASET", "job_scraper")
+
+
+# ---------------------------------------------------------------------------
 # Database
 # ---------------------------------------------------------------------------
 class DBConfig:

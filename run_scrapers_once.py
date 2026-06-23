@@ -1,5 +1,3 @@
-from src.extract.job_online.vietnamworks import VietnamWorksScraper
-
 
 import argparse
 import traceback
@@ -14,7 +12,7 @@ from src.extract.job_online.joboko import JobokoScraper
 from src.extract.job_online.jobsgo import JobsGoScraper
 from src.extract.job_online.topcv import TopCVScraper
 from src.extract.job_online.vietnamworks import VietnamWorksScraper
-from src.extract.job_online.linkedin import LinkedInScraper
+from src.extract.job_online.linkedin import LinkedInScraperV2
 
 
 
@@ -33,7 +31,7 @@ RUNNERS: list[RunnerItem] = [
     RunnerItem("jobsgo", JobsGoScraper),
     RunnerItem("topcv", TopCVScraper),
     RunnerItem("vietnamworks", VietnamWorksScraper),
-    RunnerItem("linkedin", LinkedInScraper),
+    RunnerItem("linkedin", LinkedInScraperV2),
 ]
 
 
@@ -77,15 +75,8 @@ def main() -> int:
     for item in RUNNERS:
         print(f"\n=== [{item.name}] START ===")
         try:
+            # CareerLink now implements parse_job_detail.
             scraper = item.factory()
-
-            # CareerLink currently does not implement parse_job_detail.
-            if args.mode == "full" and item.name == "careerlink":
-                raise NotImplementedError(
-                    "careerlink.parse_job_detail() is not implemented yet. "
-                    "Use --mode links or implement detail parser first."
-                )
-
             count = run_fn(scraper, args.pages)
             print(f"=== [{item.name}] DONE | total={count} ===")
             success += 1

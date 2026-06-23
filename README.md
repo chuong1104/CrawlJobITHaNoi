@@ -57,23 +57,54 @@ Dữ liệu di chuyển theo chuẩn **Medallion Architecture**:
 ## ⚡ Khởi động nhanh (Local Development)
 
 ### 1. Cấu hình môi trường
+Sao chép file mẫu và cấu hình các thông số cần thiết:
 ```bash
 cp .env.example .env
-# Thiết lập thông tin cho Floci S3, dbt profile
 ```
 
-### 2. Khởi chạy Services (Floci, Airflow)
+Để tránh lỗi phân quyền ghi file log của Airflow trên Linux/macOS khi mount volume, hãy cấp quyền cho thư mục logs trước khi khởi chạy container:
 ```bash
-docker-compose up -d
+chmod -R 777 logs
 ```
 
-### 3. Tương tác với Floci S3 (AWS CLI)
+### 2. Khởi chạy Services (Docker Compose)
+Khởi chạy Airflow, Postgres, và Floci (AWS Local Emulator):
 ```bash
-export AWS_ENDPOINT_URL=http://localhost:4566
-aws s3 ls
+docker compose up -d
 ```
 
-### 4. Chạy dbt thủ công (Biến đổi dữ liệu)
+### 3. Khởi tạo S3 Buckets trên Floci
+Floci chạy giả lập S3 ở chế độ in-memory nên cần được tạo các bucket lưu trữ ở lần đầu khởi chạy. Chạy script để tạo tự động các bucket `jobit-bronze`, `jobit-silver`, và `jobit-gold`:
+```bash
+docker compose exec airflow env PYTHONPATH=/opt/airflow python /opt/airflow/src/aws/init_s3.py
+```
+
+### 4. Chạy Scrapers thủ công từng bước (Ví dụ với CareerLink)
+
+**Bước 1: Cào và lưu danh sách URL**
+```bash
+docker compose exec airflow env PYTHONPATH=/opt/airflow python /opt/airflow/src/run_careerlink_step_by_step.py --step links --pages 1
+```
+
+**Bước 2: Cào thông tin chi tiết các công việc từ danh sách URL và đẩy lên S3**
+```bash
+docker compose exec airflow env PYTHONPATH=/opt/airflow python /opt/airflow/src/run_careerlink_step_by_step.py --step details
+```
+
+### 5. Tương tác với Floci S3 (AWS CLI)
+Để kiểm tra dữ liệu đã đẩy lên Floci S3 trên máy local, sử dụng lệnh `aws cli` kèm endpoint giả lập:
+
+- **Liệt kê danh sách file đã cào:**
+  ```bash
+  aws --endpoint-url=http://localhost:4566 s3 ls s3://jobit-bronze/raw/careerlink/ --recursive
+  ```
+
+- **Xem trực tiếp nội dung file:**
+  ```bash
+  aws --endpoint-url=http://localhost:4566 s3 cp s3://jobit-bronze/raw/careerlink/2026-06-23.json -
+  ```
+
+### 6. Chạy dbt thủ công (Biến đổi dữ liệu)
 ```bash
 dbt run --profiles-dir ./dbt --project-dir ./dbt_jobitvn
 dbt test
