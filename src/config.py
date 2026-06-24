@@ -12,8 +12,9 @@ load_dotenv()
 # Paths
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).parent.parent
-DATA_RAW_DIR = BASE_DIR / "data" / "raw"
-DATA_PROCESSED_DIR = BASE_DIR / "data" / "processed"
+DATA_BRONZE_DIR = BASE_DIR / "data" / "bronze"
+DATA_SILVER_DIR = BASE_DIR / "data" / "silver"
+DATA_GOLD_DIR = BASE_DIR / "data" / "gold"
 
 
 # ---------------------------------------------------------------------------

@@ -33,15 +33,8 @@ class LinkedInScraperV2(BaseScraper):
         Hỗ trợ cả định dạng của Playwright (list of dict) và định dạng xuất ra từ Chrome Extension (dict chứa key 'cookies').
         """
         candidate_paths = [
-            Path("data/www.linkedin.com_24-06-2026.json"),
-            Path("www.linkedin.com_24-06-2026.json"),
-            Path("scratch/www.linkedin.com_24-06-2026.json"),
             Path("data/linkedin_session.json"),
-            Path("data/www.linkedin.com_23-06-2026.json"),
             Path("linkedin_session.json"),
-            Path("www.linkedin.com_23-06-2026.json"),
-            Path("scratch/linkedin_session.json"),
-            Path("scratch/www.linkedin.com_23-06-2026.json"),
         ]
 
         for path in candidate_paths:

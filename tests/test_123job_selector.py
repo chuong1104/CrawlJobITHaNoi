@@ -1,16 +1,13 @@
 """
-Test nhanh Job123Scraper — fetch 1 trang danh sách + 1 job detail.
-Chạy: python scratch/test_123job_selector.py
+test_123job_selector.py — Test nhanh Job123Scraper: fetch 1 trang + 1 job detail.
+Chạy: python tests/test_123job_selector.py
 """
 import sys
-sys.path.insert(0, ".")
 
 from scrapling import StealthyFetcher
-from scrapling.parser import Adaptor
-
 from src.extract.job_online.job_123 import Job123Scraper
 
-# ── Bước 1: Fetch trang danh sách, lấy 2 URL đầu ────────────────────────
+# ── Bước 1: Fetch trang danh sách ─────────────────────────────────────────
 LIST_URL = Job123Scraper.DEFAULT_START_URL
 print(f"\n[1] Fetching list page: {LIST_URL}")
 
@@ -31,7 +28,7 @@ if not urls:
     print("ERROR: không có URL nào!")
     sys.exit(1)
 
-# ── Bước 2: Fetch + parse chi tiết job đầu tiên ─────────────────────────
+# ── Bước 2: Fetch + parse chi tiết job đầu tiên ───────────────────────────
 test_url = urls[0]
 print(f"\n[2] Fetching detail: {test_url}")
 
@@ -51,7 +48,6 @@ for key, val in result.items():
     else:
         print(f"  {key:20s}: {val}")
 
-# Kiểm tra các field quan trọng
 REQUIRED = ["title", "company", "location", "salary", "deadline", "job_description"]
 missing = [f for f in REQUIRED if not result.get("job_" + f.replace("job_", "")) and not result.get(f)]
 if missing:

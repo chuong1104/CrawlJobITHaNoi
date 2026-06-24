@@ -21,7 +21,7 @@ from typing import Optional
 
 from scrapling import StealthyFetcher, DynamicFetcher
 
-from src.config import DATA_RAW_DIR, ScraperConfig
+from src.config import DATA_BRONZE_DIR, ScraperConfig
 from src.utils import ensure_dir, generate_job_id, get_date_str, setup_logger
 
 
@@ -63,7 +63,7 @@ class BaseScraper(abc.ABC):
         self.delay_range = delay_range
         self.proxy = proxy
         self.use_playwright = use_playwright
-        self.output_dir = output_dir or ensure_dir(DATA_RAW_DIR / self.source_name)
+        self.output_dir = output_dir or ensure_dir(DATA_BRONZE_DIR / self.source_name)
         self.logger = setup_logger(f"scraper.{self.source_name}")
 
     # ------------------------------------------------------------------
@@ -372,52 +372,35 @@ class BaseScraper(abc.ABC):
             self.logger.warning(f"[Phase 3] parse_job_detail lỗi [{url}]: {exc!r}")
             return None
 
-    # ------------------------------------------------------------------
-    # Save raw data
-    # ------------------------------------------------------------------
     def save_raw(
         self,
         results: list[dict],
         date_str: Optional[str] = None,
+        elapsed: float = 0.0,
     ) -> Path:
         """
-        Lưu list[dict] vào data/raw/{source_name}/{YYYY-MM-DD}.json.
-        Nếu file đã tồn tại (chạy lại cùng ngày) → merge/append, không overwrite.
+        Lưu kết quả qua BronzeManager để validate (RawJobPosting), chia jsonl,
+        lưu metadata và upload lên S3.
         """
-        date_str = date_str or get_date_str()
-        out_path = self.output_dir / f"{date_str}.json"
-
-        existing: list[dict] = []
-        if out_path.exists():
-            try:
-                with out_path.open("r", encoding="utf-8") as f:
-                    existing = json.load(f)
-            except (json.JSONDecodeError, OSError) as exc:
-                self.logger.warning(f"Không đọc được file cũ [{out_path}]: {exc!r}")
-
-        merged = existing + results
-        with out_path.open("w", encoding="utf-8") as f:
-            json.dump(merged, f, ensure_ascii=False, indent=2)
-
-        self.logger.info(
-            f"Saved {len(results)} records -> {out_path} "
-            f"(tổng cộng trong file: {len(merged)})"
-        )
-
-        # Upload to S3 Bronze
         try:
-            from src.aws.s3_client import S3ClientWrapper
-            s3 = S3ClientWrapper()
-            s3_key = f"raw/{self.source_name}/{date_str}.json"
-            uploaded = s3.upload_file(out_path, "jobit-bronze", s3_key)
-            if uploaded:
-                self.logger.info(f"Successfully uploaded {out_path.name} to S3 bucket 'jobit-bronze' with key '{s3_key}'")
-            else:
-                self.logger.warning(f"Failed to upload {out_path.name} to S3 bucket 'jobit-bronze'")
-        except Exception as e:
-            self.logger.error(f"Error during S3 upload of {out_path.name}: {e}")
+            from src.storage.bronze_manager import BronzeManager
+            from src.config import DATA_BRONZE_DIR
 
-        return out_path
+            manager = BronzeManager(local_bronze_dir=DATA_BRONZE_DIR, s3_bucket="jobit-bronze")
+            success = manager.process_and_upload(
+                source=self.source_name,
+                records=results,
+                scrape_duration_seconds=elapsed,
+            )
+
+            if success:
+                self.logger.info("Successfully processed and uploaded to Bronze.")
+            else:
+                self.logger.warning("Bronze process/upload completed with some errors.")
+        except Exception as e:
+            self.logger.error(f"Error during Bronze processing: {e}")
+
+        return self.output_dir
 
     # ------------------------------------------------------------------
     # Save links
@@ -487,9 +470,9 @@ class BaseScraper(abc.ABC):
 
         # Persist
         date_str = get_date_str(start_time)
-        self.save_raw(results, date_str)
-
         elapsed = (datetime.now() - start_time).total_seconds()
+        self.save_raw(results, date_str, elapsed)
+
         self.logger.info(
             f"=== XONG [{self.source_name}] | "
             f"{len(results)} jobs | {elapsed:.1f}s ==="

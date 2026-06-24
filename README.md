@@ -9,9 +9,9 @@ Hệ thống thu thập, phân tích dữ liệu việc làm từ các trang tuy
 | Layer | Công cụ | Vai trò |
 |---|---|---|
 | **Orchestration** | Apache Airflow | Điều phối toàn bộ vòng đời ETL/ELT pipeline. |
-| **Data Collection** | Scrapy & Playwright | Thu thập dữ liệu tĩnh và động (JS-rendered). |
+| **Data Collection** | Scrapling & Playwright | Thu thập dữ liệu tĩnh và động (JS-rendered). |
 | **Local Cloud Emulator** | **Floci** | Giả lập AWS S3. Nhẹ, khởi động trong 24ms, chuẩn AWS API. |
-| **Data Lake Storage** | Floci S3 | Lưu trữ toàn bộ dữ liệu (JSON, Parquet) theo mô hình Medallion (Bronze/Silver/Gold). |
+| **Data Lake Storage** | Floci S3 | Lưu trữ toàn bộ dữ liệu (JSONL, Parquet) theo mô hình Medallion (Bronze/Silver/Gold). |
 | **Compute Engine** | **DuckDB** | Truy vấn và phân tích siêu tốc trực tiếp trên file Parquet từ S3. |
 | **Transformation** | **dbt-core** | Xây dựng logic làm sạch, parse lương, và build Fact/Dim bằng SQL. |
 | **Serving** | FastAPI & Power BI | Cung cấp dữ liệu cho ứng dụng frontend và báo cáo Dashboard. |
@@ -25,13 +25,13 @@ Dữ liệu di chuyển theo chuẩn **Medallion Architecture**:
 ```text
 [Airflow DAG]
         |
-        ├── 1. [Extract & Load] Scraper 
-        │       └── Crawl dữ liệu -> Đẩy file JSON/HTML gốc lên `s3://jobit-bronze` (Floci S3).
+        ├── 1. [Extract & Load] Scraper
+        │       └── Crawl dữ liệu -> Validate (Pydantic) -> Đẩy JSONL lên `s3://jobit-bronze` (Floci S3).
         |
-        └── 2. [Transform] dbt + DuckDB 
-                ├── Staging (Silver): Parse lương, xử lý kiểu dữ liệu -> Lưu Parquet vào `s3://jobit-silver`.
-                ├── Intermediate: Lọc trùng lặp (Deduplication), trích xuất kỹ năng.
-                └── Marts (Gold): Xây dựng Star Schema (Fact/Dim) -> Lưu Parquet vào `s3://jobit-gold`.
+        └── 2. [Transform] dbt + DuckDB
+                ├── Silver: Parse lương, chuẩn hoá địa điểm -> Parquet `s3://jobit-silver`.
+                ├── Intermediate: Deduplication, trích xuất kỹ năng.
+                └── Gold (Marts): Star Schema (Fact/Dim) -> Parquet `s3://jobit-gold`.
 ```
 
 ---
@@ -48,8 +48,6 @@ Dữ liệu di chuyển theo chuẩn **Medallion Architecture**:
 | 123job | 123job.vn | Trung bình | Scrapling HTTP |
 | CareerViet | careerviet.vn | Trung bình | Scrapling HTTP |
 | CareerLink | careerlink.vn | Thấp | Scrapling HTTP |
-| Ybox | ybox.vn | Thấp | Scrapling HTTP |
-| JobStreet | jobstreet.vn | **Rất mạnh** | Playwright + Stealth |
 | LinkedIn | linkedin.com | **Cực mạnh** | Playwright + Proxy + Session Manager |
 
 ---
@@ -62,56 +60,60 @@ Sao chép file mẫu và cấu hình các thông số cần thiết:
 cp .env.example .env
 ```
 
-Để tránh lỗi phân quyền ghi file log của Airflow trên Linux/macOS khi mount volume, hãy cấp quyền cho thư mục logs trước khi khởi chạy container:
+Cấp quyền cho thư mục logs (tránh lỗi phân quyền trên Linux/macOS):
 ```bash
 chmod -R 777 logs
 ```
 
 ### 2. Khởi chạy Services (Docker Compose)
-Khởi chạy Airflow, Postgres, và Floci (AWS Local Emulator):
 ```bash
 docker compose up -d
 ```
 
 ### 3. Khởi tạo S3 Buckets trên Floci
-Floci chạy giả lập S3 ở chế độ in-memory nên cần được tạo các bucket lưu trữ ở lần đầu khởi chạy. Chạy script để tạo tự động các bucket `jobit-bronze`, `jobit-silver`, và `jobit-gold`:
+Chạy một lần duy nhất để tạo các bucket `jobit-bronze`, `jobit-silver`, `jobit-gold`:
 ```bash
-docker compose exec airflow env PYTHONPATH=/opt/airflow python /opt/airflow/src/aws/init_s3.py
+docker compose exec airflow env PYTHONPATH=/opt/airflow python -m src.storage.init_buckets
 ```
 
-### 4. Chạy Scrapers thủ công từng bước (Ví dụ với CareerLink)
+### 4. Chạy tất cả Scrapers song song
+Chạy toàn bộ scraper song song với `scripts/run_scrapers.py`:
 
-**Bước 1: Cào và lưu danh sách URL**
 ```bash
-docker compose exec airflow env PYTHONPATH=/opt/airflow python /opt/airflow/src/run_careerlink_step_by_step.py --step links --pages 1
+# Cào đầy đủ (lấy URL + parse chi tiết từng job)
+python scripts/run_scrapers.py --mode full --workers 4
+
+# Chỉ cào danh sách URL (nhanh hơn, dùng để test)
+python scripts/run_scrapers.py --mode links --pages 2
+
+# Xem tất cả options
+python scripts/run_scrapers.py --help
 ```
 
-**Bước 2: Cào thông tin chi tiết các công việc từ danh sách URL và đẩy lên S3**
+Hoặc chạy trong Docker container:
 ```bash
-docker compose exec airflow env PYTHONPATH=/opt/airflow python /opt/airflow/src/run_careerlink_step_by_step.py --step details
+docker compose exec airflow env PYTHONPATH=/opt/airflow \
+  python /opt/airflow/scripts/run_scrapers.py --mode full --workers 4
 ```
 
-### 5. Chạy tất cả Scrapers song song cùng lúc
-Để chạy toàn bộ các scrapers đã được cấu hình một cách tự động và song song, bạn có thể sử dụng script `run_scrapers_once.py`. Lệnh này hỗ trợ cờ `--workers` để tùy chỉnh số luồng chạy cùng lúc (mặc định là 4 luồng).
-
+### 5. Đăng nhập LinkedIn (lấy session cookie)
 ```bash
-docker compose exec airflow env PYTHONPATH=/opt/airflow python /opt/airflow/run_scrapers_once.py --mode full --workers 4
+python scripts/login_linkedin_interactive.py
 ```
 
 ### 6. Tương tác với Floci S3 (AWS CLI)
-Để kiểm tra dữ liệu đã đẩy lên Floci S3 trên máy local, sử dụng lệnh `aws cli` kèm endpoint giả lập:
 
-- **Liệt kê danh sách file đã cào:**
+- **Liệt kê dữ liệu Bronze:**
   ```bash
-  aws --endpoint-url=http://localhost:4566 s3 ls s3://jobit-bronze/raw/careerlink/ --recursive
+  aws --endpoint-url=http://localhost:4566 s3 ls s3://jobit-bronze/ --recursive
   ```
 
-- **Xem trực tiếp nội dung file:**
+- **Xem nội dung file:**
   ```bash
-  aws --endpoint-url=http://localhost:4566 s3 cp s3://jobit-bronze/raw/careerlink/2026-06-23.json -
+  aws --endpoint-url=http://localhost:4566 s3 cp s3://jobit-bronze/valid/source=topcv/... -
   ```
 
-### 7. Chạy dbt thủ công (Biến đổi dữ liệu)
+### 7. Chạy dbt thủ công
 ```bash
 dbt run --profiles-dir ./dbt --project-dir ./dbt_jobitvn
 dbt test
@@ -124,14 +126,26 @@ dbt test
 ```text
 job_scraper_de_project/
 ├── dags/               # Airflow DAGs
-├── dbt_jobitvn/        # Thư mục project dbt (models, tests, seeds)
+│   └── daily_pipeline.py
+├── dbt_jobitvn/        # dbt project (models, tests, seeds)
 ├── src/
-│   ├── extract/        # Scrapers (cào dữ liệu)
-│   └── aws/            # Utils tương tác với Floci S3 (boto3)
-├── docs/               # Tài liệu thiết kế hệ thống chi tiết
-├── docker-compose.yml  # Định nghĩa Airflow, Floci,...
-├── requirements.txt
-└── run_scrapers_once.py # Script chạy tất cả scrapers song song
+│   ├── config.py       # Cấu hình toàn cục (paths, env vars)
+│   ├── utils.py        # Shared utilities
+│   ├── extract/        # E - Scrapers (cào dữ liệu)
+│   │   └── job_online/ # 9 scrapers: topcv, itviec, linkedin...
+│   ├── storage/        # Storage layer (S3 client, BronzeManager)
+│   └── schema/         # Pydantic schemas (bronze, silver, gold)
+├── scripts/            # Executable scripts
+│   ├── run_scrapers.py # Chạy tất cả scrapers song song
+│   └── login_linkedin_interactive.py
+├── tests/              # Integration & selector tests
+├── data/               # Data lake local (gitignore'd)
+│   ├── bronze/         # Layer 1: Raw validated
+│   ├── silver/         # Layer 2: Cleaned
+│   └── gold/           # Layer 3: Aggregated
+├── docs/               # Tài liệu thiết kế
+├── docker-compose.yml
+└── requirements.txt
 ```
 
 ---

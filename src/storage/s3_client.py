@@ -6,7 +6,8 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-logger = logging.getLogger("aws.s3_client")
+logger = logging.getLogger("storage.s3_client")
+
 
 class S3ClientWrapper:
     def __init__(self):

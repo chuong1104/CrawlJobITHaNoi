@@ -20,9 +20,9 @@ x-airflow-common: &airflow-common
     - ./logs:/opt/airflow/logs
     - ./plugins:/opt/airflow/plugins
     - ./src:/opt/airflow/src
+    - ./scripts:/opt/airflow/scripts
     - ./data:/opt/airflow/data
-    - ./scratch:/opt/airflow/scratch
-    - ./run_scrapers_once.py:/opt/airflow/run_scrapers_once.py
+    - ./dbt_jobitvn:/opt/airflow/dbt_jobitvn
 
 services:
   postgres:
