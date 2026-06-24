@@ -22,7 +22,7 @@ from typing import Optional
 from scrapling import StealthyFetcher, DynamicFetcher
 
 from src.config import DATA_BRONZE_DIR, ScraperConfig
-from src.utils import ensure_dir, generate_job_id, get_date_str, setup_logger
+from src.utils import ensure_dir, fmt_duration, generate_job_id, get_date_str, setup_logger
 
 
 class ScrapingException(Exception):
@@ -65,6 +65,11 @@ class BaseScraper(abc.ABC):
         self.use_playwright = use_playwright
         self.output_dir = output_dir or ensure_dir(DATA_BRONZE_DIR / self.source_name)
         self.logger = setup_logger(f"scraper.{self.source_name}")
+        # Thống kê nội bộ
+        self._stat_urls_raw    = 0
+        self._stat_urls_new    = 0
+        self._stat_fetch_ok    = 0
+        self._stat_fetch_fail  = 0
 
     # ------------------------------------------------------------------
     # Abstract interface — subclass phải implement
@@ -120,24 +125,21 @@ class BaseScraper(abc.ABC):
                 html = self._do_fetch(url)
                 if html:
                     return html
-                # None từ fetcher → retry
                 wait = self._backoff(attempt)
                 self.logger.warning(
-                    f"Empty response [{url}] attempt {attempt}/{self.max_retries}, "
-                    f"waiting {wait:.1f}s"
+                    f"Empty response (attempt {attempt}/{self.max_retries}) → retry in {wait:.0f}s"
                 )
                 time.sleep(wait)
 
             except Exception as exc:
                 wait = self._backoff(attempt)
                 self.logger.warning(
-                    f"Error fetching [{url}]: {exc!r} "
-                    f"attempt {attempt}/{self.max_retries}, waiting {wait:.1f}s"
+                    f"Fetch error (attempt {attempt}/{self.max_retries}): {type(exc).__name__} → retry in {wait:.0f}s"
                 )
                 if attempt < self.max_retries:
                     time.sleep(wait)
 
-        self.logger.error(f"Giving up on [{url}] after {self.max_retries} attempts")
+        self.logger.error(f"Gave up after {self.max_retries} retries: {url}")
         return None
 
     def _do_fetch(self, url: str) -> Optional[str]:
@@ -213,26 +215,22 @@ class BaseScraper(abc.ABC):
 
         while current_url:
             if current_url in visited_pages:
-                self.logger.info(
-                    f"[Phase 1] URL trang bị lặp ({current_url}) -> dừng crawl"
-                )
+                self.logger.debug(f"[Phase 1] Loop detected at page {page_num} → stop")
                 break
             visited_pages.add(current_url)
 
-            page_label = f"{page_num}/{max_pages}" if max_pages is not None else f"{page_num}/AUTO"
-            self.logger.info(f"[Phase 1] Page {page_label} -> {current_url}")
+            page_label = f"{page_num}/{max_pages}" if max_pages is not None else f"p{page_num}"
+            self.logger.info(f"[Phase 1] {page_label} fetching...")
 
             html = self._fetch_html(current_url)
             if not html:
-                self.logger.warning(
-                    f"[Phase 1] Fetch thất bại ở page {page_num} -> dừng crawl"
-                )
+                self.logger.warning(f"[Phase 1] Fetch failed at page {page_num} → stop")
                 break
 
             try:
                 urls = self.extract_job_urls(html)
             except Exception as exc:
-                self.logger.warning(f"[Phase 1] extract_job_urls lỗi trang {page_num}: {exc!r}")
+                self.logger.warning(f"[Phase 1] extract_job_urls error p{page_num}: {type(exc).__name__}")
                 urls = []
 
             new_urls_count = 0
@@ -242,32 +240,24 @@ class BaseScraper(abc.ABC):
                     new_urls_count += 1
 
             self.logger.info(
-                f"[Phase 1] Tìm thấy {len(urls)} URL trên trang {page_num} "
-                f"(mới: {new_urls_count})"
+                f"[Phase 1] {page_label} → {len(urls)} URLs found, {new_urls_count} new"
             )
             all_urls.extend(urls)
 
-            # Điều kiện dừng an toàn: trang hiện tại không có data.
             if len(urls) == 0:
-                self.logger.info(
-                    f"[Phase 1] Page {page_num} không có job URL -> dừng crawl"
-                )
+                self.logger.info(f"[Phase 1] No URLs on page {page_num} → stop")
                 break
 
-            # Điều kiện dừng an toàn: không có URL mới so với các trang trước.
             if new_urls_count == 0:
-                self.logger.info(
-                    f"[Phase 1] Page {page_num} không có URL mới -> dừng crawl"
-                )
+                self.logger.info(f"[Phase 1] No new URLs on page {page_num} → stop")
                 break
 
-            # Nếu user truyền pages thì chỉ crawl tối đa số trang đó.
             if max_pages is not None and page_num >= max_pages:
                 break
 
             next_url = self.get_next_page_url(html, page_num, current_url)
             if not next_url:
-                self.logger.info("[Phase 1] Không tìm thấy trang kế tiếp -> dừng crawl")
+                self.logger.info("[Phase 1] No next page → stop")
                 break
 
             delay = random.uniform(*self.delay_range)
@@ -301,8 +291,10 @@ class BaseScraper(abc.ABC):
             unique = [u for u in unique if u not in existing_urls]
 
         self.logger.info(
-            f"[Phase 2] {len(urls)} raw -> {before} unique -> {len(unique)} mới chưa có trong DB"
+            f"[Phase 2] Dedup: {len(urls)} raw → {before} unique → {len(unique)} new"
         )
+        self._stat_urls_raw = len(urls)
+        self._stat_urls_new = len(unique)
         return unique
 
     # ------------------------------------------------------------------
@@ -321,19 +313,24 @@ class BaseScraper(abc.ABC):
         total_batches = len(batches)
 
         for idx, batch in enumerate(batches, 1):
-            self.logger.info(
-                f"[Phase 3] Batch {idx}/{total_batches}: {len(batch)} URLs"
-            )
+            t_batch = time.time()
+            self.logger.info(f"[Phase 3] [Batch {idx}/{total_batches}] {len(batch)} URLs processing...")
             batch_results = self._process_batch(batch)
             results.extend(batch_results)
+            ok   = len(batch_results)
+            fail = len(batch) - ok
+            self._stat_fetch_ok   += ok
+            self._stat_fetch_fail += fail
+            elapsed_b = time.time() - t_batch
             self.logger.info(
-                f"[Phase 3] Batch {idx}/{total_batches}: "
-                f"{len(batch_results)}/{len(batch)} thành công"
+                f"[Phase 3] [Batch {idx}/{total_batches}] "
+                f"✔ {ok}/{len(batch)} parsed  "
+                f"({fmt_duration(elapsed_b)})"
+                + (f"  ✖ {fail} failed" if fail else "")
             )
 
             if idx < total_batches:
                 delay = random.uniform(*self.delay_range)
-                self.logger.debug(f"[Phase 3] Sleep {delay:.1f}s trước batch tiếp theo")
                 time.sleep(delay)
 
         return results
@@ -352,7 +349,7 @@ class BaseScraper(abc.ABC):
                     if result:
                         results.append(result)
                 except Exception as exc:
-                    self.logger.warning(f"[Phase 3] Lỗi xử lý [{url}]: {exc!r}")
+                    self.logger.warning(f"[Phase 3] Error processing URL: {type(exc).__name__}")
         return results
 
     def _fetch_and_parse(self, url: str) -> Optional[dict]:
@@ -369,7 +366,7 @@ class BaseScraper(abc.ABC):
             job.setdefault("job_id", generate_job_id(self.source_name, url))
             return job
         except Exception as exc:
-            self.logger.warning(f"[Phase 3] parse_job_detail lỗi [{url}]: {exc!r}")
+            self.logger.warning(f"[Phase 3] Parse error: {type(exc).__name__}: {exc}")
             return None
 
     def save_raw(
@@ -450,32 +447,37 @@ class BaseScraper(abc.ABC):
         Returns:
             list[dict] — raw job data (đã lưu ra disk).
         """
-        self.logger.info(
-            f"=== BẮT ĐẦU scraper [{self.source_name}] | "
-            f"pages={(self._resolve_pages(pages) if pages is not None else 'AUTO')} ==="
-        )
+        pages_label = str(self._resolve_pages(pages)) if pages is not None else "AUTO"
+        self.logger.info(f"Start  pages={pages_label}")
         start_time = datetime.now()
+        t0 = time.monotonic()
 
-        # Phase 1
+        # Phase 1: collect URLs
+        t1 = time.monotonic()
         raw_urls = self._collect_urls(pages)
+        self.logger.info(f"[Phase 1] Done — {len(raw_urls)} URLs in {fmt_duration(time.monotonic()-t1)}")
 
-        # Phase 2
+        # Phase 2: dedup
         urls = self._deduplicate_urls(raw_urls, existing_urls)
         if not urls:
-            self.logger.info("Không có URL mới để cào.")
+            self.logger.info("No new URLs to scrape — skipping Phase 3")
             return []
 
-        # Phase 3
+        # Phase 3: fetch details
+        t3 = time.monotonic()
         results = self._fetch_details_batch(urls)
+        self.logger.info(
+            f"[Phase 3] Done — {self._stat_fetch_ok} parsed, "
+            f"{self._stat_fetch_fail} failed in {fmt_duration(time.monotonic()-t3)}"
+        )
 
         # Persist
         date_str = get_date_str(start_time)
-        elapsed = (datetime.now() - start_time).total_seconds()
+        elapsed = time.monotonic() - t0
         self.save_raw(results, date_str, elapsed)
 
         self.logger.info(
-            f"=== XONG [{self.source_name}] | "
-            f"{len(results)} jobs | {elapsed:.1f}s ==="
+            f"Finished — {len(results)} jobs saved  ⏱ {fmt_duration(elapsed)}"
         )
         return results
 
