@@ -25,7 +25,8 @@ job-it-data-platform/
 ├── tests/                 # Unit Tests cho Python
 ├── docker-compose.yml     # Khởi chạy toàn bộ hệ thống
 ├── README.md              # Giới thiệu dự án
-└── requirements.txt       # Các thư viện Python
+├── requirements.txt       # Các thư viện Python
+└── run_scrapers_once.py   # Script chạy tất cả scrapers song song cùng lúc
 ```
 
 ---

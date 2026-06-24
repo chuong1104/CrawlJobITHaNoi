@@ -91,7 +91,14 @@ docker compose exec airflow env PYTHONPATH=/opt/airflow python /opt/airflow/src/
 docker compose exec airflow env PYTHONPATH=/opt/airflow python /opt/airflow/src/run_careerlink_step_by_step.py --step details
 ```
 
-### 5. Tương tác với Floci S3 (AWS CLI)
+### 5. Chạy tất cả Scrapers song song cùng lúc
+Để chạy toàn bộ các scrapers đã được cấu hình một cách tự động và song song, bạn có thể sử dụng script `run_scrapers_once.py`. Lệnh này hỗ trợ cờ `--workers` để tùy chỉnh số luồng chạy cùng lúc (mặc định là 4 luồng).
+
+```bash
+docker compose exec airflow env PYTHONPATH=/opt/airflow python /opt/airflow/run_scrapers_once.py --mode full --workers 4
+```
+
+### 6. Tương tác với Floci S3 (AWS CLI)
 Để kiểm tra dữ liệu đã đẩy lên Floci S3 trên máy local, sử dụng lệnh `aws cli` kèm endpoint giả lập:
 
 - **Liệt kê danh sách file đã cào:**
@@ -104,7 +111,7 @@ docker compose exec airflow env PYTHONPATH=/opt/airflow python /opt/airflow/src/
   aws --endpoint-url=http://localhost:4566 s3 cp s3://jobit-bronze/raw/careerlink/2026-06-23.json -
   ```
 
-### 6. Chạy dbt thủ công (Biến đổi dữ liệu)
+### 7. Chạy dbt thủ công (Biến đổi dữ liệu)
 ```bash
 dbt run --profiles-dir ./dbt --project-dir ./dbt_jobitvn
 dbt test
@@ -123,7 +130,8 @@ job_scraper_de_project/
 │   └── aws/            # Utils tương tác với Floci S3 (boto3)
 ├── docs/               # Tài liệu thiết kế hệ thống chi tiết
 ├── docker-compose.yml  # Định nghĩa Airflow, Floci,...
-└── requirements.txt
+├── requirements.txt
+└── run_scrapers_once.py # Script chạy tất cả scrapers song song
 ```
 
 ---
