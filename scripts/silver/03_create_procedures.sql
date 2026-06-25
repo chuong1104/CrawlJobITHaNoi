@@ -93,6 +93,7 @@ CREATE OR REPLACE FUNCTION silver.sp_upsert_job(
     p_deadline_date DATE,
     p_is_intern BOOLEAN,
     p_is_fresher BOOLEAN,
+    p_skills_raw TEXT[],
     -- Audit
     p_scraped_at TIMESTAMPTZ,
     p_session_id BIGINT
@@ -104,6 +105,8 @@ DECLARE
     v_action VARCHAR;
     v_snapshot_id BIGINT;
     v_old_version SMALLINT;
+    v_skill_name TEXT;
+    v_skill_id INT;
 BEGIN
     -- 1. Tìm job hiện tại (Khớp theo source_id + source_job_id HOẶC canonical_url)
     SELECT job_id, latest_content_hash, job_status
@@ -143,7 +146,26 @@ BEGIN
             p_deadline_raw, p_deadline_date, p_is_intern, p_is_fresher, p_content_hash
         ) RETURNING snapshot_id INTO v_snapshot_id;
 
-        -- A3. Log event
+        -- A3. Insert Skills
+        IF p_skills_raw IS NOT NULL THEN
+            FOREACH v_skill_name IN ARRAY p_skills_raw
+            LOOP
+                v_skill_name := TRIM(v_skill_name);
+                IF v_skill_name != '' THEN
+                    INSERT INTO silver.skills (skill_code, display_name)
+                    VALUES (LOWER(v_skill_name), v_skill_name)
+                    ON CONFLICT (skill_code) DO NOTHING;
+                    
+                    SELECT skill_id INTO v_skill_id FROM silver.skills WHERE skill_code = LOWER(v_skill_name);
+                    
+                    INSERT INTO silver.job_snapshot_skills (snapshot_id, skill_id)
+                    VALUES (v_snapshot_id, v_skill_id)
+                    ON CONFLICT DO NOTHING;
+                END IF;
+            END LOOP;
+        END IF;
+
+        -- A4. Log event
         INSERT INTO silver.job_events (job_id, event_type, source_id, crawl_session_id, created_at)
         VALUES (v_job_id, 'JOB_CREATED', p_source_id, p_session_id, p_scraped_at);
 
@@ -208,13 +230,32 @@ BEGIN
             p_deadline_raw, p_deadline_date, p_is_intern, p_is_fresher, p_content_hash
         ) RETURNING snapshot_id INTO v_snapshot_id;
 
-        -- B3. Cập nhật latest hash vào jobs
+        -- B3. Insert Skills cho Snapshot mới
+        IF p_skills_raw IS NOT NULL THEN
+            FOREACH v_skill_name IN ARRAY p_skills_raw
+            LOOP
+                v_skill_name := TRIM(v_skill_name);
+                IF v_skill_name != '' THEN
+                    INSERT INTO silver.skills (skill_code, display_name)
+                    VALUES (LOWER(v_skill_name), v_skill_name)
+                    ON CONFLICT (skill_code) DO NOTHING;
+                    
+                    SELECT skill_id INTO v_skill_id FROM silver.skills WHERE skill_code = LOWER(v_skill_name);
+                    
+                    INSERT INTO silver.job_snapshot_skills (snapshot_id, skill_id)
+                    VALUES (v_snapshot_id, v_skill_id)
+                    ON CONFLICT DO NOTHING;
+                END IF;
+            END LOOP;
+        END IF;
+
+        -- B4. Cập nhật latest hash vào jobs
         UPDATE silver.jobs
         SET latest_content_hash = p_content_hash,
             job_status = 'UPDATED'
         WHERE job_id = v_job_id;
 
-        -- B4. Log event
+        -- B5. Log event
         INSERT INTO silver.job_events (job_id, event_type, source_id, crawl_session_id, reason, created_at)
         VALUES (v_job_id, 'CONTENT_UPDATED', p_source_id, p_session_id, 'Content hash changed', p_scraped_at);
 

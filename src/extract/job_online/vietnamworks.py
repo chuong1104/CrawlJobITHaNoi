@@ -230,7 +230,7 @@ class VietnamWorksScraper(BaseScraper):
 
         try:
             with sync_playwright() as pw:
-                browser = pw.chromium.launch(headless=False)
+                browser = pw.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
                 ctx_opts = {
                     "viewport": {"width": 1280, "height": 900},
                     "user_agent": (

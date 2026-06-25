@@ -38,9 +38,7 @@ SELECT
     posted_date_raw,
     scraped_at,
     batch_date,
-    
-    -- Generate hashes at this layer to ensure consistency across sources
-    {{ generate_identity_hash('source_code', 'company_raw', 'location_normalized', "'UNKNOWN'", "'UNKNOWN'", 'skills_raw') }} AS identity_hash,
-    {{ generate_content_hash('title_clean', 'description', "''", 'salary_min', 'salary_max', 'experience_min_years', 'deadline_raw') }} AS content_hash
+    identity_hash,
+    content_hash
 
 FROM unioned

@@ -57,6 +57,7 @@ echo "2.5. Chạy Sync Engine nạp vào PostgreSQL Silver..."
 docker compose exec airflow bash -c "
 cd /opt/airflow
 export POSTGRES_HOST=postgres
+export PYTHONPATH=/opt/airflow
 python src/silver/sync_engine.py
 "
 

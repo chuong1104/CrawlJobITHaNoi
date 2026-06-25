@@ -95,6 +95,7 @@ class SilverSyncEngine:
                             p_deadline_date := NULL,
                             p_is_intern := FALSE,
                             p_is_fresher := FALSE,
+                            p_skills_raw := %s::TEXT[],
                             p_scraped_at := %s,
                             p_session_id := %s
                         )
@@ -115,6 +116,7 @@ class SilverSyncEngine:
                         row['experience_min_years'] if not pd.isna(row['experience_min_years']) else None,
                         row['experience_max_years'] if not pd.isna(row['experience_max_years']) else None,
                         row['deadline_raw'],
+                        list(row['skills_raw']) if isinstance(row['skills_raw'], (list, tuple, pd.Series)) else None,
                         row['scraped_at'],
                         session_id
                     ))

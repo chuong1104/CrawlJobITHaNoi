@@ -18,6 +18,7 @@ class JobsGoScraper(BaseScraper):
 	def __init__(self, start_url: str | None = None, **kwargs) -> None:
 		kwargs.setdefault("delay_range", (8.0, 15.0))
 		kwargs.setdefault("max_retries", 5)
+		kwargs.setdefault("use_playwright", True)
 		super().__init__(**kwargs)
 		self.start_url = self._canonicalize_list_url(start_url or self.DEFAULT_START_URL)
 

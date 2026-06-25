@@ -35,6 +35,7 @@ final AS (
         experience_raw,
         experience_min_years,
         experience_max_years,
+        skills_raw,
         deadline_raw,
         posted_date_raw,
         scraped_at,

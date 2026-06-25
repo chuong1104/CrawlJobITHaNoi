@@ -582,8 +582,8 @@ class LinkedInScraperV2(BaseScraper):
             # Đợi tiêu đề job xuất hiện
             try:
                 page.wait_for_selector(
-                    "h1, .jobs-unified-top-card__job-title, .top-card-layout__title",
-                    timeout=20000
+                    "h1, h2, .jobs-unified-top-card__job-title, .top-card-layout__title, .topcard__title",
+                    timeout=5000
                 )
             except Exception:
                 self.logger.warning(f"Timeout chờ tiêu đề job tại {url}")

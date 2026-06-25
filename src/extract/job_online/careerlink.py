@@ -46,6 +46,35 @@ class CareerLinkScraper(BaseScraper):
                 
         return True
 
+    def _do_fetch(self, url: str) -> str | None:
+        """Thực hiện fetch bằng httpx, nếu lỗi hoặc bị chặn thì fallback sang Playwright."""
+        import httpx
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Referer": self.base_url
+        }
+        
+        html = None
+        try:
+            res = httpx.get(url, headers=headers, timeout=15.0, follow_redirects=True)
+            if res.status_code == 200:
+                html = res.text
+            else:
+                self.logger.warning(f"httpx trả về HTTP {res.status_code} cho {url}. Fallback sang Playwright...")
+        except Exception as e:
+            self.logger.warning(f"Lỗi httpx fetch: {e}. Fallback sang Playwright...")
+
+        # Nếu httpx thành công và HTML hợp lệ thì dùng luôn
+        if html and self._is_valid_html(html, url):
+            return html
+            
+        # Nếu không, dùng Playwright làm dự phòng thông qua BaseScraper
+        self.logger.info(f"Sử dụng Playwright để fetch: {url}")
+        return super()._do_fetch(url)
+
     # ------------------------------------------------------------------
     # Pagination
     # ------------------------------------------------------------------
