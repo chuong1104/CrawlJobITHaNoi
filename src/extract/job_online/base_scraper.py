@@ -124,23 +124,39 @@ class BaseScraper(abc.ABC):
             try:
                 html = self._do_fetch(url)
                 if html:
-                    return html
-                wait = self._backoff(attempt)
-                self.logger.warning(
-                    f"Empty response (attempt {attempt}/{self.max_retries}) → retry in {wait:.0f}s"
-                )
-                time.sleep(wait)
+                    if self._is_valid_html(html, url):
+                        return html
+                    else:
+                        wait = self._backoff(attempt)
+                        self.logger.warning(
+                            f"Blocked or Invalid HTML (attempt {attempt}/{self.max_retries}) → retry in {wait:.0f}s: {url}"
+                        )
+                else:
+                    wait = self._backoff(attempt)
+                    self.logger.warning(
+                        f"Empty response (attempt {attempt}/{self.max_retries}) → retry in {wait:.0f}s: {url}"
+                    )
+
+                if attempt < self.max_retries:
+                    time.sleep(wait)
 
             except Exception as exc:
                 wait = self._backoff(attempt)
                 self.logger.warning(
-                    f"Fetch error (attempt {attempt}/{self.max_retries}): {type(exc).__name__} → retry in {wait:.0f}s"
+                    f"Fetch error (attempt {attempt}/{self.max_retries}): {type(exc).__name__} → retry in {wait:.0f}s: {url}"
                 )
                 if attempt < self.max_retries:
                     time.sleep(wait)
 
         self.logger.error(f"Gave up after {self.max_retries} retries: {url}")
         return None
+
+    def _is_valid_html(self, html: str, url: str) -> bool:
+        """
+        Hook để subclass kiểm tra xem HTML có bị chặn hay không (CAPTCHA, 429...).
+        Mặc định là True.
+        """
+        return True
 
     def _do_fetch(self, url: str) -> Optional[str]:
         """Thực hiện 1 lần fetch, trả về HTML string hoặc None."""
@@ -177,10 +193,11 @@ class BaseScraper(abc.ABC):
                 return val.decode("utf-8") if isinstance(val, bytes) else str(val)
         return str(page)
 
-    @staticmethod
-    def _backoff(attempt: int) -> float:
-        """Exponential backoff với jitter: 2^attempt + random(0, 1)."""
-        return 2.0 ** attempt + random.uniform(0.0, 1.0)
+    def _backoff(self, attempt: int) -> float:
+        """Exponential backoff với jitter. Tăng thời gian chờ khi bị chặn."""
+        base_wait = 2.0 ** attempt
+        jitter = random.uniform(2.0, 5.0)
+        return base_wait + jitter + (5.0 * attempt)
 
     def _resolve_pages(self, pages: Optional[int]) -> Optional[int]:
         """

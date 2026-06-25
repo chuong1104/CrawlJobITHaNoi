@@ -1,0 +1,86 @@
+raw_skill,normalized_skill,skill_category,skill_subcategory
+python,python,language,backend
+py,python,language,backend
+nodejs,node.js,language,backend
+node.js,node.js,language,backend
+node,node.js,language,backend
+java,java,language,backend
+j2ee,java,language,backend
+spring boot,spring_boot,framework,backend
+spring,spring_boot,framework,backend
+c++,c++,language,systems
+cpp,c++,language,systems
+c#,c#,language,backend
+c sharp,c#,language,backend
+.net,.net,framework,backend
+php,php,language,backend
+laravel,laravel,framework,backend
+go,golang,language,backend
+golang,golang,language,backend
+ruby,ruby,language,backend
+rust,rust,language,systems
+javascript,javascript,language,frontend
+js,javascript,language,frontend
+typescript,typescript,language,frontend
+ts,typescript,language,frontend
+react,reactjs,framework,frontend
+reactjs,reactjs,framework,frontend
+react.js,reactjs,framework,frontend
+vue,vuejs,framework,frontend
+vuejs,vuejs,framework,frontend
+angular,angular,framework,frontend
+html,html_css,language,frontend
+css,html_css,language,frontend
+sql,sql,language,database
+mysql,mysql,database,rdbms
+postgresql,postgresql,database,rdbms
+postgres,postgresql,database,rdbms
+oracle,oracle,database,rdbms
+sql server,sql_server,database,rdbms
+mssql,sql_server,database,rdbms
+nosql,nosql,database,nosql
+mongodb,mongodb,database,nosql
+mongo,mongodb,database,nosql
+redis,redis,database,cache
+elasticsearch,elasticsearch,database,search
+cassandra,cassandra,database,nosql
+aws,aws,cloud,provider
+amazon web services,aws,cloud,provider
+gcp,gcp,cloud,provider
+google cloud,gcp,cloud,provider
+azure,azure,cloud,provider
+docker,docker,tool,devops
+kubernetes,kubernetes,tool,devops
+k8s,kubernetes,tool,devops
+linux,linux,tool,os
+git,git,tool,vcs
+github,git,tool,vcs
+gitlab,git,tool,vcs
+ci/cd,cicd,tool,devops
+jenkins,jenkins,tool,devops
+terraform,terraform,tool,devops
+ansible,ansible,tool,devops
+spark,apache_spark,tool,big_data
+apache spark,apache_spark,tool,big_data
+hadoop,hadoop,tool,big_data
+kafka,kafka,tool,big_data
+airflow,airflow,tool,orchestration
+dbt,dbt,tool,data_transformation
+snowflake,snowflake,database,dwh
+bigquery,bigquery,database,dwh
+redshift,redshift,database,dwh
+power bi,power_bi,tool,bi
+powerbi,power_bi,tool,bi
+tableau,tableau,tool,bi
+excel,excel,tool,analysis
+machine learning,machine_learning,domain,ai
+ml,machine_learning,domain,ai
+deep learning,deep_learning,domain,ai
+dl,deep_learning,domain,ai
+nlp,nlp,domain,ai
+computer vision,computer_vision,domain,ai
+cv,computer_vision,domain,ai
+agile,agile,soft_skill,methodology
+scrum,agile,soft_skill,methodology
+english,english,soft_skill,language
+tiếng anh,english,soft_skill,language

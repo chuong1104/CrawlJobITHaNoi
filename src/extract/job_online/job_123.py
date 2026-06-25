@@ -21,8 +21,30 @@ class Job123Scraper(BaseScraper):
     )
 
     def __init__(self, start_url: str | None = None, **kwargs) -> None:
+        kwargs.setdefault("delay_range", (8.0, 15.0))
+        kwargs.setdefault("max_retries", 5)
         super().__init__(**kwargs)
         self.start_url = self._canonicalize_list_url(start_url or self.DEFAULT_START_URL)
+
+    def _is_valid_html(self, html: str, url: str) -> bool:
+        """Kiểm tra xem trang có bị chặn hoặc lỗi không."""
+        html_lower = html.lower()
+        if "cf-browser-verification" in html_lower or "just a moment" in html_lower:
+            return False
+        if "429 too many requests" in html_lower or "mã lỗi: 429" in html_lower:
+            return False
+        if "503 service temporarily unavailable" in html_lower:
+            return False
+
+        page = Adaptor(html)
+        is_list_page = bool(page.css("h2.job__list-item-title a"))
+        if not is_list_page:
+            title_el = page.css("h1.job-title, h1.js-job")
+            company_el = page.css("div.d-flex.justify-between span.text-normal, a[href*='/company/'], a[href*='/cong-ty/'], p.company-name")
+            if not title_el and not company_el:
+                return False
+                
+        return True
 
     # ------------------------------------------------------------------
     # URL helpers

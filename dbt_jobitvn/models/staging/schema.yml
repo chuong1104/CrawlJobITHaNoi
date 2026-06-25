@@ -1,0 +1,32 @@
+version: 2
+
+models:
+  - name: stg_topcv
+    description: "Staging model cho TopCV"
+    columns:
+      - name: source_job_id
+        tests:
+          - not_null
+      - name: title_raw
+        tests:
+          - not_null
+      - name: company_raw
+        tests:
+          - not_null
+      - name: identity_hash
+        tests:
+          - not_null
+      - name: salary_min
+        tests:
+          - assert_salary_min_le_max:
+              severity: warn
+              
+  - name: stg_itviec
+    description: "Staging model cho ITviec"
+    # Các test tương tự
+
+  - name: stg_vietnamworks
+    description: "Staging model cho VietnamWorks"
+
+  - name: stg_jobsgo
+    description: "Staging model cho JobsGo"

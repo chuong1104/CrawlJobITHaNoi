@@ -1,0 +1,33 @@
+raw_location,normalized_location,region,is_remote
+hà nội,ha_noi,north,false
+ha noi,ha_noi,north,false
+hn,ha_noi,north,false
+hồ chí minh,ho_chi_minh,south,false
+ho chi minh,ho_chi_minh,south,false
+hcm,ho_chi_minh,south,false
+hcmc,ho_chi_minh,south,false
+tp hcm,ho_chi_minh,south,false
+đà nẵng,da_nang,central,false
+da nang,da_nang,central,false
+dn,da_nang,central,false
+hải phòng,hai_phong,north,false
+hai phong,hai_phong,north,false
+hp,hai_phong,north,false
+cần thơ,can_tho,south,false
+can tho,can_tho,south,false
+ct,can_tho,south,false
+bình dương,binh_duong,south,false
+binh duong,binh_duong,south,false
+bd,binh_duong,south,false
+đồng nai,dong_nai,south,false
+dong nai,dong_nai,south,false
+biên hòa,dong_nai,south,false
+bien hoa,dong_nai,south,false
+remote,remote,,true
+từ xa,remote,,true
+work from home,remote,,true
+wfh,remote,,true
+khác,other,,false
+other,other,,false
+toàn quốc,other,,false
+ nationwide,other,,false

@@ -26,10 +26,32 @@ class ITViecScraper(BaseScraper):
     # Init
     # ------------------------------------------------------------------
     def __init__(self, start_url: str | None = None, **kwargs) -> None:
+        kwargs.setdefault("delay_range", (8.0, 15.0))
+        kwargs.setdefault("max_retries", 5)
         # Sử dụng curl_cffi, không dùng Playwright để bypass Cloudflare mượt hơn
         kwargs["use_playwright"] = False
         super().__init__(**kwargs)
         self.start_url = self._clean_list_url(start_url or self.DEFAULT_START_URL)
+
+    def _is_valid_html(self, html: str, url: str) -> bool:
+        """Kiểm tra xem trang có bị chặn hoặc lỗi không."""
+        html_lower = html.lower()
+        if "cf-browser-verification" in html_lower or "just a moment" in html_lower:
+            return False
+        if "429 too many requests" in html_lower or "mã lỗi: 429" in html_lower:
+            return False
+        if "503 service temporarily unavailable" in html_lower:
+            return False
+
+        page = Adaptor(html)
+        is_list_page = bool(page.css("div.job-card"))
+        if not is_list_page:
+            title_el = page.css("h1.ipt-xl-6.text-it-black, h1[class*='text-it-black']")
+            company_el = page.css("div.employer-name, a[href*='/companies/'][class*='text-it-black']")
+            if not title_el and not company_el:
+                return False
+                
+        return True
 
         # Thông tin đăng nhập từ .env
         self.email = os.getenv("ITVIEC_EMAIL")

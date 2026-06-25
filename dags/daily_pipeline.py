@@ -139,15 +139,61 @@ Chạy toàn bộ scrapers song song và push metrics lên XCom:
         """,
     )
 
-    run_dbt_models = BashOperator(
-        task_id="run_dbt_models",
+    # ── Task 2: dbt (Staging + Intermediate + Warehouse + Mart BI) ────────────────
+    run_dbt = BashOperator(
+        task_id="run_dbt",
         bash_command=(
             "dbt run "
             "--profiles-dir /opt/airflow/dbt "
             "--project-dir /opt/airflow/dbt_jobitvn"
         ),
+        doc_md="""
+## run_dbt
+Chạy dbt models cho toàn bộ tầng Staging, Intermediate, Warehouse và Mart BI.
+Các mart API và ML sẽ bị bỏ qua (do disable trong dbt_project.yml) và xử lý bởi `run_gold_export`.
+        """,
+    )
+
+    # ── Task 3: Gold Export (DuckDB → Parquet → S3) ───────────────────────
+    def _run_gold_export(**kwargs) -> dict:
+        """Gọi gold_exporter để export toàn bộ Gold Layer sang Parquet trên S3."""
+        import sys
+        sys.path.insert(0, "/opt/airflow")
+        from src.gold.gold_exporter import run_gold_export
+
+        results = run_gold_export()
+        ti = kwargs["ti"]
+
+        summary = {
+            "run_date":      datetime.utcnow().isoformat(),
+            "total_tables":  len(results),
+            "success_count": sum(1 for r in results if r.success),
+            "failed_count":  sum(1 for r in results if not r.success),
+            "total_rows":    sum(r.rows for r in results if r.success),
+            "tables":        [
+                {"name": r.name, "success": r.success, "rows": r.rows, "error": r.error}
+                for r in results
+            ],
+        }
+        ti.xcom_push(key="gold_export_summary", value=summary)
+
+        failed = sum(1 for r in results if not r.success)
+        if failed:
+            raise RuntimeError(f"Gold export: {failed} tables failed. Check XCom for details.")
+        return summary
+
+    run_gold_export_task = PythonOperator(
+        task_id="run_gold_export",
+        python_callable=_run_gold_export,
+        execution_timeout=timedelta(minutes=30),
+        doc_md="""
+## run_gold_export
+Dùng DuckDB đọc Silver (Postgres) và export toàn bộ Gold Layer
+(Star Schema Warehouse + Mart BI + Mart API + Mart ML)
+ra file Parquet lưu trên S3 (`s3://jobit-gold/`).
+        """,
     )
 
     end = EmptyOperator(task_id="end")
 
-    start >> crawl_all_sources >> run_dbt_models >> end
+    start >> crawl_all_sources >> run_dbt >> run_gold_export_task >> end
