@@ -565,6 +565,31 @@ CREATE TRIGGER trg_sources_updated_at
     BEFORE UPDATE ON silver.sources
     FOR EACH ROW EXECUTE FUNCTION silver.fn_update_updated_at();
 
+-- ---------------------------------------------------------------------------
+-- 16. Indexes Optimization
+-- ---------------------------------------------------------------------------
+-- Bảng jobs
+CREATE INDEX IF NOT EXISTS idx_jobs_company_id ON silver.jobs (company_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_status_active ON silver.jobs (job_status, is_active);
+CREATE INDEX IF NOT EXISTS idx_jobs_identity_hash ON silver.jobs (identity_hash);
+CREATE INDEX IF NOT EXISTS idx_jobs_latest_content ON silver.jobs (latest_content_hash);
+CREATE INDEX IF NOT EXISTS idx_jobs_duplicate_group ON silver.jobs (duplicate_group_id);
+
+-- Bảng job_snapshots
+CREATE INDEX IF NOT EXISTS idx_snapshots_job_current ON silver.job_snapshots (job_id, is_current);
+CREATE INDEX IF NOT EXISTS idx_snapshots_content_hash ON silver.job_snapshots (content_hash);
+CREATE INDEX IF NOT EXISTS idx_snapshots_valid_to ON silver.job_snapshots (valid_to) WHERE valid_to IS NULL;
+
+-- Bảng junction
+CREATE INDEX IF NOT EXISTS idx_snapshot_skills_skill ON silver.job_snapshot_skills (skill_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_locations_location ON silver.job_snapshot_locations (location_id);
+
+-- Bảng duplicate_group_members
+CREATE INDEX IF NOT EXISTS idx_dup_group_members_job ON silver.job_duplicate_group_members (job_id);
+
+-- Bảng job_events
+CREATE INDEX IF NOT EXISTS idx_job_events_job_id ON silver.job_events (job_id);
+
 COMMIT;
 
 -- Kiểm tra kết quả

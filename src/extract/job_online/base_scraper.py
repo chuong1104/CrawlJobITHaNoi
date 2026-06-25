@@ -72,6 +72,32 @@ class BaseScraper(abc.ABC):
         self._stat_fetch_fail  = 0
 
     # ------------------------------------------------------------------
+    # State Management
+    # ------------------------------------------------------------------
+    def _get_state_file(self) -> Path:
+        return self.output_dir / "state.json"
+
+    def _load_state(self) -> dict:
+        state_file = self._get_state_file()
+        if state_file.exists():
+            try:
+                with state_file.open("r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def _save_state(self, state: dict) -> None:
+        state_file = self._get_state_file()
+        with state_file.open("w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+
+    def _clear_state(self) -> None:
+        state_file = self._get_state_file()
+        if state_file.exists():
+            state_file.unlink()
+
+    # ------------------------------------------------------------------
     # Abstract interface — subclass phải implement
     # ------------------------------------------------------------------
     @abc.abstractmethod
@@ -317,7 +343,7 @@ class BaseScraper(abc.ABC):
     # ------------------------------------------------------------------
     # Phase 3: Batch-parallel detail fetch
     # ------------------------------------------------------------------
-    def _fetch_details_batch(self, urls: list[str]) -> list[dict]:
+    def _fetch_details_batch(self, urls: list[str], manager, date_str: str, state: dict) -> list[dict]:
         """
         Chia URLs thành batches, mỗi batch fetch song song bằng ThreadPoolExecutor.
         Sleep random giữa các batch để tránh rate limit.
@@ -329,15 +355,37 @@ class BaseScraper(abc.ABC):
         ]
         total_batches = len(batches)
 
+        # Initialize validation stats in state if not present
+        if "total_validated" not in state: state["total_validated"] = 0
+        if "total_rejected" not in state: state["total_rejected"] = 0
+
         for idx, batch in enumerate(batches, 1):
             t_batch = time.time()
             self.logger.info(f"[Phase 3] [Batch {idx}/{total_batches}] {len(batch)} URLs processing...")
             batch_results = self._process_batch(batch)
             results.extend(batch_results)
+            
             ok   = len(batch_results)
             fail = len(batch) - ok
             self._stat_fetch_ok   += ok
             self._stat_fetch_fail += fail
+            
+            # --- Save local batch ---
+            num_valid, num_rejected = manager.append_local_batch(
+                source=self.source_name,
+                date_str=date_str,
+                records=batch_results
+            )
+            state["total_validated"] += num_valid
+            state["total_rejected"] += num_rejected
+            
+            # --- Update state ---
+            for url in batch:
+                if url in state["pending_urls"]:
+                    state["pending_urls"].remove(url)
+                state["completed_urls"].append(url)
+            self._save_state(state)
+
             elapsed_b = time.time() - t_batch
             self.logger.info(
                 f"[Phase 3] [Batch {idx}/{total_batches}] "
@@ -376,6 +424,17 @@ class BaseScraper(abc.ABC):
             return None
         try:
             job = self.parse_job_detail(html, url)
+            
+            # --- Thêm Regex Fallback tự động ---
+            full_text = f"{job.get('job_description', '')}\n{job.get('requirements', '')}\n{job.get('benefits', '')}".strip()
+            if full_text:
+                from src.extract.job_online.regex_extractor import FallbackRegexExtractor
+                extracted = FallbackRegexExtractor.parse_all(full_text)
+                for key, val in extracted.items():
+                    if not job.get(key) and val:
+                        job[key] = val
+            # ------------------------------------
+            
             # Đảm bảo các field bắt buộc luôn có
             job.setdefault("source", self.source_name)
             job.setdefault("job_url", url)
@@ -386,68 +445,6 @@ class BaseScraper(abc.ABC):
             self.logger.warning(f"[Phase 3] Parse error: {type(exc).__name__}: {exc}")
             return None
 
-    def save_raw(
-        self,
-        results: list[dict],
-        date_str: Optional[str] = None,
-        elapsed: float = 0.0,
-    ) -> Path:
-        """
-        Lưu kết quả qua BronzeManager để validate (RawJobPosting), chia jsonl,
-        lưu metadata và upload lên S3.
-        """
-        try:
-            from src.storage.bronze_manager import BronzeManager
-            from src.config import DATA_BRONZE_DIR
-
-            manager = BronzeManager(local_bronze_dir=DATA_BRONZE_DIR, s3_bucket="jobit-bronze")
-            success = manager.process_and_upload(
-                source=self.source_name,
-                records=results,
-                scrape_duration_seconds=elapsed,
-            )
-
-            if success:
-                self.logger.info("Successfully processed and uploaded to Bronze.")
-            else:
-                self.logger.warning("Bronze process/upload completed with some errors.")
-        except Exception as e:
-            self.logger.error(f"Error during Bronze processing: {e}")
-
-        return self.output_dir
-
-    # ------------------------------------------------------------------
-    # Save links
-    # ------------------------------------------------------------------
-    def save_links(
-        self,
-        links: list[str],
-        date_str: Optional[str] = None,
-    ) -> Path:
-        """
-        Lưu toàn bộ links (đã dedup) vào 1 file:
-        data/raw/{source_name}/links/{YYYY-MM-DD}_links.json
-        """
-        date_str = date_str or get_date_str()
-        links_dir = ensure_dir(self.output_dir / "links")
-        out_path = links_dir / f"{date_str}_links.json"
-
-        payload = {
-            "source": self.source_name,
-            "saved_at": datetime.now().isoformat(),
-            "total_links": len(links),
-            "links": links,
-        }
-
-        with out_path.open("w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
-
-        self.logger.info(f"Saved {len(links)} links -> {out_path}")
-        return out_path
-
-    # ------------------------------------------------------------------
-    # Main entry point
-    # ------------------------------------------------------------------
     def run(
         self,
         pages: Optional[int] = None,
@@ -455,48 +452,84 @@ class BaseScraper(abc.ABC):
     ) -> list[dict]:
         """
         Chạy toàn bộ pipeline 3 giai đoạn và lưu kết quả thô.
-
-        Args:
-            pages: số trang danh sách cào ở Phase 1.
-                Nếu None, dùng AirflowConfig.SCRAPE_PAGES.
-            existing_urls: tập URL đã có trong DB (để dedup ở Phase 2).
-
-        Returns:
-            list[dict] — raw job data (đã lưu ra disk).
+        Hỗ trợ Resume từ state.json nếu lần chạy trước đó bị lỗi.
         """
-        pages_label = str(self._resolve_pages(pages)) if pages is not None else "AUTO"
-        self.logger.info(f"Start  pages={pages_label}")
         start_time = datetime.now()
+        date_str = get_date_str(start_time)
         t0 = time.monotonic()
+        
+        from src.storage.bronze_manager import BronzeManager
+        from src.config import DATA_BRONZE_DIR
+        manager = BronzeManager(local_bronze_dir=DATA_BRONZE_DIR, s3_bucket="jobit-bronze")
 
-        # Phase 1: collect URLs
-        t1 = time.monotonic()
-        raw_urls = self._collect_urls(pages)
-        self.logger.info(f"[Phase 1] Done — {len(raw_urls)} URLs in {fmt_duration(time.monotonic()-t1)}")
+        state = self._load_state()
+        if state.get("status") == "FAILED" and state.get("pending_urls"):
+            self.logger.info(f"Resuming from previous FAILED state. {len(state['pending_urls'])} URLs pending.")
+            urls = state["pending_urls"]
+            self._stat_urls_new = len(urls)
+        else:
+            pages_label = str(self._resolve_pages(pages)) if pages is not None else "AUTO"
+            self.logger.info(f"Start  pages={pages_label}")
 
-        # Phase 2: dedup
-        urls = self._deduplicate_urls(raw_urls, existing_urls)
-        if not urls:
-            self.logger.info("No new URLs to scrape — skipping Phase 3")
-            return []
+            # Phase 1: collect URLs
+            t1 = time.monotonic()
+            raw_urls = self._collect_urls(pages)
+            self.logger.info(f"[Phase 1] Done — {len(raw_urls)} URLs in {fmt_duration(time.monotonic()-t1)}")
+
+            # Phase 2: dedup
+            urls = self._deduplicate_urls(raw_urls, existing_urls)
+            if not urls:
+                self.logger.info("No new URLs to scrape — skipping Phase 3")
+                self._clear_state()
+                return []
+            
+            # Khởi tạo trạng thái mới
+            state = {
+                "status": "IN_PROGRESS",
+                "date_str": date_str,
+                "pending_urls": urls,
+                "completed_urls": [],
+                "total_urls": len(urls)
+            }
+            self._save_state(state)
+
+        # Sử dụng date_str từ state nếu đang resume
+        current_date_str = state.get("date_str", date_str)
 
         # Phase 3: fetch details
         t3 = time.monotonic()
-        results = self._fetch_details_batch(urls)
-        self.logger.info(
-            f"[Phase 3] Done — {self._stat_fetch_ok} parsed, "
-            f"{self._stat_fetch_fail} failed in {fmt_duration(time.monotonic()-t3)}"
-        )
+        results = []
+        try:
+            results = self._fetch_details_batch(urls, manager, current_date_str, state)
+            state["status"] = "SUCCESS"
+            self._save_state(state)
+            
+            elapsed = time.monotonic() - t0
+            
+            # Finalize and upload
+            success = manager.finalize_and_upload(
+                source=self.source_name,
+                date_str=current_date_str,
+                total_scraped=state.get("total_urls", len(urls)),
+                total_validated=state.get("total_validated", 0),
+                total_rejected=state.get("total_rejected", 0),
+                scrape_duration_seconds=elapsed,
+            )
+            
+            if success:
+                self.logger.info("Successfully processed and uploaded to Bronze.")
+                self._clear_state()
+            else:
+                self.logger.warning("Bronze process/upload completed with some errors.")
 
-        # Persist
-        date_str = get_date_str(start_time)
-        elapsed = time.monotonic() - t0
-        self.save_raw(results, date_str, elapsed)
-
-        self.logger.info(
-            f"Finished — {len(results)} jobs saved  ⏱ {fmt_duration(elapsed)}"
-        )
-        return results
+            self.logger.info(f"Finished — {len(results)} jobs processed  ⏱ {fmt_duration(elapsed)}")
+            return results
+            
+        except Exception as exc:
+            self.logger.error(f"Global error during scraping Phase 3: {exc}")
+            state["status"] = "FAILED"
+            self._save_state(state)
+            raise
 
     def run_links_only(
         self,

@@ -1,7 +1,7 @@
 """
 daily_pipeline.py — Airflow DAG: pipeline hàng ngày cho toàn bộ job portals.
 
-Flow: start → crawl_all_sources → run_dbt_models → end
+Flow: start → crawl_all_sources → run_dbt_staging → sync_silver_layer → run_gold_dwh → export_gold_marts → end
 Schedule: 6h sáng mỗi ngày (Asia/Ho_Chi_Minh)
 """
 import json
@@ -25,7 +25,7 @@ default_args = {
 
 
 # ---------------------------------------------------------------------------
-# Task: crawl_all_sources — chạy scraper và đẩy metrics lên XCom
+# Task 1: crawl_all_sources — chạy scraper và đẩy metrics lên XCom
 # ---------------------------------------------------------------------------
 def _crawl_and_push_metrics(**kwargs) -> dict:
     """
@@ -59,7 +59,6 @@ def _crawl_and_push_metrics(**kwargs) -> dict:
     scraper_rows: list[dict] = []
 
     for line in stdout.splitlines():
-        # Dòng summary từ _print_scraper_done (detect ✔ / ✖)
         if "✔ ok" in line or "✖ fail" in line:
             parts = line.split()
             try:
@@ -85,10 +84,8 @@ def _crawl_and_push_metrics(**kwargs) -> dict:
         "scrapers":       scraper_rows,
     }
 
-    # Push metrics lên XCom để các task sau đọc được
     ti.xcom_push(key="scraper_metrics", value=metrics)
 
-    # Log metrics vào Airflow task log
     print("=" * 60)
     print("  SCRAPER METRICS")
     print("=" * 60)
@@ -97,12 +94,10 @@ def _crawl_and_push_metrics(**kwargs) -> dict:
 
     if stderr:
         print("\n--- STDERR (errors only) ---")
-        # Chỉ in các dòng ERROR để không spam Airflow log
         for ln in stderr.splitlines():
             if any(k in ln.upper() for k in ("ERROR", "CRITICAL", "EXCEPTION", "TRACEBACK")):
                 print(ln)
 
-    # Fail task nếu scraper trả về exit code khác 0
     if result.returncode != 0:
         raise RuntimeError(
             f"run_scrapers.py exited with code {result.returncode}. "
@@ -115,11 +110,11 @@ def _crawl_and_push_metrics(**kwargs) -> dict:
 with DAG(
     "daily_job_pipeline",
     default_args=default_args,
-    description="Daily pipeline: Extract job postings → Bronze → dbt Transform",
+    description="Daily pipeline: Extract job postings → Bronze → dbt Transform → Silver → Gold",
     schedule_interval="0 6 * * *",
     start_date=datetime(2024, 1, 1),
     catchup=False,
-    tags=["jobitvn", "elt", "bronze"],
+    tags=["jobitvn", "elt", "end-to-end"],
 ) as dag:
 
     start = EmptyOperator(task_id="start")
@@ -128,72 +123,112 @@ with DAG(
         task_id="crawl_all_sources",
         python_callable=_crawl_and_push_metrics,
         execution_timeout=timedelta(minutes=70),
-        doc_md="""
-## crawl_all_sources
-Chạy toàn bộ scrapers song song và push metrics lên XCom:
-- `scraper_metrics.success_count`
-- `scraper_metrics.failed_count`
-- `scraper_metrics.total_records`
-- `scraper_metrics.duration_secs`
-- `scraper_metrics.scrapers[]` — kết quả từng scraper
-        """,
+        doc_md="Chạy toàn bộ scrapers song song và push metrics lên XCom",
     )
 
-    # ── Task 2: dbt (Staging + Intermediate + Warehouse + Mart BI) ────────────────
-    run_dbt = BashOperator(
-        task_id="run_dbt",
+    # ── Task 2: dbt (Staging) ────────────────
+    run_dbt_staging = BashOperator(
+        task_id="run_dbt_staging",
         bash_command=(
             "dbt run "
+            "--select staging intermediate "
             "--profiles-dir /opt/airflow/dbt "
             "--project-dir /opt/airflow/dbt_jobitvn"
         ),
-        doc_md="""
-## run_dbt
-Chạy dbt models cho toàn bộ tầng Staging, Intermediate, Warehouse và Mart BI.
-Các mart API và ML sẽ bị bỏ qua (do disable trong dbt_project.yml) và xử lý bởi `run_gold_export`.
-        """,
+        doc_md="Chạy dbt models cho tầng Staging và Intermediate (DuckDB).",
     )
 
-    # ── Task 3: Gold Export (DuckDB → Parquet → S3) ───────────────────────
-    def _run_gold_export(**kwargs) -> dict:
-        """Gọi gold_exporter để export toàn bộ Gold Layer sang Parquet trên S3."""
+    # ── Task 3: Sync Silver Layer ───────────────────────
+    def _sync_silver_layer(**kwargs):
+        """Khởi tạo SilverSyncEngine và JobDedupEngine để nạp vào DB 3NF"""
+        import sys
+        import time
+        from datetime import datetime
+        sys.path.insert(0, "/opt/airflow")
+        
+        from src.silver.sync_engine import SilverSyncEngine
+        from src.silver.dedup_engine import JobDedupEngine
+        
+        # Tạo session_id theo timestamp
+        session_id = int(time.time())
+        session_start_time = datetime.utcnow().isoformat()
+        
+        # 1. Sync Jobs
+        sync_engine = SilverSyncEngine(duckdb_path="/opt/airflow/data/jobitvn.duckdb")
+        sync_engine.connect()
+        try:
+            sync_engine.sync_staged_jobs(session_id=session_id)
+            # Run lifecycle auto-close cho các sources phổ biến
+            for src_id in range(1, 12):
+                sync_engine.run_lifecycle_checks(source_id=src_id, session_id=session_id, session_start_time=session_start_time)
+        finally:
+            sync_engine.close()
+            
+        # 2. Dedup
+        dedup_engine = JobDedupEngine()
+        dedup_engine.connect()
+        try:
+            dedup_engine.run_dedup_pipeline(session_id=session_id)
+        finally:
+            dedup_engine.close()
+            
+        return {"session_id": session_id, "status": "success"}
+
+    sync_silver_layer = PythonOperator(
+        task_id="sync_silver_layer",
+        python_callable=_sync_silver_layer,
+        execution_timeout=timedelta(minutes=30),
+        doc_md="Sync dữ liệu từ DuckDB Staging vào PostgreSQL Silver (chống N+1, cập nhật SCD, TF-IDF dedup).",
+    )
+
+    # ── Task 4: Run Gold DWH ───────────────────────
+    def _run_gold_dwh(**kwargs):
+        """Gọi SQL Procedures để đồng bộ Silver sang Gold DWH"""
         import sys
         sys.path.insert(0, "/opt/airflow")
-        from src.gold.gold_exporter import run_gold_export
+        
+        from src.gold.gold_exporter import GoldExporter
+        exporter = GoldExporter(output_dir="/opt/airflow/data")
+        exporter.connect()
+        try:
+            exporter.run_dwh_sync()
+        finally:
+            exporter.close()
+            
+        return {"status": "success"}
 
-        results = run_gold_export()
-        ti = kwargs["ti"]
+    run_gold_dwh = PythonOperator(
+        task_id="run_gold_dwh",
+        python_callable=_run_gold_dwh,
+        execution_timeout=timedelta(minutes=15),
+        doc_md="Nạp dữ liệu vào schema DWH và refresh materialized view API.",
+    )
 
-        summary = {
-            "run_date":      datetime.utcnow().isoformat(),
-            "total_tables":  len(results),
-            "success_count": sum(1 for r in results if r.success),
-            "failed_count":  sum(1 for r in results if not r.success),
-            "total_rows":    sum(r.rows for r in results if r.success),
-            "tables":        [
-                {"name": r.name, "success": r.success, "rows": r.rows, "error": r.error}
-                for r in results
-            ],
-        }
-        ti.xcom_push(key="gold_export_summary", value=summary)
+    # ── Task 5: Export Gold Marts ───────────────────────
+    def _export_gold_marts(**kwargs):
+        """Export Data Marts sang Parquet"""
+        import sys
+        sys.path.insert(0, "/opt/airflow")
+        
+        from src.gold.gold_exporter import GoldExporter
+        exporter = GoldExporter(output_dir="/opt/airflow/data")
+        exporter.connect()
+        try:
+            exporter.export_mart_bi()
+            exporter.export_mart_ml()
+        finally:
+            exporter.close()
+            
+        return {"status": "success"}
 
-        failed = sum(1 for r in results if not r.success)
-        if failed:
-            raise RuntimeError(f"Gold export: {failed} tables failed. Check XCom for details.")
-        return summary
-
-    run_gold_export_task = PythonOperator(
-        task_id="run_gold_export",
-        python_callable=_run_gold_export,
-        execution_timeout=timedelta(minutes=30),
-        doc_md="""
-## run_gold_export
-Dùng DuckDB đọc Silver (Postgres) và export toàn bộ Gold Layer
-(Star Schema Warehouse + Mart BI + Mart API + Mart ML)
-ra file Parquet lưu trên S3 (`s3://jobit-gold/`).
-        """,
+    export_gold_marts = PythonOperator(
+        task_id="export_gold_marts",
+        python_callable=_export_gold_marts,
+        execution_timeout=timedelta(minutes=20),
+        doc_md="Dùng DuckDB đọc DWH và ghi ra Parquet cho Power BI và AI/ML.",
     )
 
     end = EmptyOperator(task_id="end")
 
-    start >> crawl_all_sources >> run_dbt >> run_gold_export_task >> end
+    # Workflow dependencies (DAG Graph)
+    start >> crawl_all_sources >> run_dbt_staging >> sync_silver_layer >> run_gold_dwh >> export_gold_marts >> end

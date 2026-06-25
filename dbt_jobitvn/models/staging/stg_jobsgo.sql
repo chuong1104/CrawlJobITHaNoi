@@ -4,7 +4,7 @@
 
 WITH source_data AS (
     SELECT * 
-    FROM read_json_auto('data/bronze/valid/source=jobsgo/**/*.jsonl', format='newline_delimited', ignore_errors=true)
+    FROM read_json_auto('data/bronze/jobsgo/**/*_valid.jsonl', format='newline_delimited', ignore_errors=true)
     WHERE job_id_raw IS NOT NULL
 ),
 parsed AS (

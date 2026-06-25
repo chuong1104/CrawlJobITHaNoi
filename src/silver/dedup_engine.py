@@ -49,7 +49,13 @@ class CrossSourceDedupEngine:
         grouped = df.groupby('company_id')
         vectorizer = TfidfVectorizer(stop_words='english', max_features=1000)
 
-        with self.pg_conn.cursor() as cur:
+            from psycopg2.extras import execute_values
+            
+            # Lists for batch inserts/updates
+            new_groups = []
+            new_members = []
+            updates_to_jobs = []
+
             for company_id, group_df in grouped:
                 if len(group_df) < 2:
                     continue
@@ -58,8 +64,6 @@ class CrossSourceDedupEngine:
                 processed_indices = set()
                 
                 # --- PHASE 1: HASH MATCHING ---
-                # Gom cụm các job có cùng identity_hash (cùng source, trùng logic) 
-                # hoặc cùng content_hash (khác source, nhưng nội dung y hệt 100%)
                 for i in range(len(group_df)):
                     if i in processed_indices:
                         continue
@@ -73,38 +77,29 @@ class CrossSourceDedupEngine:
                             id_hash_j = group_df.loc[j, 'identity_hash']
                             content_hash_j = group_df.loc[j, 'content_hash']
                             
-                            # Nếu trùng 1 trong 2 hash -> Chắc chắn trùng lặp
                             if (id_hash_i == id_hash_j) or (content_hash_i == content_hash_j):
                                 similar_indices.append(j)
                                 
                     if len(similar_indices) > 1:
                         title_clean = str(group_df.loc[i, 'title_clean'])
                         group_name = f"Exact Hash Match {title_clean[:40]}"
+                        canonical_job_id = int(group_df.loc[i, 'job_id'])
                         
                         cur.execute("""
                             INSERT INTO silver.job_duplicate_groups (canonical_job_id, group_name)
                             VALUES (%s, %s) RETURNING group_id
-                        """, (int(group_df.loc[i, 'job_id']), group_name))
+                        """, (canonical_job_id, group_name))
                         group_id = cur.fetchone()[0]
                         new_groups_created += 1
                         
                         for idx in similar_indices:
                             job_id = int(group_df.loc[idx, 'job_id'])
-                            # Điểm 1.0 vì khớp chính xác theo hash
-                            cur.execute("""
-                                INSERT INTO silver.job_duplicate_group_members (group_id, job_id, similarity_score, match_method)
-                                VALUES (%s, %s, %s, 'hash_exact')
-                                ON CONFLICT DO NOTHING
-                            """, (group_id, job_id, 1.0))
-                            
-                            cur.execute("""
-                                UPDATE silver.jobs SET duplicate_group_id = %s WHERE job_id = %s
-                            """, (group_id, job_id))
+                            new_members.append((group_id, job_id, 1.0, 'hash_exact'))
+                            updates_to_jobs.append((group_id, job_id))
                             processed_indices.add(idx)
                             new_members_added += 1
                             
                 # --- PHASE 2: TF-IDF COSINE SIMILARITY ---
-                # Áp dụng cho các jobs chưa được gom cụm ở Phase 1
                 remaining_indices = [idx for idx in range(len(group_df)) if idx not in processed_indices]
                 if len(remaining_indices) < 2:
                     continue
@@ -128,29 +123,37 @@ class CrossSourceDedupEngine:
                     if len(similar_indices_tf) > 1:
                         title_clean = str(group_df.loc[i, 'title_clean'])
                         group_name = f"Duplicated {title_clean[:50]}"
+                        canonical_job_id = int(group_df.loc[i, 'job_id'])
                         
                         cur.execute("""
                             INSERT INTO silver.job_duplicate_groups (canonical_job_id, group_name)
                             VALUES (%s, %s) RETURNING group_id
-                        """, (int(group_df.loc[i, 'job_id']), group_name))
+                        """, (canonical_job_id, group_name))
                         group_id = cur.fetchone()[0]
                         new_groups_created += 1
                         
                         for idx in similar_indices_tf:
                             job_id = int(group_df.loc[idx, 'job_id'])
                             score = float(cosine_sim[i, idx]) if idx != i else 1.0
-                            
-                            cur.execute("""
-                                INSERT INTO silver.job_duplicate_group_members (group_id, job_id, similarity_score, match_method)
-                                VALUES (%s, %s, %s, 'tfidf_cosine')
-                                ON CONFLICT DO NOTHING
-                            """, (group_id, job_id, score))
-                            
-                            cur.execute("""
-                                UPDATE silver.jobs SET duplicate_group_id = %s WHERE job_id = %s
-                            """, (group_id, job_id))
+                            new_members.append((group_id, job_id, score, 'tfidf_cosine'))
+                            updates_to_jobs.append((group_id, job_id))
                             processed_indices.add(idx)
                             new_members_added += 1
+
+            # Execute bulk operations
+            if new_members:
+                execute_values(cur, """
+                    INSERT INTO silver.job_duplicate_group_members (group_id, job_id, similarity_score, match_method)
+                    VALUES %s ON CONFLICT DO NOTHING
+                """, new_members)
+                
+            if updates_to_jobs:
+                execute_values(cur, """
+                    UPDATE silver.jobs AS j 
+                    SET duplicate_group_id = v.group_id 
+                    FROM (VALUES %s) AS v(group_id, job_id)
+                    WHERE j.job_id = v.job_id
+                """, updates_to_jobs)
 
             self.pg_conn.commit()
             logger.info(f"Deduplication complete. Created {new_groups_created} new groups, added {new_members_added} members.")

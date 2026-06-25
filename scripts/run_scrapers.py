@@ -217,6 +217,12 @@ def main() -> int:
         help="Số trang danh sách mỗi scraper. Bỏ trống để AUTO.",
     )
     parser.add_argument(
+        "--run-type",
+        choices=["historical", "incremental", "custom"],
+        default="custom",
+        help="historical: cào toàn bộ (pages=None); incremental: cào 5 trang; custom: dùng --pages.",
+    )
+    parser.add_argument(
         "--stop-on-error",
         action="store_true",
         help="Dừng ngay khi một scraper lỗi.",
@@ -234,11 +240,19 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # Xử lý logic run-type
+    if args.run_type == "historical":
+        pages = None
+    elif args.run_type == "incremental":
+        pages = 5
+    else:
+        pages = args.pages
+
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
         log.setLevel(logging.DEBUG)
 
-    _print_banner(args.mode, args.pages, args.workers)
+    _print_banner(args.mode, pages, args.workers)
 
     run_fn = _run_links_only if args.mode == "links" else _run_full
     results: list[ScraperResult] = []
@@ -250,7 +264,7 @@ def main() -> int:
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
         future_map = {
-            executor.submit(_run_single_scraper, item, run_fn, args.pages, idx, total): item
+            executor.submit(_run_single_scraper, item, run_fn, pages, idx, total): item
             for idx, item in indexed_runners
         }
         for future in concurrent.futures.as_completed(future_map):

@@ -20,21 +20,18 @@ class BronzeManager:
         self.s3_bucket = s3_bucket
         self.s3_client = S3ClientWrapper()
 
-    def process_and_upload(
+    def append_local_batch(
         self,
         source: str,
+        date_str: str,
         records: List[Dict[str, Any]],
-        scrape_duration_seconds: float = 0.0,
-    ) -> bool:
+    ) -> tuple[int, int]:
+        """
+        Validates a batch of records and appends them to local JSONL files.
+        Returns: (num_valid, num_rejected)
+        """
         if not records:
-            logger.info(f"[{source}] No records to process for Bronze.")
-            return True
-
-        now = datetime.now(timezone.utc)
-        year = now.strftime("%Y")
-        month = now.strftime("%m")
-        day = now.strftime("%d")
-        date_str = now.strftime("%Y-%m-%d")
+            return 0, 0
 
         valid_records = []
         rejected_records = []
@@ -48,32 +45,46 @@ class BronzeManager:
                 rejected_records.append({"original_record": rec, "error": str(e)})
 
         logger.info(
-            f"[{source}] Validation: {len(valid_records)} valid, {len(rejected_records)} rejected."
+            f"[{source}] Batch validation: {len(valid_records)} valid, {len(rejected_records)} rejected."
         )
 
-        # --- Local paths (Hive-style partitioning) ---
-        partition = f"source={source}/year={year}/month={month}/day={day}"
-        valid_dir    = ensure_dir(self.local_bronze_dir / "valid"    / partition)
-        rejected_dir = ensure_dir(self.local_bronze_dir / "rejected" / partition)
-        meta_dir     = ensure_dir(self.local_bronze_dir / "meta"     / partition)
+        # --- Local paths ---
+        source_dir = ensure_dir(self.local_bronze_dir / source / date_str)
+        valid_file    = source_dir / f"{source}_{date_str}_valid.jsonl"
+        rejected_file = source_dir / f"{source}_{date_str}_rejected.jsonl"
 
-        valid_file    = valid_dir    / f"{source}_{date_str}.jsonl"
-        rejected_file = rejected_dir / f"{source}_{date_str}_rejected.jsonl"
-        meta_file     = meta_dir     / f"{source}_{date_str}.meta.json"
-
-        # --- Write files ---
+        # --- Append to files ---
         if valid_records:
             self._append_jsonl(valid_file, valid_records)
         if rejected_records:
             self._append_jsonl(rejected_file, rejected_records)
 
+        return len(valid_records), len(rejected_records)
+
+    def finalize_and_upload(
+        self,
+        source: str,
+        date_str: str,
+        total_scraped: int,
+        total_validated: int,
+        total_rejected: int,
+        scrape_duration_seconds: float = 0.0,
+    ) -> bool:
+        """
+        Calculates metadata, writes meta.json, and uploads the directory to S3.
+        """
+        logger.info(f"[{source}] Finalizing... Scraped: {total_scraped}, Valid: {total_validated}")
+        now = datetime.now(timezone.utc)
+
+        source_dir = ensure_dir(self.local_bronze_dir / source / date_str)
+        valid_file    = source_dir / f"{source}_{date_str}_valid.jsonl"
+        rejected_file = source_dir / f"{source}_{date_str}_rejected.jsonl"
+        meta_file     = source_dir / f"{source}_{date_str}_meta.json"
+
         # --- Metadata ---
         file_size    = valid_file.stat().st_size if valid_file.exists() else 0
         md5_checksum = self._calculate_md5(valid_file) if valid_file.exists() else ""
-        total_scraped    = len(records)
-        total_validated  = len(valid_records)
-        total_rejected   = len(rejected_records)
-        rejection_rate   = (total_rejected / total_scraped * 100) if total_scraped > 0 else 0
+        rejection_rate = (total_rejected / total_scraped * 100) if total_scraped > 0 else 0
 
         metadata = {
             "source": source,
@@ -93,15 +104,15 @@ class BronzeManager:
         # --- Upload to S3 ---
         self.s3_client.create_bucket(self.s3_bucket)
 
-        s3_valid_key    = f"valid/{partition}/{valid_file.name}"
-        s3_rejected_key = f"rejected/{partition}/{rejected_file.name}"
-        s3_meta_key     = f"meta/{partition}/{meta_file.name}"
+        s3_valid_key    = f"{source}/{date_str}/{valid_file.name}"
+        s3_rejected_key = f"{source}/{date_str}/{rejected_file.name}"
+        s3_meta_key     = f"{source}/{date_str}/{meta_file.name}"
 
         upload_success = True
-        if valid_records:
+        if valid_file.exists():
             if not self.s3_client.upload_file(valid_file, self.s3_bucket, s3_valid_key):
                 upload_success = False
-        if rejected_records:
+        if rejected_file.exists():
             if not self.s3_client.upload_file(rejected_file, self.s3_bucket, s3_rejected_key):
                 upload_success = False
         if not self.s3_client.upload_file(meta_file, self.s3_bucket, s3_meta_key):
