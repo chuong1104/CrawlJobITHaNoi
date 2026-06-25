@@ -80,6 +80,28 @@ Người tìm việc phải tìm kiếm nhiều lần trên từng website.
 
 ---
 
+## Problem 1.5: Unstructured Data & Missing Fields
+
+Nhiều website (như LinkedIn) gộp chung toàn bộ thông tin (Yêu cầu, Phúc lợi, Lương) vào một khối văn bản `description` khổng lồ, khiến dữ liệu cào về bị `NULL` ở các trường quan trọng. Hệ thống yêu cầu tích hợp một lớp Regex thông minh ngay tại tầng Extract để bóc tách và "cứu" những trường dữ liệu này trước khi đưa xuống Data Lake.
+
+Thông tin tuyển dụng phân tán trên nhiều website.
+
+Ví dụ:
+
+Một vị trí:
+
+Data Engineer Intern
+
+có thể được đăng trên:
+
+* TopCV
+* ITviec
+* VietnamWorks
+
+Người tìm việc phải tìm kiếm nhiều lần trên từng website.
+
+---
+
 ## Problem 2: Duplicate Jobs
 
 Một công việc có thể xuất hiện trên nhiều nền tảng.

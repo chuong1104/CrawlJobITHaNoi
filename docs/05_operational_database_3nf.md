@@ -260,9 +260,19 @@ CREATE TABLE job_snapshots (
     job_id BIGINT
         REFERENCES jobs(job_id),
 
-    title TEXT,
+    title_raw TEXT,
+    
+    title_clean TEXT,
+    
+    company_normalized TEXT,
 
     description TEXT,
+    
+    requirements TEXT,
+    
+    benefits TEXT,
+
+    salary_raw TEXT,
 
     salary_min NUMERIC,
 
@@ -270,13 +280,23 @@ CREATE TABLE job_snapshots (
 
     salary_currency VARCHAR(20),
 
-    employment_type VARCHAR(50),
+    is_salary_negotiable BOOLEAN,
 
-    experience_required VARCHAR(100),
+    job_type VARCHAR(50),
+    
+    job_level VARCHAR(50),
+    
+    work_mode VARCHAR(50),
 
-    posted_date DATE,
+    experience_raw VARCHAR(100),
 
-    expired_date DATE,
+    experience_years_min INT,
+
+    experience_years_max INT,
+
+    deadline_raw VARCHAR(50),
+
+    deadline_date DATE,
 
     content_hash VARCHAR(128),
 

@@ -70,3 +70,8 @@ keys/
 # Docker
 # =========================
 .dockerignore
+
+# =========================
+# Authentication states
+# =========================
+src/extract/job_online/auth/

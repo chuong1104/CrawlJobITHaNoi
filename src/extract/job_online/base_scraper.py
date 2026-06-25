@@ -424,6 +424,8 @@ class BaseScraper(abc.ABC):
             return None
         try:
             job = self.parse_job_detail(html, url)
+            if not job:
+                return None
             
             # --- Thêm Regex Fallback tự động ---
             full_text = f"{job.get('job_description', '')}\n{job.get('requirements', '')}\n{job.get('benefits', '')}".strip()

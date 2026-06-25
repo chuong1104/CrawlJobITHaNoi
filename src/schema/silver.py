@@ -127,7 +127,9 @@ class JobSnapshot(BaseModel):
     job_id: str
     
     # Dynamic Fields
-    title: str
+    title_raw: Optional[str] = None
+    title_clean: str
+    company_normalized: Optional[str] = None
     description: Optional[str] = None
     requirements: Optional[str] = None
     benefits: Optional[str] = None
@@ -146,7 +148,8 @@ class JobSnapshot(BaseModel):
     job_level: Optional[str] = None
     work_mode: Optional[str] = None
     
-    deadline: Optional[datetime] = None
+    deadline_raw: Optional[str] = None
+    deadline_date: Optional[datetime] = None
     
     # N-N Relationships via Lists for Python simplicity (map to junction tables in DB)
     skills: Optional[List[str]] = Field(default_factory=list)      # List of skill_ids
