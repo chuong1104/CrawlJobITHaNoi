@@ -113,7 +113,7 @@ Thu thập dữ liệu từ các website tuyển dụng và đẩy thẳng lên 
 
 ## Crawl Flow
 ```text
-Website ──> Scraper (Playwright/Scrapy) ──> Python (boto3) ──> Floci S3 (Bronze Layer)
+Website ──> Scraper (Playwright/Scrapy) ──> FallbackRegexExtractor (Lấp đầy NULL tự động) ──> Python (boto3) ──> Floci S3 (Bronze Layer)
 ```
 
 Thay vì ghi file ra ổ cứng local, scraper tương tác với Floci S3 y hệt như đang dùng Amazon S3 thật.

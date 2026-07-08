@@ -1,0 +1,14 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: "Tầng Bronze: dữ liệu raw JSONL scraped từ các portal. Được đọc trực tiếp qua DuckDB read_json_auto."
+    tables:
+      - name: topcv
+        description: "Raw data from TopCV"
+      - name: itviec
+        description: "Raw data from ITviec"
+      - name: vietnamworks
+        description: "Raw data from VietnamWorks"
+      - name: jobsgo
+        description: "Raw data from JobsGo"

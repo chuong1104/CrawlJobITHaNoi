@@ -1,0 +1,25 @@
+version: 2
+
+models:
+  - name: int_all_jobs_unioned
+    description: "Union tất cả các nguồn dữ liệu từ staging"
+
+  - name: int_deduped_jobs
+    description: "Loại bỏ trùng lặp trong cùng một lô dữ liệu"
+    columns:
+      - name: source_job_id
+        tests:
+          - not_null
+      - name: identity_hash
+        tests:
+          - not_null
+          
+  - name: int_job_skills_exploded
+    description: "Tách mảng skills thành nhiều dòng"
+
+  - name: int_changed_jobs
+    description: "Chuẩn bị data cuối cùng cho Python Sync Engine nạp vào PostgreSQL Silver"
+    columns:
+      - name: content_hash
+        tests:
+          - not_null

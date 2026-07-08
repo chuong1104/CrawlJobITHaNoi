@@ -1,0 +1,61 @@
+version: 2
+
+models:
+  - name: dim_date
+    description: "Bảng kích thước ngày tháng (Time Dimension)"
+    columns:
+      - name: date_key
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_company
+    description: "Bảng kích thước công ty"
+    columns:
+      - name: company_id
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_skill
+    description: "Bảng kích thước kỹ năng IT"
+    columns:
+      - name: skill_id
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_location
+    description: "Bảng kích thước địa điểm"
+    columns:
+      - name: location_id
+        tests:
+          - unique
+          - not_null
+
+  - name: fct_job_posting
+    description: "Bảng sự kiện trọng tâm: Tin tuyển dụng ở trạng thái mới nhất"
+    columns:
+      - name: job_id
+        tests:
+          - unique
+          - not_null
+      - name: company_id
+        tests:
+          - relationships:
+              to: ref('dim_company')
+              field: company_id
+
+  - name: fct_job_skill
+    description: "Bảng nối (Bridge) giữa Job và Skill"
+    columns:
+      - name: job_id
+        tests:
+          - relationships:
+              to: ref('fct_job_posting')
+              field: job_id
+      - name: skill_id
+        tests:
+          - relationships:
+              to: ref('dim_skill')
+              field: skill_id

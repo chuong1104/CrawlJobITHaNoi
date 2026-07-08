@@ -12,8 +12,9 @@ load_dotenv()
 # Paths
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).parent.parent
-DATA_RAW_DIR = BASE_DIR / "data" / "raw"
-DATA_PROCESSED_DIR = BASE_DIR / "data" / "processed"
+DATA_BRONZE_DIR = BASE_DIR / "data" / "bronze"
+DATA_SILVER_DIR = BASE_DIR / "data" / "silver"
+DATA_GOLD_DIR = BASE_DIR / "data" / "gold"
 
 
 # ---------------------------------------------------------------------------
@@ -29,6 +30,42 @@ class ScraperConfig:
     @classmethod
     def delay_range(cls) -> tuple[float, float]:
         return (cls.DELAY_MIN, cls.DELAY_MAX)
+
+
+# ---------------------------------------------------------------------------
+# Proxy Config
+# ---------------------------------------------------------------------------
+class ProxyConfig:
+    URL: str = os.getenv("PROXY_URL", "")
+    USERNAME: str = os.getenv("PROXY_USERNAME", "")
+    PASSWORD: str = os.getenv("PROXY_PASSWORD", "")
+
+
+# ---------------------------------------------------------------------------
+# AWS / Floci Config
+# ---------------------------------------------------------------------------
+class AWSConfig:
+    ENDPOINT_URL: str = os.getenv("AWS_ENDPOINT_URL", "http://localhost:4566")
+    ACCESS_KEY_ID: str = os.getenv("AWS_ACCESS_KEY_ID", "test")
+    SECRET_ACCESS_KEY: str = os.getenv("AWS_SECRET_ACCESS_KEY", "test")
+    DEFAULT_REGION: str = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+
+
+# ---------------------------------------------------------------------------
+# LinkedIn Credentials
+# ---------------------------------------------------------------------------
+class LinkedInConfig:
+    USERNAME: str = os.getenv("LINKEDIN_USERNAME") or os.getenv("LINKEDIN_EMAIL", "")
+    PASSWORD: str = os.getenv("LINKEDIN_PASSWORD") or os.getenv("LINKEDIN_PASS", "")
+
+
+# ---------------------------------------------------------------------------
+# Google Cloud Platform (BigQuery) Config
+# ---------------------------------------------------------------------------
+class GCPConfig:
+    CREDENTIALS: str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+    PROJECT_ID: str = os.getenv("BIGQUERY_PROJECT_ID", "")
+    DATASET: str = os.getenv("BIGQUERY_DATASET", "job_scraper")
 
 
 # ---------------------------------------------------------------------------

@@ -1,8 +1,10 @@
 import os
 import random
+import re
 import time
+from datetime import datetime, timedelta
 from typing import Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, urlunparse
 
 from scrapling.parser import Adaptor
 
@@ -20,9 +22,31 @@ class VietnamWorksScraper(BaseScraper):
     SCROLL_PAUSE = (1.5, 3.0)
 
     def __init__(self, start_url: str | None = None, **kwargs) -> None:
+        kwargs.setdefault("delay_range", (8.0, 15.0))
+        kwargs.setdefault("max_retries", 5)
         super().__init__(**kwargs)
         # Giữ nguyên query string (l=24) — không split("?")
         self.start_url = start_url or self.DEFAULT_START_URL
+
+    def _is_valid_html(self, html: str, url: str) -> bool:
+        """Kiểm tra xem trang có bị chặn hoặc lỗi không."""
+        html_lower = html.lower()
+        if "cf-browser-verification" in html_lower or "just a moment" in html_lower:
+            return False
+        if "429 too many requests" in html_lower or "mã lỗi: 429" in html_lower:
+            return False
+        if "503 service temporarily unavailable" in html_lower:
+            return False
+
+        page = Adaptor(html)
+        is_list_page = bool(page.css("div.sc-cdaca-d h2 a, a[href*='-jv'], a[href*='viec-lam-']"))
+        if not is_list_page:
+            title_el = page.css("h1[name='title']")
+            company_el = page.css("a[name='label'][href*='/nha-tuyen-dung/']")
+            if not title_el and not company_el:
+                return False
+                
+        return True
 
     def get_list_page_url(self, page_num: int) -> str:
         return self.start_url
@@ -206,7 +230,7 @@ class VietnamWorksScraper(BaseScraper):
 
         try:
             with sync_playwright() as pw:
-                browser = pw.chromium.launch(headless=False)
+                browser = pw.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
                 ctx_opts = {
                     "viewport": {"width": 1280, "height": 900},
                     "user_agent": (
@@ -264,8 +288,261 @@ class VietnamWorksScraper(BaseScraper):
         self.logger.info(f"[Phase 1] Tổng thu thập: {len(all_urls)} URLs")
         return all_urls
 
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _get_block_text(page: Adaptor, selector: str) -> str | None:
+        """Lấy toàn bộ inner text (multi-line) của một block."""
+        el = page.css(selector)
+        if not el:
+            return None
+        parts = el.css("::text").getall()
+        lines = [p.strip() for p in parts if p and p.strip()]
+        return "\n".join(lines) or None
+
+    @staticmethod
+    def _find_label_value(page: Adaptor, label_keyword: str) -> str | None:
+        """
+        VietnamWorks dùng pattern:
+          <div class="sc-7bf5461f-2 ...">
+            <label name="label" ...>LABEL TEXT</label>
+            <p name="paragraph" ...>VALUE</p>
+          </div>
+        Tìm div chứa <label> có text khớp keyword, trả về text của <p> tiếp theo.
+        """
+        for div in page.css("div"):
+            label_el = div.css("label[name='label']")
+            if not label_el:
+                continue
+            label_text = (label_el.css("::text").get() or "").strip().lower()
+            if label_keyword.lower() in label_text:
+                p_el = div.css("p[name='paragraph']")
+                if p_el:
+                    parts = p_el.css("::text").getall()
+                    val = " ".join(p.strip() for p in parts if p.strip())
+                    return val or None
+        return None
+
+    @staticmethod
+    def _parse_deadline(post_date_str: str | None, expire_text: str | None) -> str | None:
+        """
+        Tính hạn ứng tuyển = ngày đăng + số ngày hết hạn.
+        post_date_str: "11/06/2026" (dd/MM/yyyy)
+        expire_text:   "Hết hạn trong 19 ngày"
+        """
+        if not post_date_str:
+            return expire_text  # fallback: trả về text gốc
+        try:
+            post_date = datetime.strptime(post_date_str.strip(), "%d/%m/%Y")
+            if expire_text:
+                match = re.search(r"(\d+)\s*ngày", expire_text, re.IGNORECASE)
+                if match:
+                    days = int(match.group(1))
+                    deadline = post_date + timedelta(days=days)
+                    return deadline.strftime("%d/%m/%Y")
+        except Exception:
+            pass
+        return post_date_str  # fallback
+
+    # ------------------------------------------------------------------
+    # Phase 3: Parse job detail page
+    # ------------------------------------------------------------------
     def parse_job_detail(self, detail_html: str, url: str) -> dict:
-        raise NotImplementedError("Implement parse_job_detail sau khi xong bước lấy link.")
+        page = Adaptor(detail_html)
+
+        # ── Tên job ─────────────────────────────────────────────────────
+        # <h1 name="title" ...>AI Engineer Intern</h1>
+        title = None
+        title_el = page.css("h1[name='title']")
+        if title_el:
+            title = title_el.css("::text").get()
+            if title:
+                title = title.strip() or None
+
+        # ── Tên công ty ─────────────────────────────────────────────────
+        # <a name="label" href="/nha-tuyen-dung/...">K&M Holdings</a>  (đứng gần h1)
+        company = None
+        for a in page.css("a[name='label'][href*='/nha-tuyen-dung/']"):
+            val = a.css("::text").get()
+            if val and val.strip():
+                company = val.strip()
+                break
+
+        # ── Địa chỉ ─────────────────────────────────────────────────────
+        # <p name="paragraph" ...>33 Mạc Thái Tổ, Yên Hòa, Cầu Giấy, Hà Nội</p>
+        # nằm trong block có h2 "Địa điểm làm việc"
+        location = None
+        for section in page.css("div"):
+            h2 = section.css("h2[name='title']")
+            if h2 and "địa điểm" in (h2.css("::text").get() or "").lower():
+                parts = section.css("p[name='paragraph']::text").getall()
+                texts = [p.strip() for p in parts if p.strip()]
+                location = " | ".join(texts) or None
+                break
+
+        # ── Lương ────────────────────────────────────────────────────────
+        # <span name="label" color="#FF7D55" ...>Thương lượng</span>
+        salary = None
+        for span in page.css("span[name='label']"):
+            parent = span.root.getparent() if hasattr(span, "root") else None
+            val = span.css("::text").get()
+            if val and val.strip():
+                # Lương thường có màu cam (#FF7D55) hoặc nằm trong vùng salary
+                color = span.attrib.get("color", "")
+                if color == "#FF7D55" or "lương" in val.lower() or "thương lượng" in val.lower():
+                    salary = val.strip()
+                    break
+        # Fallback: tìm span name=label đứng đầu tiên sau h1 title
+        if not salary:
+            for span in page.css("span[name='label']"):
+                val = (span.css("::text").get() or "").strip()
+                if val and val not in ("", "K&M Holdings"):
+                    salary = val
+                    break
+
+        # ── Kinh nghiệm ─────────────────────────────────────────────────
+        # <label name="label">SỐ NĂM KINH NGHIỆM TỐI THIỂU</label>
+        # <p name="paragraph">Không yêu cầu</p>
+        experience = self._find_label_value(page, "kinh nghiệm")
+
+        # ── Loại hình làm việc ───────────────────────────────────────────
+        # <label name="label">LOẠI HÌNH LÀM VIỆC</label>
+        # <p name="paragraph">Thực tập</p>
+        job_type = self._find_label_value(page, "loại hình làm việc")
+
+        # ── Cấp bậc ─────────────────────────────────────────────────────
+        # <label name="label">CẤP BẬC</label>
+        # <p name="paragraph">Thực tập sinh/Sinh viên</p>
+        job_position = self._find_label_value(page, "cấp bậc")
+
+        # ── Ngành nghề ───────────────────────────────────────────────────
+        # <label name="label">NGÀNH NGHỀ</label>
+        # <p name="paragraph"><span>Công Nghệ...</span> > <span>Data Engineer...</span></p>
+        job_industry = self._find_label_value(page, "ngành nghề")
+
+        # ── Hạn ứng tuyển ────────────────────────────────────────────────
+        # Ngày đăng: <label>NGÀY ĐĂNG</label> → <p>11/06/2026</p>
+        # Hết hạn:   <span name="paragraph" ...>Hết hạn trong 19 ngày</span>
+        post_date = self._find_label_value(page, "ngày đăng")
+        expire_text = None
+        for span in page.css("span[name='paragraph']"):
+            val = (span.css("::text").get() or "").strip()
+            if "hết hạn" in val.lower():
+                expire_text = val
+                break
+        deadline = self._parse_deadline(post_date, expire_text)
+
+        # ── Mô tả công việc ──────────────────────────────────────────────
+        # <h2 class="...">Mô tả công việc</h2>
+        # <div class="sc-1671001a-6 ..."><div><p>...</p></div></div>
+        job_description = None
+        for section in page.css("div"):
+            h2 = section.css("h2")
+            h2_text = (h2.css("::text").get() or "").strip().lower()
+            if h2_text == "mô tả công việc":
+                # Lấy div content ngay sau h2 (class chứa dVvinc hoặc tương tự)
+                content_div = section.css("div > div > p")
+                if content_div:
+                    parts = section.css("p::text").getall()
+                    lines = [p.strip() for p in parts if p.strip()]
+                    job_description = "\n".join(lines) or None
+                break
+
+        # ── Kỹ năng / Yêu cầu công việc ─────────────────────────────────
+        # <h2 class="...">Yêu cầu công việc</h2>
+        # <div class="..."><div><p>...</p></div></div>
+        requirements = None
+        for section in page.css("div"):
+            h2 = section.css("h2")
+            h2_text = (h2.css("::text").get() or "").strip().lower()
+            if h2_text == "yêu cầu công việc":
+                parts = section.css("p::text").getall()
+                lines = [p.strip() for p in parts if p.strip()]
+                requirements = "\n".join(lines) or None
+                break
+
+        # ── Phúc lợi ────────────────────────────────────────────────────
+        # Mỗi benefit item: <p name="title">Thưởng</p> + <div>KPI sản phẩm...</div>
+        benefits_parts: list[str] = []
+        for benefit_div in page.css("div[data-benefit-name]"):
+            name_p = benefit_div.css("p[name='title']")
+            benefit_name = (name_p.css("::text").get() or "").strip()
+            # Lấy text mô tả benefit (div con cuối)
+            desc_div = benefit_div.css("div div div")
+            desc_texts = [t.strip() for t in desc_div.css("::text").getall() if t.strip()]
+            desc = " ".join(desc_texts)
+            if benefit_name and desc:
+                benefits_parts.append(f"{benefit_name}: {desc}")
+            elif benefit_name:
+                benefits_parts.append(benefit_name)
+        benefits = "\n".join(benefits_parts) if benefits_parts else None
+
+        # ── Thông tin công ty & Website ──────────────────────────────────
+        # Vào trang: <a name="label" href="/nha-tuyen-dung/...">K&M Holdings</a>
+        company_info = None
+        company_website = None
+
+        employer_href = page.css("a[name='label'][href*='/nha-tuyen-dung/']::attr(href)").get()
+        employer_url = None
+        if employer_href:
+            # Bỏ query param fromPage
+            parsed = urlparse(urljoin(self.base_url, employer_href.strip()))
+            employer_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+
+        if employer_url:
+            self.logger.info(f"Fetching employer page: {employer_url}")
+            comp_html = self._fetch_html(employer_url)
+            if comp_html:
+                comp_page = Adaptor(comp_html)
+
+                # Thông tin công ty: <p name="paragraph" ...> hoặc <p class*='ePFWJD'>
+                # Dùng name attribute vì class là generated
+                for p_el in comp_page.css("p[name='paragraph']"):
+                    val = p_el.css("::text").get() or ""
+                    # Tìm đoạn dài nhất (mô tả công ty thường nhiều chữ)
+                    if len(val.strip()) > 100:
+                        parts = p_el.css("::text").getall()
+                        lines = [p.strip() for p in parts if p.strip()]
+                        company_info = "\n".join(lines) or None
+                        break
+
+                # Fallback: lấy bất kỳ đoạn text dài trong trang employer
+                if not company_info:
+                    for div in comp_page.css("div"):
+                        parts = div.css("p::text").getall()
+                        text = " ".join(p.strip() for p in parts if p.strip())
+                        if len(text) > 200:
+                            lines = [p.strip() for p in parts if p.strip()]
+                            company_info = "\n".join(lines) or None
+                            break
+
+                # Website công ty: tìm link ngoài domain vietnamworks trong trang employer
+                for a in comp_page.css("a[href]"):
+                    href = a.css("::attr(href)").get() or ""
+                    if href.startswith("http") and "vietnamworks.com" not in href:
+                        company_website = href.strip()
+                        break
+
+        return {
+            "title": title,
+            "company": company,
+            "salary": salary,
+            "location": location,
+            "experience_level": experience,
+            "job_type": job_type,
+            "job_industry": job_industry,
+            "job_position": job_position,
+            "job_description": job_description,
+            "requirements": requirements,
+            "benefits": benefits,
+            "job_deadline": deadline,
+            "company_info": company_info,
+            "company_website": company_website,
+            "job_url": url,
+            "source": self.source_name,
+            "scraped_at": datetime.now().isoformat(),
+        }
 
 
 if __name__ == "__main__":

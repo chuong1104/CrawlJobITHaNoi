@@ -4,6 +4,8 @@
 .env
 .env.*
 !.env.example
+*_session.json
+*linkedin.com*.json
 
 # =========================
 # Python
@@ -28,12 +30,14 @@ env/
 .env/
 
 # =========================
-# Data files (không commit data thô/processed)
+# Data — Medallion layers (không commit data thô)
 # =========================
-data/raw/*
-data/processed/*
-!data/raw/.gitkeep
-!data/processed/.gitkeep
+data/bronze/*
+data/silver/*
+data/gold/*
+!data/bronze/.gitkeep
+!data/silver/.gitkeep
+!data/gold/.gitkeep
 
 # =========================
 # Airflow logs
@@ -60,8 +64,14 @@ Thumbs.db
 # =========================
 keys/
 *.json
+!data/**/*.jsonl
 
 # =========================
 # Docker
 # =========================
 .dockerignore
+
+# =========================
+# Authentication states
+# =========================
+src/extract/job_online/auth/

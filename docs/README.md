@@ -145,30 +145,21 @@ Mỗi website có crawler riêng phù hợp với đặc điểm:
 Job Websites
       │
       ▼
-Web Crawlers
+Web Crawlers (Python / Playwright)
       │
       ▼
-Raw Data Lake (S3 / MinIO)
+Raw Data Lake (Floci S3 - Bronze Layer - JSON)
       │
       ▼
-Raw Layer
+Data Processing & Transformation (dbt + DuckDB)
       │
-      ▼
-Staging Layer
-      │
-      ▼
-Silver Layer (3NF Database)
-      │
-      ▼
-Data Warehouse (Star Schema)
-      │
-      ▼
-Data Mart
-      │
-      ├── Power BI
-      ├── Search API
-      ├── Recommendation API
-      └── Web Application
+      ├── Staging (DuckDB views/tables)
+      ├── Silver (Cleaned - Parquet on Floci S3)
+      └── Gold (Star Schema/Marts - Parquet on Floci S3)
+            │
+            ├── Power BI
+            ├── Search API (FastAPI + DuckDB)
+            └── Web Application
 ```
 
 ---
@@ -183,20 +174,22 @@ Data Mart
 * BeautifulSoup
 * Requests
 
-## Storage
+## Storage & Data Lake
 
-* PostgreSQL
-* MinIO
+* Floci S3 (AWS S3 Mock Server)
+* Parquet (Silver & Gold Layers)
+* JSON (Bronze/Raw Layer)
+* PostgreSQL (Chỉ dùng làm Database backend lưu metadata cho Apache Airflow)
 
-## Data Processing
+## Data Processing & Transformation
 
-* SQL
-* Python
-* Pandas
+* dbt-core (sử dụng plugin `dbt-duckdb`)
+* DuckDB (Query Engine phân tích trực tiếp trên S3)
+* Python (Pandas/boto3 cho Crawler & Script phụ trợ)
 
-## Data Warehouse
+## Data Warehouse & Compute
 
-* PostgreSQL
+* DuckDB (Kiến trúc In-Process Columnar analytical database)
 
 ## Orchestration
 
@@ -209,25 +202,26 @@ Data Mart
 
 ## Cloud Simulation
 
-* Floci
+* Floci (Giả lập AWS S3, RDS, IAM)
 
-## API
+## API & Serving
 
 * FastAPI
+* DuckDB (Python API)
 
-## Dashboard
+## Dashboard & Analytics
 
-* Power BI
+* Power BI (Kết nối trực tiếp file Parquet / DuckDB)
 
 ## Search
 
-* PostgreSQL Full Text Search
+* DuckDB Full Text Search / SQL Querying
 
 ## Monitoring
 
 * Airflow Logs
-* PostgreSQL Monitoring
-* Custom Pipeline Metrics
+* Custom Quality checks via dbt tests
+
 
 ---
 
@@ -454,29 +448,75 @@ data_quality_checks
 
 # Deployment
 
-Toàn bộ hệ thống chạy bằng Docker Compose.
+Toàn bộ hệ thống được container hóa và chạy qua Docker Compose.
 
-Các service:
+Các service chính:
+* `postgres`: Cơ sở dữ liệu lưu trữ metadata của Airflow.
+* `floci`: Giả lập local AWS Cloud (S3) để lưu trữ các tầng Data Lake (Bronze, Silver, Gold).
+* `airflow-init`: Khởi tạo môi trường, migrate db và tạo tài khoản admin cho Airflow.
+* `airflow`: Chạy dịch vụ Airflow dạng Standalone (Webserver, Scheduler, Triggerer, Executor trong cùng một service gọn nhẹ).
 
-```text
-postgres
-minio
-airflow-webserver
-airflow-scheduler
-airflow-worker
-fastapi
-crawler
+---
+
+# Môi trường phát triển trên WSL 2 (Windows Subsystem for Linux)
+
+Dự án được tối ưu hóa hoàn toàn để chạy trên môi trường **WSL 2 (Ubuntu)** kết hợp với Docker. Dưới đây là hướng dẫn cài đặt và thiết lập môi trường:
+
+## 1. Yêu cầu hệ thống
+* Windows 10/11 có bật **WSL 2** (Ubuntu 20.04 hoặc 22.04+).
+* Cài đặt **Docker Desktop** trên Windows và kích hoạt tích hợp **WSL 2 Integration** (trong Settings > Resources > WSL Integration > Chọn bản Ubuntu của bạn).
+
+## 2. Thiết lập phân quyền (Permissions) trên WSL
+Airflow Docker yêu cầu đồng bộ user ID để không gặp lỗi phân quyền khi ghi file log và data vào thư mục local được mount.
+Trong terminal WSL, chạy lệnh sau ở thư mục gốc của dự án để ghi user ID hiện tại vào file `.env`:
+```bash
+echo -e "AIRFLOW_UID=$(id -u)" >> .env
 ```
 
-Có thể triển khai trên:
+## 3. Khởi tạo môi trường Python local
+Để viết code, debug dags và dbt model ngay trên WSL:
+```bash
+# Tạo môi trường ảo
+python3 -m venv .venv
+source .venv/bin/activate
 
-* Local
-* VPS
-* Floci
+# Cài đặt thư viện dependencies
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+## 4. Chạy hệ thống qua Docker Compose
+Khởi động toàn bộ cụm dịch vụ:
+```bash
+docker compose up -d
+```
+Kiểm tra trạng thái các container:
+```bash
+docker compose ps
+```
+
+## 5. Truy cập các dịch vụ từ Windows
+Nhờ tính năng localhost port forwarding tự động của WSL 2, bạn có thể truy cập các đường dẫn sau trực tiếp từ trình duyệt trên Windows:
+* **Airflow Webserver UI:** [http://localhost:8080](http://localhost:8080) (Tài khoản: `admin` / Mật khẩu: `admin`)
+* **Floci AWS Mock API:** `http://localhost:4566`
+* **Local Postgres:** `localhost:5432`
+
+## 6. Kiểm tra AWS S3 giả lập trên Floci
+Cài đặt `awscli-local` hoặc `awscli` trên WSL để tương tác trực tiếp với Floci S3:
+```bash
+# Cấu hình awscli dummy credentials
+aws configure set aws_access_key_id test
+aws configure set aws_secret_access_key test
+aws configure set default.region us-east-1
+
+# Liệt kê các bucket đang có trên Floci
+aws --endpoint-url=http://localhost:4566 s3 ls
+```
 
 ---
 
 # Project Structure
+
 
 ```text
 job-it-data-platform/

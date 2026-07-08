@@ -1,0 +1,15 @@
+version: 2
+
+sources:
+  - name: silver
+    description: "Tầng Silver (Operational DB) nằm trong PostgreSQL"
+    schema: silver
+    tables:
+      - name: jobs
+      - name: job_snapshots
+      - name: companies
+      - name: skills
+      - name: locations
+      - name: job_snapshot_skills
+      - name: job_snapshot_locations
+      - name: sources

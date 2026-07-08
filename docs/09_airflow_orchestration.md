@@ -152,8 +152,8 @@ Project Infrastructure:
 Docker
 
 ├── Airflow
-├── PostgreSQL
-├── MinIO / Floci S3
+├── PostgreSQL (Airflow metadata)
+├── Floci S3 (Data Lake: Bronze, Silver, Gold)
 ├── FastAPI
 ├── Search Service
 └── Recommendation Service

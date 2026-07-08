@@ -21,8 +21,8 @@ from typing import Optional
 
 from scrapling import StealthyFetcher, DynamicFetcher
 
-from src.config import DATA_RAW_DIR, ScraperConfig
-from src.utils import ensure_dir, generate_job_id, get_date_str, setup_logger
+from src.config import DATA_BRONZE_DIR, ScraperConfig
+from src.utils import ensure_dir, fmt_duration, generate_job_id, get_date_str, setup_logger
 
 
 class ScrapingException(Exception):
@@ -63,8 +63,39 @@ class BaseScraper(abc.ABC):
         self.delay_range = delay_range
         self.proxy = proxy
         self.use_playwright = use_playwright
-        self.output_dir = output_dir or ensure_dir(DATA_RAW_DIR / self.source_name)
+        self.output_dir = output_dir or ensure_dir(DATA_BRONZE_DIR / self.source_name)
         self.logger = setup_logger(f"scraper.{self.source_name}")
+        # Thống kê nội bộ
+        self._stat_urls_raw    = 0
+        self._stat_urls_new    = 0
+        self._stat_fetch_ok    = 0
+        self._stat_fetch_fail  = 0
+
+    # ------------------------------------------------------------------
+    # State Management
+    # ------------------------------------------------------------------
+    def _get_state_file(self) -> Path:
+        return self.output_dir / "state.json"
+
+    def _load_state(self) -> dict:
+        state_file = self._get_state_file()
+        if state_file.exists():
+            try:
+                with state_file.open("r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def _save_state(self, state: dict) -> None:
+        state_file = self._get_state_file()
+        with state_file.open("w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+
+    def _clear_state(self) -> None:
+        state_file = self._get_state_file()
+        if state_file.exists():
+            state_file.unlink()
 
     # ------------------------------------------------------------------
     # Abstract interface — subclass phải implement
@@ -119,26 +150,39 @@ class BaseScraper(abc.ABC):
             try:
                 html = self._do_fetch(url)
                 if html:
-                    return html
-                # None từ fetcher → retry
-                wait = self._backoff(attempt)
-                self.logger.warning(
-                    f"Empty response [{url}] attempt {attempt}/{self.max_retries}, "
-                    f"waiting {wait:.1f}s"
-                )
-                time.sleep(wait)
+                    if self._is_valid_html(html, url):
+                        return html
+                    else:
+                        wait = self._backoff(attempt)
+                        self.logger.warning(
+                            f"Blocked or Invalid HTML (attempt {attempt}/{self.max_retries}) → retry in {wait:.0f}s: {url}"
+                        )
+                else:
+                    wait = self._backoff(attempt)
+                    self.logger.warning(
+                        f"Empty response (attempt {attempt}/{self.max_retries}) → retry in {wait:.0f}s: {url}"
+                    )
+
+                if attempt < self.max_retries:
+                    time.sleep(wait)
 
             except Exception as exc:
                 wait = self._backoff(attempt)
                 self.logger.warning(
-                    f"Error fetching [{url}]: {exc!r} "
-                    f"attempt {attempt}/{self.max_retries}, waiting {wait:.1f}s"
+                    f"Fetch error (attempt {attempt}/{self.max_retries}): {type(exc).__name__} → retry in {wait:.0f}s: {url}"
                 )
                 if attempt < self.max_retries:
                     time.sleep(wait)
 
-        self.logger.error(f"Giving up on [{url}] after {self.max_retries} attempts")
+        self.logger.error(f"Gave up after {self.max_retries} retries: {url}")
         return None
+
+    def _is_valid_html(self, html: str, url: str) -> bool:
+        """
+        Hook để subclass kiểm tra xem HTML có bị chặn hay không (CAPTCHA, 429...).
+        Mặc định là True.
+        """
+        return True
 
     def _do_fetch(self, url: str) -> Optional[str]:
         """Thực hiện 1 lần fetch, trả về HTML string hoặc None."""
@@ -175,10 +219,11 @@ class BaseScraper(abc.ABC):
                 return val.decode("utf-8") if isinstance(val, bytes) else str(val)
         return str(page)
 
-    @staticmethod
-    def _backoff(attempt: int) -> float:
-        """Exponential backoff với jitter: 2^attempt + random(0, 1)."""
-        return 2.0 ** attempt + random.uniform(0.0, 1.0)
+    def _backoff(self, attempt: int) -> float:
+        """Exponential backoff với jitter. Tăng thời gian chờ khi bị chặn."""
+        base_wait = 2.0 ** attempt
+        jitter = random.uniform(2.0, 5.0)
+        return base_wait + jitter + (5.0 * attempt)
 
     def _resolve_pages(self, pages: Optional[int]) -> Optional[int]:
         """
@@ -213,26 +258,22 @@ class BaseScraper(abc.ABC):
 
         while current_url:
             if current_url in visited_pages:
-                self.logger.info(
-                    f"[Phase 1] URL trang bị lặp ({current_url}) -> dừng crawl"
-                )
+                self.logger.debug(f"[Phase 1] Loop detected at page {page_num} → stop")
                 break
             visited_pages.add(current_url)
 
-            page_label = f"{page_num}/{max_pages}" if max_pages is not None else f"{page_num}/AUTO"
-            self.logger.info(f"[Phase 1] Page {page_label} -> {current_url}")
+            page_label = f"{page_num}/{max_pages}" if max_pages is not None else f"p{page_num}"
+            self.logger.info(f"[Phase 1] {page_label} fetching...")
 
             html = self._fetch_html(current_url)
             if not html:
-                self.logger.warning(
-                    f"[Phase 1] Fetch thất bại ở page {page_num} -> dừng crawl"
-                )
+                self.logger.warning(f"[Phase 1] Fetch failed at page {page_num} → stop")
                 break
 
             try:
                 urls = self.extract_job_urls(html)
             except Exception as exc:
-                self.logger.warning(f"[Phase 1] extract_job_urls lỗi trang {page_num}: {exc!r}")
+                self.logger.warning(f"[Phase 1] extract_job_urls error p{page_num}: {type(exc).__name__}")
                 urls = []
 
             new_urls_count = 0
@@ -242,32 +283,24 @@ class BaseScraper(abc.ABC):
                     new_urls_count += 1
 
             self.logger.info(
-                f"[Phase 1] Tìm thấy {len(urls)} URL trên trang {page_num} "
-                f"(mới: {new_urls_count})"
+                f"[Phase 1] {page_label} → {len(urls)} URLs found, {new_urls_count} new"
             )
             all_urls.extend(urls)
 
-            # Điều kiện dừng an toàn: trang hiện tại không có data.
             if len(urls) == 0:
-                self.logger.info(
-                    f"[Phase 1] Page {page_num} không có job URL -> dừng crawl"
-                )
+                self.logger.info(f"[Phase 1] No URLs on page {page_num} → stop")
                 break
 
-            # Điều kiện dừng an toàn: không có URL mới so với các trang trước.
             if new_urls_count == 0:
-                self.logger.info(
-                    f"[Phase 1] Page {page_num} không có URL mới -> dừng crawl"
-                )
+                self.logger.info(f"[Phase 1] No new URLs on page {page_num} → stop")
                 break
 
-            # Nếu user truyền pages thì chỉ crawl tối đa số trang đó.
             if max_pages is not None and page_num >= max_pages:
                 break
 
             next_url = self.get_next_page_url(html, page_num, current_url)
             if not next_url:
-                self.logger.info("[Phase 1] Không tìm thấy trang kế tiếp -> dừng crawl")
+                self.logger.info("[Phase 1] No next page → stop")
                 break
 
             delay = random.uniform(*self.delay_range)
@@ -301,14 +334,16 @@ class BaseScraper(abc.ABC):
             unique = [u for u in unique if u not in existing_urls]
 
         self.logger.info(
-            f"[Phase 2] {len(urls)} raw -> {before} unique -> {len(unique)} mới chưa có trong DB"
+            f"[Phase 2] Dedup: {len(urls)} raw → {before} unique → {len(unique)} new"
         )
+        self._stat_urls_raw = len(urls)
+        self._stat_urls_new = len(unique)
         return unique
 
     # ------------------------------------------------------------------
     # Phase 3: Batch-parallel detail fetch
     # ------------------------------------------------------------------
-    def _fetch_details_batch(self, urls: list[str]) -> list[dict]:
+    def _fetch_details_batch(self, urls: list[str], manager, date_str: str, state: dict) -> list[dict]:
         """
         Chia URLs thành batches, mỗi batch fetch song song bằng ThreadPoolExecutor.
         Sleep random giữa các batch để tránh rate limit.
@@ -320,20 +355,47 @@ class BaseScraper(abc.ABC):
         ]
         total_batches = len(batches)
 
+        # Initialize validation stats in state if not present
+        if "total_validated" not in state: state["total_validated"] = 0
+        if "total_rejected" not in state: state["total_rejected"] = 0
+
         for idx, batch in enumerate(batches, 1):
-            self.logger.info(
-                f"[Phase 3] Batch {idx}/{total_batches}: {len(batch)} URLs"
-            )
+            t_batch = time.time()
+            self.logger.info(f"[Phase 3] [Batch {idx}/{total_batches}] {len(batch)} URLs processing...")
             batch_results = self._process_batch(batch)
             results.extend(batch_results)
+            
+            ok   = len(batch_results)
+            fail = len(batch) - ok
+            self._stat_fetch_ok   += ok
+            self._stat_fetch_fail += fail
+            
+            # --- Save local batch ---
+            num_valid, num_rejected = manager.append_local_batch(
+                source=self.source_name,
+                date_str=date_str,
+                records=batch_results
+            )
+            state["total_validated"] += num_valid
+            state["total_rejected"] += num_rejected
+            
+            # --- Update state ---
+            for url in batch:
+                if url in state["pending_urls"]:
+                    state["pending_urls"].remove(url)
+                state["completed_urls"].append(url)
+            self._save_state(state)
+
+            elapsed_b = time.time() - t_batch
             self.logger.info(
-                f"[Phase 3] Batch {idx}/{total_batches}: "
-                f"{len(batch_results)}/{len(batch)} thành công"
+                f"[Phase 3] [Batch {idx}/{total_batches}] "
+                f"✔ {ok}/{len(batch)} parsed  "
+                f"({fmt_duration(elapsed_b)})"
+                + (f"  ✖ {fail} failed" if fail else "")
             )
 
             if idx < total_batches:
                 delay = random.uniform(*self.delay_range)
-                self.logger.debug(f"[Phase 3] Sleep {delay:.1f}s trước batch tiếp theo")
                 time.sleep(delay)
 
         return results
@@ -352,7 +414,7 @@ class BaseScraper(abc.ABC):
                     if result:
                         results.append(result)
                 except Exception as exc:
-                    self.logger.warning(f"[Phase 3] Lỗi xử lý [{url}]: {exc!r}")
+                    self.logger.warning(f"[Phase 3] Error processing URL: {type(exc).__name__}")
         return results
 
     def _fetch_and_parse(self, url: str) -> Optional[dict]:
@@ -362,6 +424,19 @@ class BaseScraper(abc.ABC):
             return None
         try:
             job = self.parse_job_detail(html, url)
+            if not job:
+                return None
+            
+            # --- Thêm Regex Fallback tự động ---
+            full_text = f"{job.get('job_description', '')}\n{job.get('requirements', '')}\n{job.get('benefits', '')}".strip()
+            if full_text:
+                from src.extract.job_online.regex_extractor import FallbackRegexExtractor
+                extracted = FallbackRegexExtractor.parse_all(full_text)
+                for key, val in extracted.items():
+                    if not job.get(key) and val:
+                        job[key] = val
+            # ------------------------------------
+            
             # Đảm bảo các field bắt buộc luôn có
             job.setdefault("source", self.source_name)
             job.setdefault("job_url", url)
@@ -369,74 +444,9 @@ class BaseScraper(abc.ABC):
             job.setdefault("job_id", generate_job_id(self.source_name, url))
             return job
         except Exception as exc:
-            self.logger.warning(f"[Phase 3] parse_job_detail lỗi [{url}]: {exc!r}")
+            self.logger.warning(f"[Phase 3] Parse error: {type(exc).__name__}: {exc}")
             return None
 
-    # ------------------------------------------------------------------
-    # Save raw data
-    # ------------------------------------------------------------------
-    def save_raw(
-        self,
-        results: list[dict],
-        date_str: Optional[str] = None,
-    ) -> Path:
-        """
-        Lưu list[dict] vào data/raw/{source_name}/{YYYY-MM-DD}.json.
-        Nếu file đã tồn tại (chạy lại cùng ngày) → merge/append, không overwrite.
-        """
-        date_str = date_str or get_date_str()
-        out_path = self.output_dir / f"{date_str}.json"
-
-        existing: list[dict] = []
-        if out_path.exists():
-            try:
-                with out_path.open("r", encoding="utf-8") as f:
-                    existing = json.load(f)
-            except (json.JSONDecodeError, OSError) as exc:
-                self.logger.warning(f"Không đọc được file cũ [{out_path}]: {exc!r}")
-
-        merged = existing + results
-        with out_path.open("w", encoding="utf-8") as f:
-            json.dump(merged, f, ensure_ascii=False, indent=2)
-
-        self.logger.info(
-            f"Saved {len(results)} records -> {out_path} "
-            f"(tổng cộng trong file: {len(merged)})"
-        )
-        return out_path
-
-    # ------------------------------------------------------------------
-    # Save links
-    # ------------------------------------------------------------------
-    def save_links(
-        self,
-        links: list[str],
-        date_str: Optional[str] = None,
-    ) -> Path:
-        """
-        Lưu toàn bộ links (đã dedup) vào 1 file:
-        data/raw/{source_name}/links/{YYYY-MM-DD}_links.json
-        """
-        date_str = date_str or get_date_str()
-        links_dir = ensure_dir(self.output_dir / "links")
-        out_path = links_dir / f"{date_str}_links.json"
-
-        payload = {
-            "source": self.source_name,
-            "saved_at": datetime.now().isoformat(),
-            "total_links": len(links),
-            "links": links,
-        }
-
-        with out_path.open("w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
-
-        self.logger.info(f"Saved {len(links)} links -> {out_path}")
-        return out_path
-
-    # ------------------------------------------------------------------
-    # Main entry point
-    # ------------------------------------------------------------------
     def run(
         self,
         pages: Optional[int] = None,
@@ -444,43 +454,84 @@ class BaseScraper(abc.ABC):
     ) -> list[dict]:
         """
         Chạy toàn bộ pipeline 3 giai đoạn và lưu kết quả thô.
-
-        Args:
-            pages: số trang danh sách cào ở Phase 1.
-                Nếu None, dùng AirflowConfig.SCRAPE_PAGES.
-            existing_urls: tập URL đã có trong DB (để dedup ở Phase 2).
-
-        Returns:
-            list[dict] — raw job data (đã lưu ra disk).
+        Hỗ trợ Resume từ state.json nếu lần chạy trước đó bị lỗi.
         """
-        self.logger.info(
-            f"=== BẮT ĐẦU scraper [{self.source_name}] | "
-            f"pages={(self._resolve_pages(pages) if pages is not None else 'AUTO')} ==="
-        )
         start_time = datetime.now()
-
-        # Phase 1
-        raw_urls = self._collect_urls(pages)
-
-        # Phase 2
-        urls = self._deduplicate_urls(raw_urls, existing_urls)
-        if not urls:
-            self.logger.info("Không có URL mới để cào.")
-            return []
-
-        # Phase 3
-        results = self._fetch_details_batch(urls)
-
-        # Persist
         date_str = get_date_str(start_time)
-        self.save_raw(results, date_str)
+        t0 = time.monotonic()
+        
+        from src.storage.bronze_manager import BronzeManager
+        from src.config import DATA_BRONZE_DIR
+        manager = BronzeManager(local_bronze_dir=DATA_BRONZE_DIR, s3_bucket="jobit-bronze")
 
-        elapsed = (datetime.now() - start_time).total_seconds()
-        self.logger.info(
-            f"=== XONG [{self.source_name}] | "
-            f"{len(results)} jobs | {elapsed:.1f}s ==="
-        )
-        return results
+        state = self._load_state()
+        if state.get("status") == "FAILED" and state.get("pending_urls"):
+            self.logger.info(f"Resuming from previous FAILED state. {len(state['pending_urls'])} URLs pending.")
+            urls = state["pending_urls"]
+            self._stat_urls_new = len(urls)
+        else:
+            pages_label = str(self._resolve_pages(pages)) if pages is not None else "AUTO"
+            self.logger.info(f"Start  pages={pages_label}")
+
+            # Phase 1: collect URLs
+            t1 = time.monotonic()
+            raw_urls = self._collect_urls(pages)
+            self.logger.info(f"[Phase 1] Done — {len(raw_urls)} URLs in {fmt_duration(time.monotonic()-t1)}")
+
+            # Phase 2: dedup
+            urls = self._deduplicate_urls(raw_urls, existing_urls)
+            if not urls:
+                self.logger.info("No new URLs to scrape — skipping Phase 3")
+                self._clear_state()
+                return []
+            
+            # Khởi tạo trạng thái mới
+            state = {
+                "status": "IN_PROGRESS",
+                "date_str": date_str,
+                "pending_urls": urls,
+                "completed_urls": [],
+                "total_urls": len(urls)
+            }
+            self._save_state(state)
+
+        # Sử dụng date_str từ state nếu đang resume
+        current_date_str = state.get("date_str", date_str)
+
+        # Phase 3: fetch details
+        t3 = time.monotonic()
+        results = []
+        try:
+            results = self._fetch_details_batch(urls, manager, current_date_str, state)
+            state["status"] = "SUCCESS"
+            self._save_state(state)
+            
+            elapsed = time.monotonic() - t0
+            
+            # Finalize and upload
+            success = manager.finalize_and_upload(
+                source=self.source_name,
+                date_str=current_date_str,
+                total_scraped=state.get("total_urls", len(urls)),
+                total_validated=state.get("total_validated", 0),
+                total_rejected=state.get("total_rejected", 0),
+                scrape_duration_seconds=elapsed,
+            )
+            
+            if success:
+                self.logger.info("Successfully processed and uploaded to Bronze.")
+                self._clear_state()
+            else:
+                self.logger.warning("Bronze process/upload completed with some errors.")
+
+            self.logger.info(f"Finished — {len(results)} jobs processed  ⏱ {fmt_duration(elapsed)}")
+            return results
+            
+        except Exception as exc:
+            self.logger.error(f"Global error during scraping Phase 3: {exc}")
+            state["status"] = "FAILED"
+            self._save_state(state)
+            raise
 
     def run_links_only(
         self,

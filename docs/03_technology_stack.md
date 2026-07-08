@@ -17,7 +17,7 @@ Thay vì dùng các công cụ Big Data cồng kềnh (Hadoop, Spark, Trino), d�
 
 | Layer                  | Technology                        |
 | ---------------------- | --------------------------------- |
-| Crawling               | Scrapy, Playwright, Python        |
+| Crawling               | Scrapy, Playwright, Python (Regex Fallback) |
 | Local Cloud Simulation | Floci (giả lập AWS S3, RDS)       |
 | Data Lake Storage      | Floci S3 (thay thế MinIO/S3 thật) |
 | Compute Engine         | DuckDB                            |
