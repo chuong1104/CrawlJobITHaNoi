@@ -292,16 +292,6 @@ class VietnamWorksScraper(BaseScraper):
     # Helpers
     # ------------------------------------------------------------------
     @staticmethod
-    def _get_block_text(page: Adaptor, selector: str) -> str | None:
-        """Lấy toàn bộ inner text (multi-line) của một block."""
-        el = page.css(selector)
-        if not el:
-            return None
-        parts = el.css("::text").getall()
-        lines = [p.strip() for p in parts if p and p.strip()]
-        return "\n".join(lines) or None
-
-    @staticmethod
     def _find_label_value(page: Adaptor, label_keyword: str) -> str | None:
         """
         VietnamWorks dùng pattern:

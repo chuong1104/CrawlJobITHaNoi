@@ -134,16 +134,6 @@ class CareerLinkScraper(BaseScraper):
     # Helpers
     # ------------------------------------------------------------------
     @staticmethod
-    def _get_text(page: Adaptor, selector: str) -> str | None:
-        """Lấy text từ selector đầu tiên khớp, strip whitespace."""
-        el = page.css(selector)
-        if not el:
-            return None
-        parts = el.css("::text").getall()
-        text = " ".join(p.strip() for p in parts if p and p.strip())
-        return text or None
-
-    @staticmethod
     def _get_inner_html(page: Adaptor, selector: str) -> str | None:
         """Lấy toàn bộ inner text (plain) của một block section."""
         el = page.css(selector)

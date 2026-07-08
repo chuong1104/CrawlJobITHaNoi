@@ -81,13 +81,6 @@ class TopCVScraper(BaseScraper):
     # Helpers
     # ------------------------------------------------------------------
     @staticmethod
-    def _clean_texts(elements) -> str | None:
-        """Join all ::text nodes, strip whitespace, return None if empty."""
-        parts = elements.css("::text").getall() if elements else []
-        text = " ".join(p.strip() for p in parts if p and p.strip())
-        return text or None
-
-    @staticmethod
     def _block_text(elements) -> str | None:
         """Multi-line inner text from a block element."""
         parts = elements.css("::text").getall() if elements else []
