@@ -1,1 +1,0 @@
--- Tạo bảng staging và production cho jobs

@@ -14,6 +14,7 @@ curl_cffi>=0.7.0
 # --- Data Processing ---
 pandas>=2.2.0
 pydantic>=2.6.0
+duckdb>=0.10.0
 
 python-dateutil>=2.9.0
 
@@ -24,6 +25,17 @@ SQLAlchemy>=2.0.0
 # --- BigQuery (optional) ---
 # google-cloud-bigquery>=3.19.0
 
+# --- Transformation (dbt + DuckDB) ---
+dbt-core>=1.7.0
+dbt-duckdb>=1.7.0
+
+# --- Cloud Interaction (Floci S3) ---
+boto3>=1.34.0
+
+# --- Serving API ---
+fastapi>=0.110.0
+uvicorn>=0.28.0
+
 # --- Utilities ---
 python-dotenv>=1.0.0
 fake-useragent>=1.5.0
@@ -31,3 +43,4 @@ fake-useragent>=1.5.0
 # --- Testing ---
 pytest>=8.1.0
 pytest-asyncio>=0.23.0
+
