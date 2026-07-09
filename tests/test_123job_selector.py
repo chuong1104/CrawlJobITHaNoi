@@ -1,11 +1,11 @@
-"""
+﻿"""
 test_123job_selector.py — Test nhanh Job123Scraper: fetch 1 trang + 1 job detail.
 Chạy: python tests/test_123job_selector.py
 """
 import sys
 
 from scrapling import StealthyFetcher
-from src.extract.job_online.job_123 import Job123Scraper
+from src.extract.job_123 import Job123Scraper
 
 # ── Bước 1: Fetch trang danh sách ─────────────────────────────────────────
 LIST_URL = Job123Scraper.DEFAULT_START_URL

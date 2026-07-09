@@ -1,9 +1,9 @@
-from datetime import datetime
+﻿from datetime import datetime
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
 from scrapling.parser import Adaptor
 
-from src.extract.job_online.base_scraper import BaseScraper
+from src.extract.base_scraper import BaseScraper
 
 
 class JobsGoScraper(BaseScraper):
@@ -18,7 +18,7 @@ class JobsGoScraper(BaseScraper):
 	def __init__(self, start_url: str | None = None, **kwargs) -> None:
 		kwargs.setdefault("delay_range", (8.0, 15.0))
 		kwargs.setdefault("max_retries", 5)
-		kwargs.setdefault("use_playwright", True)
+		kwargs.setdefault("use_playwright", False)
 		super().__init__(**kwargs)
 		self.start_url = self._canonicalize_list_url(start_url or self.DEFAULT_START_URL)
 
@@ -35,6 +35,9 @@ class JobsGoScraper(BaseScraper):
 		page = Adaptor(html)
 		is_list_page = bool(page.css("div.card.job-card a.text-decoration-none, h3.job-title a"))
 		if not is_list_page:
+			if "/tuyen-dung/" in url or "/brand/" in url:
+				return bool(page.css("h1, h2, #company-description, .company-info, div.card-body"))
+			
 			title_el = page.css("h1.job-title")
 			company_el = page.css("h6.fw-semibold.mb-1.text-dark")
 			if not title_el and not company_el:
@@ -159,7 +162,7 @@ class JobsGoScraper(BaseScraper):
 			h3_text = "".join(h3.css("::text").getall()).strip().lower()
 			if heading_keyword.lower() in h3_text:
 				# Lấy element ngay sau h3 (thường là div hoặc ul chứa <li>)
-				sibling = h3.css("+ div") or h3.css("+ ul")
+				sibling = h3.xpath("following-sibling::*[1][self::div or self::ul]")
 				if sibling:
 					parts = sibling.css("::text").getall()
 					lines = [p.strip() for p in parts if p and p.strip()]
@@ -300,25 +303,30 @@ class JobsGoScraper(BaseScraper):
 			if comp_html:
 				comp_page = Adaptor(comp_html)
 
-				# Tìm nút "Xem thêm" rồi lấy #company-description
-				# (HTML đã render sẵn nội dung dù có d-none trên nút)
+				# --- 1. Lấy mô tả công ty ---
+				# Cách 1 (trang thường): div#company-description
 				desc_el = comp_page.css("div#company-description")
 				if desc_el:
 					parts = desc_el.css("::text").getall()
 					lines = [p.strip() for p in parts if p.strip()]
 					company_info = "\n".join(lines) or None
 
-				# Website: <li> chứa icon pb-heroicons-globe-alt → <a>
-				for li in comp_page.css("li.d-flex.align-items-start.gap-2"):
-					if li.css("i.pb-heroicons-globe-alt"):
-						href = li.css("a::attr(href)").get()
-						if href:
-							company_website = href.strip() or None
-						if not company_website:
-							company_website = li.css("a::text").get()
-							if company_website:
-								company_website = company_website.strip() or None
-						break
+				# Cách 2 (trang brand): .vp-intro-content
+				if not company_info:
+					desc_el = comp_page.css(".vp-intro-content")
+					if desc_el:
+						parts = desc_el.css("::text").getall()
+						lines = [p.strip() for p in parts if p.strip()]
+						filtered_lines = [l for l in lines if l.lower() not in ("về chúng tôi", "giới thiệu", "01", "02", "03")]
+						company_info = "\n".join(filtered_lines) or None
+
+				# --- 2. Lấy website công ty ---
+				# Hỗ trợ cả 2 dạng: 
+				# - Trang thường: i.pb-heroicons-globe-alt + span -> a
+				# - Trang brand: i.bi-globe2 + a
+				web_href = comp_page.css("i[class*='globe'] + a::attr(href), i[class*='globe'] + span a::attr(href)").get()
+				if web_href:
+					company_website = web_href.strip() or None
 
 		# Fallback: lấy company_info từ trang chi tiết nếu có
 		if not company_info:

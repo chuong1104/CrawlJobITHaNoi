@@ -3,11 +3,18 @@ dbt_jobitvn:
     # Target dùng DuckDB để parse JSONL từ Bronze -> Intermediate
     duckdb_dev:
       type: duckdb
-      path: 'jobitvn.duckdb'
+      path: "{{ env_var('DUCKDB_PATH', '/opt/airflow/data/jobitvn.duckdb') }}"
       threads: 4
       extensions:
         - parquet
         - httpfs
+        - delta    # Đọc Delta Lake tables trực tiếp từ S3 bằng delta_scan()
+      settings:
+        s3_endpoint: "{{ env_var('AWS_ENDPOINT_URL', 'localhost:4566') | replace('http://', '') }}"
+        s3_access_key_id: "{{ env_var('AWS_ACCESS_KEY_ID', 'test') }}"
+        s3_secret_access_key: "{{ env_var('AWS_SECRET_ACCESS_KEY', 'test') }}"
+        s3_use_ssl: "false"
+        s3_url_style: "path"
 
     # Target dùng PostgreSQL để build Data Warehouse & Marts (Gold) từ Silver
     pg_dev:

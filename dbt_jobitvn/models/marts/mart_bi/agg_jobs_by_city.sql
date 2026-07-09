@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('fct_job_posting') }}
 {{ config(
     materialized='view'
 ) }}

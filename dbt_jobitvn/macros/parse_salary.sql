@@ -9,16 +9,16 @@
           OR {{ salary_raw_column }} ILIKE '%thỏa thuận%' THEN NULL
         -- Range (e.g. 15 - 20 triệu)
         WHEN {{ salary_raw_column }} ~ '(\d+)\s*(?:-|đến|tới)\s*(\d+)\s*(triệu|tr|m)' THEN
-            CAST(SUBSTRING({{ salary_raw_column }} FROM '(\d+)\s*(?:-|đến|tới)\s*\d+\s*(?:triệu|tr|m)') AS NUMERIC) * 1000000
+            TRY_CAST(REGEXP_EXTRACT({{ salary_raw_column }}, '(\d+)\s*(?:-|đến|tới)\s*(\d+)\s*(?:triệu|tr|m)', 1) AS NUMERIC) * 1000000
         -- Up to (e.g. Tới 30 triệu)
         WHEN {{ salary_raw_column }} ~ '(?i)(tới|lên đến|up to)\s*(\d+)\s*(triệu|tr|m)' THEN
             NULL -- min is NULL
         -- Fixed (e.g. 20 triệu)
         WHEN {{ salary_raw_column }} ~ '(\d+)\s*(triệu|tr|m)' THEN
-            CAST(SUBSTRING({{ salary_raw_column }} FROM '(\d+)\s*(?:triệu|tr|m)') AS NUMERIC) * 1000000
+            TRY_CAST(REGEXP_EXTRACT({{ salary_raw_column }}, '(\d+)\s*(?:triệu|tr|m)', 1) AS NUMERIC) * 1000000
         -- USD (e.g. $500 - $1000)
         WHEN {{ salary_raw_column }} ~ '\$(\d+)\s*(?:-|đến|tới)\s*\$?(\d+)' THEN
-            CAST(SUBSTRING({{ salary_raw_column }} FROM '\$(\d+)\s*(?:-|đến|tới)') AS NUMERIC) * 25000 -- Tỉ giá cứng MVP
+            TRY_CAST(REGEXP_EXTRACT({{ salary_raw_column }}, '\$(\d+)\s*(?:-|đến|tới)\s*\$?(\d+)', 1) AS NUMERIC) * 25000 -- Tỉ giá cứng MVP
         ELSE NULL
     END AS salary_min,
 
@@ -28,16 +28,16 @@
           OR {{ salary_raw_column }} ILIKE '%thỏa thuận%' THEN NULL
         -- Range (e.g. 15 - 20 triệu)
         WHEN {{ salary_raw_column }} ~ '(\d+)\s*(?:-|đến|tới)\s*(\d+)\s*(triệu|tr|m)' THEN
-            CAST(SUBSTRING({{ salary_raw_column }} FROM '\d+\s*(?:-|đến|tới)\s*(\d+)\s*(?:triệu|tr|m)') AS NUMERIC) * 1000000
+            TRY_CAST(REGEXP_EXTRACT({{ salary_raw_column }}, '(\d+)\s*(?:-|đến|tới)\s*(\d+)\s*(?:triệu|tr|m)', 2) AS NUMERIC) * 1000000
         -- Up to (e.g. Tới 30 triệu)
         WHEN {{ salary_raw_column }} ~ '(?i)(tới|lên đến|up to)\s*(\d+)\s*(triệu|tr|m)' THEN
-            CAST(SUBSTRING({{ salary_raw_column }} FROM '(?i)(?:tới|lên đến|up to)\s*(\d+)\s*(?:triệu|tr|m)') AS NUMERIC) * 1000000
+            TRY_CAST(REGEXP_EXTRACT({{ salary_raw_column }}, '(?i)(?:tới|lên đến|up to)\s*(\d+)\s*(?:triệu|tr|m)', 1) AS NUMERIC) * 1000000
         -- Fixed (e.g. 20 triệu)
         WHEN {{ salary_raw_column }} ~ '(\d+)\s*(triệu|tr|m)' THEN
-            CAST(SUBSTRING({{ salary_raw_column }} FROM '(\d+)\s*(?:triệu|tr|m)') AS NUMERIC) * 1000000
+            TRY_CAST(REGEXP_EXTRACT({{ salary_raw_column }}, '(\d+)\s*(?:triệu|tr|m)', 1) AS NUMERIC) * 1000000
         -- USD (e.g. $500 - $1000)
         WHEN {{ salary_raw_column }} ~ '\$(\d+)\s*(?:-|đến|tới)\s*\$?(\d+)' THEN
-            CAST(SUBSTRING({{ salary_raw_column }} FROM '\$\d+\s*(?:-|đến|tới)\s*\$?(\d+)') AS NUMERIC) * 25000
+            TRY_CAST(REGEXP_EXTRACT({{ salary_raw_column }}, '\$(\d+)\s*(?:-|đến|tới)\s*\$?(\d+)', 2) AS NUMERIC) * 25000
         ELSE NULL
     END AS salary_max,
 

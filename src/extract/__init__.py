@@ -1,2 +1,2 @@
-# src/extract/job_online package
-from src.extract.job_online.base_scraper import BaseScraper
+# src/extract package — Job scraper implementations
+from src.extract.base_scraper import BaseScraper

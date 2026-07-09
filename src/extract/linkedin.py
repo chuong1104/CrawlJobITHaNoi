@@ -1,4 +1,4 @@
-import os
+﻿import os
 import random
 import time
 from datetime import datetime
@@ -11,7 +11,7 @@ import urllib.parse
 
 from bs4 import BeautifulSoup
 
-from src.extract.job_online.base_scraper import BaseScraper
+from src.extract.base_scraper import BaseScraper
 from src.utils import ensure_dir, get_date_str, generate_job_id
 
 
@@ -25,7 +25,7 @@ class LinkedInScraperV2(BaseScraper):
         super().__init__(*args, **kwargs)
         self.username = os.getenv("LINKEDIN_USERNAME") or os.getenv("LINKEDIN_EMAIL")
         self.password = os.getenv("LINKEDIN_PASSWORD") or os.getenv("LINKEDIN_PASS")
-        self.session_file = Path("data/linkedin_session.json")
+        self.session_file = Path("data/auth/linkedin_session.json")
 
     def _load_cookies(self) -> Optional[list[dict]]:
         """
@@ -33,6 +33,10 @@ class LinkedInScraperV2(BaseScraper):
         Hỗ trợ cả định dạng của Playwright (list of dict) và định dạng xuất ra từ Chrome Extension (dict chứa key 'cookies').
         """
         candidate_paths = [
+            # Auth directory — nơi lưu session chính (ưu tiên nhất)
+            Path("data/auth/linkedin_session.json"),
+            Path("data/auth/linkedin_storage_state.json"),
+            # Fallback: data root (legacy path)
             Path("data/linkedin_session.json"),
             Path("linkedin_session.json"),
         ]
@@ -100,8 +104,8 @@ class LinkedInScraperV2(BaseScraper):
                     if playwright_cookies:
                         self.logger.info(f"Đã load thành công {len(playwright_cookies)} cookies từ {path}")
                         # Đồng bộ lưu lại bản định dạng chuẩn của Playwright để dùng sau này
-                        # Tốt nhất lưu vào data/linkedin_session.json để được persist qua docker volume
-                        standard_path = Path("data/linkedin_session.json")
+                        # Lưu vào data/auth/ để persist qua docker volume và tách khỏi src/
+                        standard_path = Path("data/auth/linkedin_session.json")
                         try:
                             standard_path.parent.mkdir(parents=True, exist_ok=True)
                             with open(standard_path, "w", encoding="utf-8") as out_f:
@@ -750,6 +754,12 @@ class LinkedInScraperV2(BaseScraper):
         title_selectors = [
             "h1.jobs-unified-top-card__job-title",
             "h1.top-card-layout__title",
+            "h2.jobs-unified-top-card__job-title",
+            "h2.top-card-layout__title",
+            "h1[class*='title']",
+            "h2[class*='title']",
+            ".jobs-unified-top-card__job-title",
+            ".topcard__title",
             "h1",
         ]
         for sel in title_selectors:
@@ -767,6 +777,9 @@ class LinkedInScraperV2(BaseScraper):
             ".topcard__org-name-link",
             "a[data-tracking-control-name*='company']",
             ".top-card-layout__card a",
+            "a[href*='/company/']",
+            "[class*='company-name']",
+            "[class*='org-name']",
         ]
         for sel in company_selectors:
             el = soup.select_one(sel)
@@ -775,6 +788,37 @@ class LinkedInScraperV2(BaseScraper):
                 if company:
                     break
 
+        # --- Fallback trích xuất từ thẻ <title> ---
+        if soup.title:
+            title_text = soup.title.get_text(strip=True)
+            if " | LinkedIn" in title_text:
+                title_text = title_text.split(" | LinkedIn")[0].strip()
+            
+            # Dạng: "Title at Company"
+            if " at " in title_text:
+                parts = title_text.split(" at ", 1)
+                if not title:
+                    title = parts[0].strip()
+                if not company:
+                    company = parts[1].strip()
+            # Dạng: "Title | Company"
+            elif " | " in title_text:
+                parts = title_text.split(" | ", 1)
+                if not title:
+                    title = parts[0].strip()
+                if not company:
+                    company = parts[1].strip()
+
+        # Fallback phụ cho tên công ty bằng cách quét link
+        if not company:
+            for a in soup.find_all("a", href=True):
+                href = a["href"]
+                if "/company/" in href:
+                    text = a.get_text(strip=True)
+                    if text and len(text) < 100 and not any(k in text.lower() for k in ["see details", "view profile", "linkedin", "xem thêm"]):
+                        company = text
+                        break
+
         # --- Địa chỉ ---
         location = None
         location_selectors = [
@@ -782,15 +826,18 @@ class LinkedInScraperV2(BaseScraper):
             ".jobs-unified-top-card__workplace-type",
             ".topcard__flavor--bullet",
             "span[class*='_34c2f5bd']",
+            "[class*='jobs-unified-top-card__bullet']",
+            "[class*='topcard__flavor--bullet']",
+            "[class*='workplace-type']",
         ]
         for sel in location_selectors:
             elements = soup.select(sel)
             for el in elements:
                 text = el.get_text(strip=True)
-                # Lọc ra text có vẻ là địa chỉ (chứa dấu phẩy hoặc city/country)
+                # Lọc ra text có vẻ là địa chỉ (chứa dấu phẩy hoặc các từ khóa thành phố/quốc gia)
                 if text and (',' in text or any(kw in text.lower() for kw in
                              ['hanoi', 'hà nội', 'ho chi minh', 'hồ chí minh', 'vietnam', 'việt nam',
-                              'district', 'quận', 'tây hồ', 'đống đa'])):
+                              'district', 'quận', 'tây hồ', 'đống đa', 'cầu giấy', 'hai bà trưng'])):
                     location = text
                     break
             if location:
@@ -822,6 +869,14 @@ class LinkedInScraperV2(BaseScraper):
                     break
             if job_type:
                 break
+
+        # Fallback quét rộng cho workplace type
+        if not job_type:
+            for el in soup.find_all(["span", "div", "li"]):
+                text = el.get_text(strip=True).lower()
+                if text in ["on-site", "remote", "hybrid", "làm việc từ xa", "tại văn phòng"]:
+                    job_type = el.get_text(strip=True)
+                    break
 
         # --- Cấp bậc ---
         job_position = None
@@ -893,11 +948,24 @@ class LinkedInScraperV2(BaseScraper):
         if not salary and description_text:
             salary = self._extract_salary_from_desc(description_text)
             
-        # --- Job Type fallback từ mô tả (nếu chưa có) ---
+        # --- Job Type / Workplace Type fallback từ mô tả (nếu chưa có) ---
         if not job_type and description_text:
-            m = re.search(r'(?i)\b(full[- ]time|part[- ]time|contract|freelance|internship|remote|hybrid|on[- ]site|toàn thời gian|bán thời gian)\b', description_text[:1000])
-            if m:
-                job_type = m.group(1).title()
+            job_type = self._extract_workplace_type_from_desc(description_text)
+            if not job_type:
+                m = re.search(r'(?i)\b(full[- ]time|part[- ]time|contract|freelance|internship|toàn thời gian|bán thời gian)\b', description_text[:1500])
+                if m:
+                    job_type = m.group(1).title()
+
+        # --- Location fallback từ mô tả (nếu chưa có) ---
+        if not location and description_text:
+            location = self._extract_location_from_desc(description_text)
+
+        # --- Cấp bậc / Job position fallback từ tiêu đề hoặc mô tả (nếu chưa có) ---
+        if not job_position:
+            if title:
+                job_position = self._extract_seniority_from_desc(title)
+            if not job_position and description_text:
+                job_position = self._extract_seniority_from_desc(description_text)
 
         return {
             "title": title,
@@ -948,18 +1016,21 @@ class LinkedInScraperV2(BaseScraper):
         """Trích xuất hạn nộp hồ sơ từ mô tả công việc."""
         patterns = [
             # Vietnamese: "Hạn nộp hồ sơ: 30/06/2026" or "Hạn ứng tuyển: ..."
-            r'(?:hạn\s+(?:nộp\s+hồ\s+sơ|ứng\s+tuyển|apply)|deadline)\s*:?\s*([\d/\.\-]+(?:\s+\w+)?)',
-            r'(?:nộp hồ sơ|ứng tuyển) trước\s+(?:ngày\s+)?([0-9]{1,2}[/\.\-][0-9]{1,2}[/\.\-][0-9]{2,4})',
+            r'(?:hạn\s+(?:nộp|nộp\s+hồ\s+sơ|ứng\s+tuyển|apply)|deadline)\s*:?\s*(?:trước\s+)?(?:ngày\s+)?([\d/\.\-]+(?:\s+\w+)?)',
+            r'(?:nộp hồ sơ|ứng tuyển|nộp) trước\s+(?:ngày\s+)?([0-9]{1,2}[/\.\-][0-9]{1,2}[/\.\-][0-9]{2,4})',
             # English: "Apply by June 30, 2026" or "Deadline: 2026-06-30"
             r'(?:apply\s+by|deadline|closing\s+date|applications?\s+close(?:s)?(?:\s+on)?)\s*:?\s*'
             r'((?:\d{1,2}[/\.\-]\d{1,2}[/\.\-]\d{2,4})|(?:\w+\s+\d{1,2},?\s+\d{4}))',
             # Date formats: DD/MM/YYYY, YYYY-MM-DD
-            r'(?:before|by|trước)\s+(\d{1,2}[/\.\-]\d{1,2}[/\.\-]\d{2,4})',
+            r'(?:before|by|trước)\s+(?:day\s+|ngày\s+)?(\d{1,2}[/\.\-]\d{1,2}[/\.\-]\d{2,4})',
         ]
         for pat in patterns:
             m = re.search(pat, text, re.IGNORECASE)
             if m:
-                return m.group(1).strip()
+                val = m.group(1).strip()
+                # Loại bỏ dấu chấm, dấu phẩy, dấu chấm hỏi ở cuối
+                val = re.sub(r'[\.\,\?]+$', '', val).strip()
+                return val
         return None
 
     def _extract_requirements(self, text: str) -> Optional[str]:
@@ -1083,6 +1154,72 @@ class LinkedInScraperV2(BaseScraper):
                     return snippet
         return None
 
+    def _extract_location_from_desc(self, text: str) -> Optional[str]:
+        """Trích xuất địa điểm làm việc từ mô tả công việc (regex)."""
+        location_patterns = [
+            r'(?i)(?:địa điểm làm việc|nơi làm việc|địa điểm|làm việc tại|work location|office location|working location|location)\s*[:\-]?\s*([^\n\.\,]{2,50})',
+        ]
+        
+        # 1. Tìm các câu chỉ rõ địa điểm
+        for pat in location_patterns:
+            m = re.search(pat, text)
+            if m:
+                candidate = m.group(1).strip()
+                # Kiểm tra xem có chứa tên thành phố lớn nào không
+                for city in ['Hà Nội', 'Hanoi', 'Hồ Chí Minh', 'Ho Chi Minh', 'Đà Nẵng', 'Da Nang', 'Bình Dương', 'Binh Duong', 'Hải Phòng', 'Hai Phong']:
+                    if city.lower() in candidate.lower():
+                        return city
+                if len(candidate) < 30:
+                    return candidate
+
+        # 2. Quét nhanh sự xuất hiện của các thành phố lớn trong mô tả
+        city_map = [
+            ('hồ chí minh', 'TP. Hồ Chí Minh'),
+            ('ho chi minh', 'TP. Hồ Chí Minh'),
+            ('hà nội', 'Hà Nội'),
+            ('hanoi', 'Hà Nội'),
+            ('đà nẵng', 'Đà Nẵng'),
+            ('da nang', 'Đà Nẵng'),
+            ('bình dương', 'Bình Dương'),
+            ('binh duong', 'Bình Dương'),
+            ('hải phòng', 'Hải Phòng'),
+            ('hai phong', 'Hải Phòng'),
+            ('đồng nai', 'Đồng Nai'),
+            ('dong nai', 'Đồng Nai'),
+        ]
+        for key, val in city_map:
+            if key in text.lower():
+                return val
+                
+        return None
+
+    def _extract_workplace_type_from_desc(self, text: str) -> Optional[str]:
+        """Trích xuất loại nơi làm việc (On-site, Remote, Hybrid) từ mô tả công việc (regex)."""
+        # Kiểm tra Hybrid trước vì nó thường chứa cả từ khóa văn phòng và làm việc từ xa
+        patterns = [
+            (r'(?i)\b(hybrid|kết hợp|linh hoạt)\b', 'Hybrid'),
+            (r'(?i)\b(remote|làm việc từ xa|work from home|wfh)\b', 'Remote'),
+            (r'(?i)\b(on-site|onsite|tại văn phòng|tại công ty|office-based)\b', 'On-site'),
+        ]
+        for pat, val in patterns:
+            if re.search(pat, text):
+                return val
+        return None
+
+    def _extract_seniority_from_desc(self, text: str) -> Optional[str]:
+        """Trích xuất cấp bậc / seniority từ mô tả công việc (regex)."""
+        patterns = [
+            (r'(?i)\b(director|chief|head of|vp|vice president|giám đốc|trưởng phòng)\b', 'Director / Executive'),
+            (r'(?i)\b(manager|lead|quản lý|trưởng nhóm)\b', 'Mid-Senior level (Lead/Manager)'),
+            (r'(?i)\b(senior|sr\.)\b', 'Senior'),
+            (r'(?i)\b(junior|jr\.|entry level|fresher|mới ra trường)\b', 'Junior / Entry level'),
+            (r'(?i)\b(intern|thực tập|thực tập sinh)\b', 'Internship'),
+        ]
+        for pat, val in patterns:
+            if re.search(pat, text):
+                return val
+        return None
+
     # ------------------------------------------------------------------
     # Stub (not used in V2)
     # ------------------------------------------------------------------
@@ -1093,8 +1230,6 @@ class LinkedInScraperV2(BaseScraper):
     # Save links
     # ------------------------------------------------------------------
     def save_links(self, links: list[str], date_str: Optional[str] = None) -> Path:
-        super().save_links(links, date_str)
-
         date_str = date_str or get_date_str()
         links_dir = ensure_dir(self.output_dir / "links")
         csv_path = links_dir / f"{date_str}_linkedin_v2_links.csv"
@@ -1122,7 +1257,9 @@ class LinkedInScraperV2(BaseScraper):
     ) -> list[dict]:
         from src.utils import get_date_str as _gds
         from datetime import datetime as _dt
-        from playwright.sync_api import sync_playwright
+        from patchright.sync_api import sync_playwright
+        from src.storage.bronze_manager import BronzeManager
+        from src.config import DATA_BRONZE_DIR
 
         pages_label = str(pages) if pages is not None else "AUTO (hết trang)"
         kw_label = ", ".join(keywords) if keywords else "Mặc định"
@@ -1133,16 +1270,37 @@ class LinkedInScraperV2(BaseScraper):
         start_time = _dt.now()
         date_str = _gds(start_time)
 
-        # Phase 1: Thu thập URLs
-        self.logger.info("[Phase 1] Bắt đầu thu thập URL từ trang danh sách...")
-        raw_urls = self._collect_urls(pages, keywords=keywords)
-        urls = self._deduplicate_urls(raw_urls, existing_urls)
+        manager = BronzeManager(local_bronze_dir=DATA_BRONZE_DIR, s3_bucket="jobit-bronze")
 
-        if not urls:
-            self.logger.info("[Phase 1] Không có URL mới để cào. Kết thúc.")
-            return []
+        state = self._load_state()
+        if state.get("status") == "FAILED" and state.get("pending_urls"):
+            self.logger.info(f"Resuming from previous FAILED state. {len(state['pending_urls'])} URLs pending.")
+            urls = state["pending_urls"]
+        else:
+            # Phase 1: Thu thập URLs
+            self.logger.info("[Phase 1] Bắt đầu thu thập URL từ trang danh sách...")
+            raw_urls = self._collect_urls(pages, keywords=keywords)
+            urls = self._deduplicate_urls(raw_urls, existing_urls)
 
-        self.save_links(urls, date_str)
+            if not urls:
+                self.logger.info("[Phase 1] Không có URL mới để cào. Kết thúc.")
+                return []
+
+            self.save_links(urls, date_str)
+
+            # Khởi tạo trạng thái mới cho state.json
+            state = {
+                "status": "IN_PROGRESS",
+                "date_str": date_str,
+                "pending_urls": list(urls),
+                "completed_urls": [],
+                "total_urls": len(urls),
+                "total_validated": 0,
+                "total_rejected": 0
+            }
+            self._save_state(state)
+
+        current_date_str = state.get("date_str", date_str)
 
         # Phase 3: Fetch + parse chi tiết từng job
         self.logger.info(f"[Phase 3] Bắt đầu fetch chi tiết {len(urls)} jobs...")
@@ -1171,22 +1329,54 @@ class LinkedInScraperV2(BaseScraper):
                 except Exception as e:
                     self.logger.warning(f"Không load được session cho detail phase: {e}")
 
+            batch_records = []
             for i, url in enumerate(urls, 1):
                 self.logger.info(f"[Phase 3] ({i}/{len(urls)}) {url}")
                 try:
                     job = self._fetch_job_detail_with_playwright(url, context)
                     if job:
+                        # --- Thêm Regex Fallback tự động ---
+                        full_text = f"{job.get('job_description', '')}\n{job.get('requirements', '')}\n{job.get('benefits', '')}".strip()
+                        if full_text:
+                            from src.extract.utils.regex_extractor import FallbackRegexExtractor
+                            extracted = FallbackRegexExtractor.parse_all(full_text)
+                            for key, val in extracted.items():
+                                if not job.get(key) and val:
+                                    job[key] = val
+                        # ------------------------------------
                         job.setdefault("source", self.source_name)
                         job.setdefault("job_url", url)
                         job.setdefault("scraped_at", datetime.now().isoformat())
                         job.setdefault("job_id", generate_job_id(self.source_name, url))
                         results.append(job)
+                        batch_records.append(job)
                         self.logger.info(f"[Phase 3] ✓ Parsed: {job.get('title', 'N/A')} @ {job.get('company', 'N/A')}")
                 except KeyboardInterrupt:
                     self.logger.info("Bị ngắt bởi người dùng. Lưu kết quả hiện tại...")
                     break
                 except Exception as e:
                     self.logger.error(f"[Phase 3] Lỗi xử lý {url}: {e}")
+
+                # Save local batch
+                if len(batch_records) >= self.batch_size or i == len(urls):
+                    if batch_records:
+                        num_valid, num_rejected = manager.append_local_batch(
+                            source=self.source_name,
+                            date_str=current_date_str,
+                            records=batch_records
+                        )
+                        state["total_validated"] += num_valid
+                        state["total_rejected"] += num_rejected
+                        batch_records = []
+
+                    # Cập nhật state
+                    processed_urls = urls[len(state["completed_urls"]):i]
+                    for processed_url in processed_urls:
+                        if processed_url in state["pending_urls"]:
+                            state["pending_urls"].remove(processed_url)
+                        if processed_url not in state["completed_urls"]:
+                            state["completed_urls"].append(processed_url)
+                    self._save_state(state)
 
                 # Delay giữa các request để tránh rate limit
                 if i < len(urls):
@@ -1195,11 +1385,27 @@ class LinkedInScraperV2(BaseScraper):
 
             browser.close()
 
-        # Lưu kết quả
-        if results:
-            self.save_raw(results, date_str)
-
+        # Finalize and upload
         elapsed = (_dt.now() - start_time).total_seconds()
+        
+        state["status"] = "SUCCESS"
+        self._save_state(state)
+
+        success = manager.finalize_and_upload(
+            source=self.source_name,
+            date_str=current_date_str,
+            total_scraped=state.get("total_urls", len(urls)),
+            total_validated=state.get("total_validated", 0),
+            total_rejected=state.get("total_rejected", 0),
+            scrape_duration_seconds=elapsed,
+        )
+
+        if success:
+            self.logger.info("Successfully processed and uploaded LinkedIn data to Bronze.")
+            self._clear_state()
+        else:
+            self.logger.warning("Bronze process/upload for LinkedIn completed with some errors.")
+
         self.logger.info(
             f"=== XONG [{self.source_name}] | {len(results)} jobs | {elapsed:.1f}s ==="
         )

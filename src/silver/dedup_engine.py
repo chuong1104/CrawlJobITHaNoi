@@ -49,6 +49,7 @@ class CrossSourceDedupEngine:
         grouped = df.groupby('company_id')
         vectorizer = TfidfVectorizer(stop_words='english', max_features=1000)
 
+        with self.pg_conn.cursor() as cur:
             from psycopg2.extras import execute_values
             
             # Lists for batch inserts/updates
@@ -157,3 +158,22 @@ class CrossSourceDedupEngine:
 
             self.pg_conn.commit()
             logger.info(f"Deduplication complete. Created {new_groups_created} new groups, added {new_members_added} members.")
+
+
+class JobDedupEngine:
+    def __init__(self):
+        self.pg_conn = None
+
+    def connect(self):
+        import psycopg2
+        from src.config import DBConfig
+        self.pg_conn = psycopg2.connect(DBConfig.dsn())
+
+    def close(self):
+        if self.pg_conn:
+            self.pg_conn.close()
+
+    def run_dedup_pipeline(self, session_id: int):
+        engine = CrossSourceDedupEngine(self.pg_conn)
+        engine.run_deduplication()
+

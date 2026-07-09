@@ -8,13 +8,30 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Xóa các biến proxy trống khỏi environment để tránh lỗi 'relative URL without a base' trong deltalake (Rust HTTP client)
+for key in ["PROXY_URL", "PROXY_USERNAME", "PROXY_PASSWORD"]:
+    if not os.environ.get(key):
+        os.environ.pop(key, None)
+
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).parent.parent
 DATA_BRONZE_DIR = BASE_DIR / "data" / "bronze"
 DATA_SILVER_DIR = BASE_DIR / "data" / "silver"
-DATA_GOLD_DIR = BASE_DIR / "data" / "gold"
+
+# Gold — Delta Lake (primary storage, supports time-travel & ACID)
+# Structure: data/gold/mart_bi/<table>/_delta_log/
+DATA_GOLD_DIR   = BASE_DIR / "data" / "gold"
+
+# Gold — Parquet fallback (flat files cho Power BI Desktop / quick access)
+# Structure: data/mart_bi/<table>.parquet
+#            data/mart_ml/<table>.parquet
+# NOTE: Được tạo song song với Delta bởi gold_exporter.py.
+#       Nếu chỉ dùng DuckDB/Power BI Service thì có thể bỏ fallback này.
+DATA_MART_BI_DIR  = BASE_DIR / "data" / "mart_bi"
+DATA_MART_ML_DIR  = BASE_DIR / "data" / "mart_ml"
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +74,14 @@ class AWSConfig:
 class LinkedInConfig:
     USERNAME: str = os.getenv("LINKEDIN_USERNAME") or os.getenv("LINKEDIN_EMAIL", "")
     PASSWORD: str = os.getenv("LINKEDIN_PASSWORD") or os.getenv("LINKEDIN_PASS", "")
+
+
+# ---------------------------------------------------------------------------
+# ITViec Credentials
+# ---------------------------------------------------------------------------
+class ITViecConfig:
+    EMAIL: str = os.getenv("ITVIEC_EMAIL", "")
+    PASSWORD: str = os.getenv("ITVIEC_PASSWORD", "")
 
 
 # ---------------------------------------------------------------------------

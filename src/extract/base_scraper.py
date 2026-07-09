@@ -1,4 +1,4 @@
-"""
+﻿"""
 BaseScraper — Class cha chứa toàn bộ hạ tầng chung cho mọi scraper:
 
   Phase 1 · collect_urls(pages)         → list[str]  (raw, có thể trùng)
@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from scrapling import StealthyFetcher, DynamicFetcher
+from scrapling import Fetcher, StealthyFetcher, DynamicFetcher
 
 from src.config import DATA_BRONZE_DIR, ScraperConfig
 from src.utils import ensure_dir, fmt_duration, generate_job_id, get_date_str, setup_logger
@@ -186,20 +186,27 @@ class BaseScraper(abc.ABC):
 
     def _do_fetch(self, url: str) -> Optional[str]:
         """Thực hiện 1 lần fetch, trả về HTML string hoặc None."""
-        if self.use_playwright:
+        if self.use_playwright is True or self.use_playwright == "playwright":
             page = DynamicFetcher.fetch(
                 url,
                 headless=True,
                 disable_resources=True,
-                network_idle=False,
+                network_idle=True,
                 proxy=self.proxy or None,
             )
-        else:
+        elif self.use_playwright in ("stealth", "stealthy"):
             page = StealthyFetcher.fetch(
                 url,
                 block_resources=True,
-                network_idle=False,
+                network_idle=True,
                 proxy=self.proxy or None,
+            )
+        else:
+            # use_playwright = False hoặc "http" -> Dùng Fetcher (curl_cffi) để bypass Cloudflare/anti-bot tốt hơn mà không cần chạy browser
+            page = Fetcher.get(
+                url,
+                proxy=self.proxy or None,
+                stealthy_headers=True,
             )
 
         return self._adaptor_to_html(page)
@@ -430,7 +437,7 @@ class BaseScraper(abc.ABC):
             # --- Thêm Regex Fallback tự động ---
             full_text = f"{job.get('job_description', '')}\n{job.get('requirements', '')}\n{job.get('benefits', '')}".strip()
             if full_text:
-                from src.extract.job_online.regex_extractor import FallbackRegexExtractor
+                from src.extract.utils.regex_extractor import FallbackRegexExtractor
                 extracted = FallbackRegexExtractor.parse_all(full_text)
                 for key, val in extracted.items():
                     if not job.get(key) and val:

@@ -85,9 +85,9 @@ CREATE OR REPLACE FUNCTION silver.sp_upsert_job(
     p_experience_raw VARCHAR,
     p_experience_min SMALLINT,
     p_experience_max SMALLINT,
-    p_job_level silver.job_level_enum,
-    p_job_type silver.job_type_enum,
-    p_work_mode silver.work_mode_enum,
+    p_job_level job_level_enum,
+    p_job_type job_type_enum,
+    p_work_mode work_mode_enum,
     p_job_family VARCHAR,
     p_deadline_raw VARCHAR,
     p_deadline_date DATE,
@@ -101,7 +101,7 @@ CREATE OR REPLACE FUNCTION silver.sp_upsert_job(
 DECLARE
     v_job_id BIGINT;
     v_current_content_hash CHAR(16);
-    v_current_status silver.job_status_enum;
+    v_current_status job_status_enum;
     v_action VARCHAR;
     v_snapshot_id BIGINT;
     v_old_version SMALLINT;

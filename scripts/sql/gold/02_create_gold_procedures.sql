@@ -108,6 +108,51 @@ BEGIN
 END;
 $$;
 
+
+-- 5. Sync Skills and Locations
+CREATE OR REPLACE PROCEDURE dwh.sp_sync_skills_and_locations()
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    -- Sync dim_skill
+    INSERT INTO dwh.dim_skill (silver_skill_id, skill_name, skill_category)
+    SELECT skill_id, display_name, 'IT'
+    FROM silver.skills
+    ON CONFLICT (silver_skill_id) DO NOTHING;
+
+    -- Sync bridge_job_skill
+    INSERT INTO dwh.bridge_job_skill (job_posting_fact_id, skill_key)
+    SELECT DISTINCT f.job_posting_fact_id, dk.skill_key
+    FROM dwh.fct_job_posting f
+    JOIN silver.job_snapshot_skills jss ON f.silver_snapshot_id = jss.snapshot_id
+    JOIN dwh.dim_skill dk ON jss.skill_id = dk.silver_skill_id
+    ON CONFLICT (job_posting_fact_id, skill_key) DO NOTHING;
+
+    -- Sync dim_location
+    INSERT INTO dwh.dim_location (silver_location_id, location_name, region) VALUES
+    (1, 'Hà Nội', 'Miền Bắc'),
+    (2, 'Hồ Chí Minh', 'Miền Nam'),
+    (3, 'Đà Nẵng', 'Miền Trung')
+    ON CONFLICT (silver_location_id) DO NOTHING;
+
+    -- Sync bridge_job_location
+    INSERT INTO dwh.bridge_job_location (job_posting_fact_id, location_key)
+    SELECT 
+        f.job_posting_fact_id,
+        CASE 
+            WHEN s.title_clean ILIKE '%Hồ Chí Minh%' OR s.title_clean ILIKE '%HCM%' OR s.title_clean ILIKE '%HCMC%' OR s.title_clean ILIKE '%Sài Gòn%' THEN 
+                (SELECT location_key FROM dwh.dim_location WHERE location_name = 'Hồ Chí Minh')
+            WHEN s.title_clean ILIKE '%Đà Nẵng%' OR s.title_clean ILIKE '%ĐN%' THEN 
+                (SELECT location_key FROM dwh.dim_location WHERE location_name = 'Đà Nẵng')
+            ELSE 
+                (SELECT location_key FROM dwh.dim_location WHERE location_name = 'Hà Nội')
+        END as location_key
+    FROM dwh.fct_job_posting f
+    JOIN silver.job_snapshots s ON f.silver_snapshot_id = s.snapshot_id AND s.is_current = TRUE
+    ON CONFLICT (job_posting_fact_id, location_key) DO NOTHING;
+END;
+$$;
+
 COMMIT;
 
 SELECT 'Gold Procedures Created Successfully' AS status;

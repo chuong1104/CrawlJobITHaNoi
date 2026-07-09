@@ -1,0 +1,13 @@
+version: 2
+
+models:
+  - name: metricflow_time_spine
+    description: "Bảng trục thời gian (Time Spine) bắt buộc bởi dbt Semantic Layer"
+    config:
+      materialized: table
+    time_spine:
+      standard_granularity_column: date_day
+    columns:
+      - name: date_day
+        description: "Ngày"
+        granularity: day

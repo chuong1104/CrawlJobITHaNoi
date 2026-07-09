@@ -1,179 +1,151 @@
-# Data Pipeline Design (ELT with dbt)
+# Data Pipeline Design (Medallion ELT Pipeline v2.1)
 
 ## Overview
 
-Data Pipeline là trái tim của toàn bộ hệ thống. Trong kiến trúc **Local AWS Lakehouse**, chúng ta sử dụng mô hình **ELT** (Extract, Load, Transform) thay vì ETL truyền thống:
+Data Pipeline là xương sống của JobITVN. Trong kiến trúc hiện tại, chúng ta áp dụng mô hình **ELT** (Extract, Load, Transform) kết hợp giữa hồ dữ liệu (Delta Lake) và cơ sở dữ liệu quan hệ (PostgreSQL) để tối ưu hóa hiệu năng, tính toàn vẹn nghiệp vụ và phục vụ phân tích.
 
-1. **Extract & Load (E & L):** Trình cào thu thập dữ liệu và "đổ" thẳng toàn bộ file JSON nguyên bản vào Data Lake (Floci S3 Bronze Layer).
-2. **Transform (T):** Airflow kích hoạt `dbt` để đọc dữ liệu từ Bronze, biến đổi bằng DuckDB, và ghi lại xuống S3 dưới định dạng Parquet (Silver & Gold).
+1. **Extract & Load (E & L):** Scrapers cào dữ liệu và ghi trực tiếp vào **Bronze Delta Tables** trên S3 (Floci) thông qua `BronzeManager`.
+2. **Transform (T - dbt staging):** Airflow kích hoạt `dbt` sử dụng DuckDB để đọc dữ liệu từ Bronze Delta Tables, làm sạch cơ bản, parse salary/skills và lưu vào DuckDB intermediate tables.
+3. **Sync Silver & Gold (PostgreSQL & CDC):**
+   - Python Sync Engine tải dữ liệu từ DuckDB intermediate tables vào bảng đệm `staging.stg_jobs`.
+   - Chạy logic **CDC Watermark** để lọc dữ liệu cũ, chỉ nạp dữ liệu mới vào PostgreSQL Silver Layer (3NF).
+   - Xử lý trùng lặp thực thể (company aliases) và cập nhật SCD Type 2 lịch sử tin tuyển dụng.
+   - Gọi PostgreSQL stored procedures để đồng bộ dữ liệu Silver -> Gold DWH và refresh các **Materialized Views** phục vụ API/BI.
+4. **Gold Export:** `GoldExporter` đọc DWH và ghi ra Delta tables trên S3 (`mart_bi`, `mart_ml`) đồng thời dọn dẹp (VACUUM) các tệp tin cũ.
 
 ---
 
-# 1. Complete End-to-End Data Pipeline
+# 1. Complete End-to-End Data Pipeline Flow
 
 ```text
-┌─────────────────────────────────────────────┐
-│               JOB WEBSITES                  │
-└─────────────────────┬───────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────┐
-│    CRAWLER LAYER (Python, Playwright)       │
-└─────────────────────┬───────────────────────┘
-                      │ Extract & Load
-                      ▼
-┌─────────────────────────────────────────────┐
-│     BRONZE LAYER (Floci S3 - s3://bronze)   │
-│         Raw Data (JSON, HTML)               │
-└─────────────────────┬───────────────────────┘
-                      │
-      dbt run (DuckDB queries over HTTPFS)
-                      │
-                      ▼
-┌─────────────────────────────────────────────┐
-│    STAGING MODELS (dbt - Ephemeral/View)    │
-│    - Rename columns                         │
-│    - Cast data types                        │
-│    - Parse Salary (Min, Max)                │
-└─────────────────────┬───────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────┐
-│     SILVER LAYER (Floci S3 - s3://silver)   │
-│      Cleaned Data (Parquet)                 │
-│    - Deduplication (Lọc trùng lặp)          │
-│    - Skill Extraction (Trích xuất kỹ năng)  │
-└─────────────────────┬───────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────┐
-│      GOLD LAYER (Floci S3 - s3://gold)      │
-│     Data Warehouse / Star Schema            │
-│    - fact_job_posting (Parquet)             │
-│    - dim_company (Parquet)                  │
-│    - dim_skill, bridge_job_skill            │
-└─────────────────────┬───────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────┐
-│                 DATA MARTS                  │
-│        (DuckDB Views trên Gold Parquet)     │
-└───────┬────────────┬─────────────┬──────────┘
-        │            │             │
-        ▼            ▼             ▼
-    Power BI     Search API   Recommendation
-                       │
-                       ▼
-                   FastAPI
+┌──────────────────────────────────────────────────┐
+│                   JOB PORTALS                    │
+└────────────────────────┬─────────────────────────┘
+                         │
+                         ▼
+┌──────────────────────────────────────────────────┐
+│       CRAWLER LAYER (Python, Playwright)         │
+└────────────────────────┬─────────────────────────┘
+                         │ Extract & Load (Delta Lake API)
+                         ▼
+┌──────────────────────────────────────────────────┐
+│      BRONZE LAYER (S3 Delta Tables - Raw)        │
+│   - Schema Evolution, ACID, Time Travel          │
+└────────────────────────┬─────────────────────────┘
+                         │
+        dbt run (DuckDB delta_scan over S3)
+                         │
+                         ▼
+┌──────────────────────────────────────────────────┐
+│      STAGING MODELS (dbt View / Intermediate)    │
+│   - Rename, Cast Types, Parse Salary/Skills      │
+└────────────────────────┬─────────────────────────┘
+                         │
+      Bulk Insert (PostgreSQL staging.stg_jobs)
+                         │
+                         ▼
+┌──────────────────────────────────────────────────┐
+│     SILVER LAYER (PostgreSQL 3NF Schema)         │
+│   - CDC Watermark Tracker (last_sync_at)         │
+│   - Company Alias Resolution (Fuzzy Matching)    │
+│   - SCD Type 2 History (job_snapshots)           │
+└────────────────────────┬─────────────────────────┘
+                         │
+     SQL Stored Procedures (dwh.* Schema)
+                         │
+                         ▼
+┌──────────────────────────────────────────────────┐
+│   GOLD DWH (PostgreSQL) + MATERIALIZED VIEWS      │
+│   - fact_job_posting, dim_company, dim_skill     │
+│   - mv_active_jobs_summary, mv_kpi_realtime      │
+└────────────────────────┬─────────────────────────┘
+                         │
+    GoldExporter (PostgreSQL DWH -> S3 Delta)
+                         │
+                         ▼
+┌──────────────────────────────────────────────────┐
+│      GOLD DATA MARTS (S3 Delta Tables)           │
+│   - s3://jobit-gold/gold/mart_bi/                │
+│   - s3://jobit-gold/gold/mart_ml/                │
+└───────┬────────────────────┬─────────────────┬───┘
+        │                    │                 │
+        ▼                    ▼                 ▼
+    Power BI             FastAPI API        ML Model
+  (Delta Scan)         (Materialized View) (Feature Store)
 ```
 
 ---
 
-# 2. Các Bước Transformation (The "T" in ELT)
+# 2. CDC Watermark & Anomaly Detection
 
-Biến đổi dữ liệu hoàn toàn do **dbt** chịu trách nhiệm. Quá trình này được chia thành các Models:
+Nhằm giải quyết vấn đề quá tải database nghiệp vụ khi chạy batch hàng ngày, cơ chế **Change Data Capture (CDC)** dựa trên watermark đã được tích hợp:
 
-## 2.1 Staging Models (`stg_`)
-- Đọc dữ liệu từ S3 Bronze (`read_json_auto`).
-- Chuẩn hóa tên cột từ các nguồn khác nhau (ví dụ: `salary_text`, `salaryDisplay` đều quy về `raw_salary`).
-- **Data Quality:** Loại bỏ các record thiếu `job_title` hoặc `company`.
-
-## 2.2 Intermediate Models (`int_`)
-Thực hiện các logic nghiệp vụ phức tạp trước khi nạp vào kho:
-- **`int_salary_parsing`**: Dùng Regex trong SQL để tách `raw_salary` thành `salary_min` và `salary_max`.
-- **`int_job_deduplication`**: 
-  - Một Job đăng trên TopCV và ITviec có thể bị trùng.
-  - dbt dùng hàm `QUALIFY ROW_NUMBER() OVER (PARTITION BY company, title ORDER BY date DESC) = 1` để giữ lại bản ghi mới nhất.
-- **`int_skill_extraction`**: Dùng hàm LIKE/Regex để map các từ khóa trong `description` với bảng `seed_skills`.
-
-## 2.3 Mart Models (`dim_`, `fct_`)
-Đây là tầng Gold.
-- **`dim_company`**: Chứa danh sách các công ty duy nhất. Sử dụng **dbt snapshots** để tạo cấu trúc SCD Type 2 (theo dõi lịch sử thay đổi thông tin công ty).
-- **`fct_job_posting`**: Bảng trung tâm chứa thông tin về việc làm. Cấu hình dbt `materialized='incremental'` để chỉ xử lý các job mới được crawl ngày hôm nay thay vì chạy lại toàn bộ kho dữ liệu.
+1. **Watermark tracking (`silver.cdc_watermarks`):**
+   - Hệ thống lưu lại timestamp của lần sync thành công gần nhất cho từng nguồn (`last_sync_at`).
+   - Lần sync tiếp theo, dbt intermediate chỉ lấy các bản ghi có `scraped_at > last_sync_at`.
+2. **Pipeline Logging (`silver.pipeline_run_log`):**
+   - Mọi pipeline run đều được log trạng thái (RUNNING, SUCCESS, FAILED), thời gian chạy, số lượng bản ghi mới/cũ/reject.
+3. **Phát hiện Anomaly (Cảnh báo block):**
+   - Mỗi portal có một `expected_min_count` (số lượng tin tuyển dụng tối thiểu mong đợi mỗi ngày).
+   - Nếu `new_records < expected_min_count * 50%`, hệ thống bật cờ `anomaly_flag = TRUE` và log lý do (cảnh báo scraper có thể bị chặn hoặc trang web nguồn thay đổi giao diện).
+   - Nếu liên tiếp 3 ngày có cờ cảnh báo (`consecutive_low_runs >= 3`), Airflow sẽ đưa cảnh báo CRITICAL.
 
 ---
 
-# 3. Incremental Processing Design
+# 3. Gold Layer & Materialized Views Optimization
 
-Không thể chạy lại (Full Refresh) hàng triệu Job mỗi ngày. dbt hỗ trợ **Incremental Models**:
-
-```sql
-{{ config(
-    materialized='incremental',
-    unique_key='job_id'
-) }}
-
-SELECT * 
-FROM {{ ref('int_deduped_jobs') }}
-
-{% if is_incremental() %}
-  -- Chỉ lấy các job mới crawl trong ngày hôm nay
-  WHERE crawl_date >= (SELECT max(crawl_date) FROM {{ this }})
-{% endif %}
-```
-
-Khi Airflow gọi lệnh `dbt run`, DuckDB sẽ chỉ đọc file JSON của ngày hôm đó từ Bronze, xử lý và `APPEND` (hoặc `MERGE`) vào file Parquet ở tầng Silver/Gold.
+Để tối ưu hóa thời gian phản hồi của APIs và tăng tốc độ vẽ báo cáo trong Power BI:
+- Bảng Fact `dwh.fct_job_posting` liên kết với các bảng Dimensions thông qua mô hình Star Schema.
+- 4 **Materialized Views** được tạo sẵn trong PostgreSQL và được cấu hình cơ chế `REFRESH MATERIALIZED VIEW CONCURRENTLY` (không lock bảng đọc):
+  1. `dwh.mv_active_jobs_summary`: Cache toàn bộ jobs đang active cùng thông tin công ty phục vụ cho FastAPI.
+  2. `dwh.mv_kpi_realtime`: Cache 12 KPI của Semantic Layer, loại bỏ các phép tính đếm/tổng hợp phức tạp trên bảng Fact.
+  3. `dwh.mv_salary_by_skill`: Tính toán lương trung bình, median, và rank cho từng kỹ năng.
+  4. `dwh.mv_jobs_by_location`: Thống kê việc làm theo khu vực địa lý phục vụ sơ đồ bản đồ BI.
 
 ---
 
-# 4. Data Quality Checks (dbt tests)
+# 4. Airflow DAG Workflow (Daily Execution Pipeline)
 
-Đảm bảo dữ liệu không bị rác khi đưa vào Data Warehouse. Cấu hình file `schema.yml` trong dbt:
-
-```yaml
-models:
-  - name: fct_job_posting
-    columns:
-      - name: job_id
-        tests:
-          - unique
-          - not_null
-      - name: salary_min
-        tests:
-          - expression_is_true:
-              expression: ">= 0"
-```
-Nếu test failed, Airflow sẽ báo đỏ (Alert) và dừng pipeline.
-
----
-
-# 5. Airflow DAG (Daily Execution)
-
-Airflow điều phối theo cơ chế Dependency rất rõ ràng:
+Mỗi ngày lúc 6h sáng, Airflow kích hoạt pipeline và giám sát luồng chạy:
 
 ```text
-start_pipeline
-      │
-      ▼
-crawl_topcv ──┐
-crawl_itviec ─┼──► wait_for_crawlers_finish
-crawl_jobsgo ─┘
-      │
-      ▼
-dbt_source_freshness_check (Đảm bảo file S3 mới đã có)
-      │
-      ▼
-dbt_run_staging (stg_ models)
-      │
-      ▼
-dbt_run_intermediate (int_ models, dedup, parse)
-      │
-      ▼
-dbt_run_marts (dim_, fct_ models, ghi Parquet ra Gold S3)
-      │
-      ▼
-dbt_test (Chạy kiểm định chất lượng)
-      │
-      ▼
-end_pipeline
+┌────────────────┐
+│     start      │
+└───────┬────────┘
+        │
+        ▼
+┌───────────────────────┐
+│   crawl_all_sources   │  (Scrape dữ liệu -> ghi Delta Bronze trên S3)
+└───────┬───────────────┘
+        │
+        ▼
+┌───────────────────────┐
+│    run_dbt_staging    │  (dbt: Staging & Intermediate DuckDB)
+└───────┬───────────────┘
+        │
+        ▼
+┌───────────────────────┐
+│   sync_silver_layer   │  (Python: Postgres 3NF + SCD Type 2 + CDC Watermark)
+└───────┬───────────────┘
+        │
+        ▼
+┌───────────────────────┐
+│     run_gold_dwh      │  (Python: Stored Procs update DWH + Refresh MVs)
+└───────┬───────────────┘
+        │
+        ▼
+┌───────────────────────┐
+│   export_gold_marts   │  (Python: Export Gold DWH -> Delta Tables trên S3)
+└───────┬───────────────┘
+        │
+        ▼
+┌───────────────────────┐
+│  vacuum_delta_tables  │  (Delta Maintenance: Xóa log/files cũ > 7 ngày)
+└───────┬───────────────┘
+        │
+        ▼
+┌────────────────┐
+│      end       │
+└────────────────┘
 ```
-
----
-
-# 6. Final Pipeline Summary
-
-Với kiến trúc **Local AWS Lakehouse (Floci + DuckDB + dbt)**:
-- **Tốc độ:** Rất nhanh nhờ Vectorized Execution của DuckDB và Parquet.
-- **Tính trơn tru:** dbt xử lý mọi dependencies giữa các bảng (Ref).
-- **Không có Data Silos:** Toàn bộ dữ liệu tập trung ở Floci S3.
-- **Tiêu chuẩn công nghiệp:** Code dbt và Airflow này có thể được bê nguyên lên AWS (chạy dbt trên EMR/Glue/Athena) hoặc Databricks mà gần như không phải đập đi xây lại.
+- **Idempotency (Tính khả trùng):** Nếu pipeline bị ngắt quãng giữa chừng, việc chạy lại (re-run) hoàn toàn không gây trùng lặp bản ghi hay sai lệch metrics nhờ vào định danh duy nhất `job_id` (SHA-256 từ URL và source) kết hợp với các câu lệnh `ON CONFLICT DO UPDATE` ở Silver layer và ghi đè Delta tables ở Gold layer.

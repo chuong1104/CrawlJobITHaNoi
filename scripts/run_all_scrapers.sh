@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 # Script để cào tất cả các web, mỗi web 1 trang đầu để test qua Docker Container (Airflow)
 
 set -e
@@ -18,7 +18,7 @@ if ! docker compose ps | grep -q airflow; then
 fi
 
 echo "0. Đảm bảo S3 buckets đã sẵn sàng..."
-docker compose exec airflow bash -c "aws s3 mb s3://jobit-bronze --endpoint-url=http://floci:4566 2>/dev/null || true"
+docker compose exec airflow awslocal s3 mb s3://jobit-bronze 2>/dev/null || true
 
 if [ "$1" == "--reset" ]; then
     echo "♻️ Xoá trạng thái cũ, bắt đầu cào lại từ đầu..."
@@ -38,15 +38,15 @@ import os
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from src.extract.job_online.topcv import TopCVScraper
-from src.extract.job_online.careerlink import CareerLinkScraper
-from src.extract.job_online.itviec import ITViecScraper
-from src.extract.job_online.careerviet import CareerVietScraper
-from src.extract.job_online.joboko import JobokoScraper
-from src.extract.job_online.jobsgo import JobsGoScraper
-from src.extract.job_online.vietnamworks import VietnamWorksScraper
-from src.extract.job_online.job_123 import Job123Scraper
-from src.extract.job_online.linkedin import LinkedInScraperV2
+from src.extract.topcv import TopCVScraper
+from src.extract.careerlink import CareerLinkScraper
+from src.extract.itviec import ITViecScraper
+from src.extract.careerviet import CareerVietScraper
+from src.extract.joboko import JobokoScraper
+from src.extract.jobsgo import JobsGoScraper
+from src.extract.vietnamworks import VietnamWorksScraper
+from src.extract.job_123 import Job123Scraper
+from src.extract.linkedin import LinkedInScraperV2
 
 scrapers = [
     ('TopCV', TopCVScraper),

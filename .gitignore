@@ -35,9 +35,21 @@ env/
 data/bronze/*
 data/silver/*
 data/gold/*
+data/floci/*
+data/mart_bi/*
+data/mart_ml/*
+data/auth/*
 !data/bronze/.gitkeep
 !data/silver/.gitkeep
 !data/gold/.gitkeep
+!data/floci/.gitkeep
+!data/mart_bi/.gitkeep
+!data/mart_ml/.gitkeep
+!data/auth/.gitkeep
+*.duckdb
+*.duckdb.wal
+*.duckdb-shm
+*.duckdb-wal
 
 # =========================
 # Airflow logs
@@ -65,6 +77,8 @@ Thumbs.db
 keys/
 *.json
 !data/**/*.jsonl
+data/*.json
+
 
 # =========================
 # Docker
@@ -72,6 +86,30 @@ keys/
 .dockerignore
 
 # =========================
-# Authentication states
+# Authentication states (session cookies — JANGAN COMMIT!)
 # =========================
+data/auth/
 src/extract/job_online/auth/
+
+# =========================
+# Airflow local (chạy standalone ngoài Docker)
+# =========================
+airflow.db
+airflow.cfg
+airflow-webserver.pid
+webserver_config.py
+standalone_admin_password.txt
+
+# =========================
+# DBT
+# =========================
+dbt_jobitvn/target/
+dbt_jobitvn/dbt_packages/
+dbt_jobitvn/logs/
+dbt_jobitvn/.user.yml
+dbt_jobitvn/data/
+
+# =========================
+# Scratch / Temp
+# =========================
+scratch/

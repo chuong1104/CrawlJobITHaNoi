@@ -1,5 +1,5 @@
 name: 'dbt_jobitvn'
-version: '2.0.0'
+version: '2.1.0'
 config-version: 2
 
 profile: 'dbt_jobitvn'
@@ -10,7 +10,6 @@ test-paths: ["tests"]
 seed-paths: ["seeds"]
 macro-paths: ["macros"]
 snapshot-paths: ["snapshots"]
-
 clean-targets:
   - "target"
   - "dbt_packages"
@@ -19,17 +18,22 @@ models:
   dbt_jobitvn:
     staging:
       +materialized: view
+      +tags: ["bronze_to_silver", "daily"]
     intermediate:
       +materialized: table
+      +tags: ["silver", "daily"]
     marts:
       +enabled: true
       warehouse:
         +materialized: table
         +schema: dwh
+        +tags: ["gold", "kimball", "daily"]
       mart_bi:
-        +materialized: view
+        +materialized: incremental        # Nâng từ view lên incremental table
         +schema: mart_bi
-      mart_api:
-        +enabled: false
-      mart_ml:
-        +enabled: false
+        +tags: ["gold", "bi", "power_bi", "daily"]
+
+
+# Semantic Layer (MetricFlow) — định nghĩa trong models/metrics/*.yml
+# Dùng: dbt sl list metrics / dbt sl query --metrics total_active_jobs
+

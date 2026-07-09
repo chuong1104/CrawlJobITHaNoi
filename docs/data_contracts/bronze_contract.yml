@@ -1,0 +1,172 @@
+# =============================================================================
+# bronze_contract.yml — Data Contract cho Bronze Layer
+# Version: 1.0.0 | Owner: data-platform | Tier: critical
+# =============================================================================
+#
+# DATA CONTRACT: Định nghĩa cam kết về schema, chất lượng và SLA
+# cho dữ liệu thô tại tầng Bronze (S3 Delta Tables).
+#
+# Consumer của Bronze layer:
+#   - dbt staging models (stg_topcv.sql, stg_itviec.sql, ...)
+#   - Data Quality checks
+#   - Anomaly detection
+# =============================================================================
+
+contract:
+  id: bronze-v1
+  version: "1.0.0"
+  name: "Bronze Layer Contract"
+  layer: bronze
+  status: active  # active | deprecated | draft
+  created_at: "2026-07-08"
+  updated_at: "2026-07-08"
+  owner:
+    team: data-platform
+    email: data-platform@jobitvn.local
+    slack: "#data-alerts"
+
+# ---------------------------------------------------------------------------
+# SLA — Service Level Agreement
+# ---------------------------------------------------------------------------
+sla:
+  freshness:
+    max_hours: 26             # Dữ liệu không được cũ hơn 26h (pipeline chạy 6h sáng + buffer 2h)
+    check_column: "_ingested_at"
+    severity: critical
+
+  completeness:
+    min_rate_pct: 85          # Tối thiểu 85% records phải có các field cốt lõi
+    severity: warning
+
+  availability:
+    uptime_pct: 99            # Delta Tables trên S3 phải available 99% thời gian
+
+# ---------------------------------------------------------------------------
+# Schema — Các field bắt buộc và kiểu dữ liệu kỳ vọng
+# ---------------------------------------------------------------------------
+schema:
+  description: "Delta Lake table schema cho raw scraped data"
+  
+  required_fields:
+    - name: job_url
+      type: string
+      nullable: false
+      description: "URL gốc của tin tuyển dụng. Dùng để sinh job_id."
+    
+    - name: title
+      type: string
+      nullable: false
+      description: "Tiêu đề tin tuyển dụng (raw, chưa chuẩn hóa)."
+    
+    - name: company
+      type: string
+      nullable: false
+      description: "Tên công ty tuyển dụng (raw)."
+    
+    - name: source
+      type: string
+      nullable: false
+      enum: [topcv, itviec, linkedin, vietnamworks, jobsgo, 123job, careerviet, careerlink, ybox, jobstreet, joboko]
+      description: "Mã nguồn scrape."
+    
+    - name: scraped_at
+      type: timestamp
+      nullable: false
+      description: "Timestamp khi scraper thu thập được record này."
+    
+    - name: job_id
+      type: string
+      nullable: false
+      description: "SHA-256[:16] của (source + job_url). Deterministic unique ID."
+
+  # Delta Lake metadata columns (tự động thêm bởi DeltaLakeManager)
+  metadata_fields:
+    - name: _batch_date
+      type: string           # YYYY-MM-DD, dùng làm partition key
+      nullable: false
+    - name: _ingested_at
+      type: string           # ISO timestamp khi ghi vào Delta
+      nullable: false
+    - name: _source
+      type: string           # Duplicate của 'source', dùng cho Delta metadata
+      nullable: false
+
+  optional_fields:
+    - name: salary
+      type: string
+      description: "Mức lương raw string. NULL nếu không đề cập."
+    - name: location
+      type: string
+    - name: experience_level
+      type: string
+    - name: job_description
+      type: string
+    - name: job_deadline
+      type: string
+
+# ---------------------------------------------------------------------------
+# Quality Rules — Ràng buộc chất lượng dữ liệu
+# ---------------------------------------------------------------------------
+quality:
+  rules:
+    - id: BRZ-001
+      name: "job_id phải unique trong ngày"
+      severity: critical
+      check: "COUNT(job_id) = COUNT(DISTINCT job_id) per _batch_date"
+    
+    - id: BRZ-002
+      name: "scraped_at không được ở tương lai"
+      severity: critical
+      check: "scraped_at <= NOW()"
+    
+    - id: BRZ-003
+      name: "source phải là giá trị hợp lệ"
+      severity: critical
+      check: "source IN (allowed_sources)"
+    
+    - id: BRZ-004
+      name: "Tỷ lệ title NULL < 5%"
+      severity: warning
+      check: "COUNT(CASE WHEN title IS NULL THEN 1 END) / COUNT(*) < 0.05"
+    
+    - id: BRZ-005
+      name: "Tỷ lệ company NULL < 10%"
+      severity: warning
+      check: "COUNT(CASE WHEN company IS NULL THEN 1 END) / COUNT(*) < 0.10"
+    
+    - id: BRZ-006
+      name: "Mỗi source phải có ít nhất 50 records/ngày"
+      severity: warning
+      check: "COUNT(*) >= 50 per source per _batch_date"
+      note: "Dưới ngưỡng → kiểm tra scraper có bị block không (anomaly_flag)"
+
+# ---------------------------------------------------------------------------
+# Storage — Nơi lưu trữ và cách truy cập
+# ---------------------------------------------------------------------------
+storage:
+  type: delta_lake
+  primary: "s3://jobit-bronze/bronze/{source}/"
+  partition_by: ["_batch_date"]
+  format: delta_v3
+  compression: snappy
+  vacuum_retention_hours: 168    # 7 ngày
+  history_retention_days: 30
+
+  duckdb_access: |
+    -- Cài delta extension trước
+    INSTALL delta; LOAD delta;
+    -- Đọc table
+    SELECT * FROM delta_scan('s3://jobit-bronze/bronze/topcv/');
+    -- Time Travel
+    SELECT * FROM delta_scan('s3://jobit-bronze/bronze/topcv/', version => 5);
+
+# ---------------------------------------------------------------------------
+# Change Log
+# ---------------------------------------------------------------------------
+changelog:
+  - version: "1.0.0"
+    date: "2026-07-08"
+    changes:
+      - "Khởi tạo Bronze Contract"
+      - "Migrate từ Parquet raw sang Delta Lake format"
+      - "Thêm metadata fields: _batch_date, _ingested_at, _source"

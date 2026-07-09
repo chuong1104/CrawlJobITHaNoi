@@ -204,6 +204,10 @@ INSERT INTO silver.companies (company_id, normalized_name, display_name, is_anon
 VALUES (1, '__ANONYMOUS__', 'Công ty ẩn danh', TRUE)
 ON CONFLICT DO NOTHING;
 
+-- Đảm bảo sequence được đồng bộ sau khi manual insert ID=1
+SELECT setval('silver.companies_company_id_seq', COALESCE((SELECT MAX(company_id) FROM silver.companies), 1));
+
+
 -- ---------------------------------------------------------------------------
 -- 6. silver.company_aliases — Bí danh công ty
 --    Giải quyết N cách viết tên → 1 company_id duy nhất
@@ -335,7 +339,7 @@ CREATE TABLE IF NOT EXISTS silver.job_snapshots (
     salary_is_negotiable BOOLEAN     NOT NULL DEFAULT FALSE,
 
     -- Kinh nghiệm
-    experience_raw      VARCHAR(255),
+    experience_raw      TEXT,
     experience_min_years SMALLINT,
     experience_max_years SMALLINT,
 
@@ -346,7 +350,7 @@ CREATE TABLE IF NOT EXISTS silver.job_snapshots (
     job_family          VARCHAR(100),   -- 'DATA_ENGINEER', 'DATA_ANALYST', ...
 
     -- Deadline
-    deadline_raw        VARCHAR(100),
+    deadline_raw        TEXT,
     deadline_date       DATE,
 
     -- Flags phân tích nhanh
@@ -410,7 +414,7 @@ COMMENT ON TABLE silver.job_snapshot_locations IS 'Liên kết N:N: snapshot ↔
 --     Mọi thay đổi trạng thái/nội dung đều được ghi lại
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS silver.job_events (
-    event_id        BIGSERIAL       PRIMARY KEY,
+    event_id        BIGSERIAL,
     job_id          BIGINT          NOT NULL REFERENCES silver.jobs(job_id) ON DELETE CASCADE,
     event_type      event_type_enum NOT NULL,
     source_id       SMALLINT        REFERENCES silver.sources(source_id),
@@ -418,10 +422,12 @@ CREATE TABLE IF NOT EXISTS silver.job_events (
     old_values      JSONB,           -- Giá trị trước khi thay đổi
     new_values      JSONB,           -- Giá trị sau khi thay đổi
     reason          TEXT,            -- Lý do hệ thống đưa ra quyết định
-    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (event_id, created_at)
 )
 -- Partition theo tháng để tránh bảng phình to
 PARTITION BY RANGE (created_at);
+
 
 -- Tạo partitions ban đầu (6 tháng)
 CREATE TABLE IF NOT EXISTS silver.job_events_2026_06
@@ -494,11 +500,11 @@ CREATE TABLE IF NOT EXISTS staging.stg_jobs (
     company_raw         VARCHAR(255) NOT NULL,
     location_raw        TEXT,
     salary_raw          VARCHAR(255),
-    experience_raw      VARCHAR(255),
+    experience_raw      TEXT,
     skills_raw          TEXT[],       -- Array của skills sau khi split
     job_type_raw        VARCHAR(100),
     description         TEXT,
-    deadline_raw        VARCHAR(100),
+    deadline_raw        TEXT,
     posted_date_raw     DATE,
 
     -- Parsed/normalized fields (dbt macros output)

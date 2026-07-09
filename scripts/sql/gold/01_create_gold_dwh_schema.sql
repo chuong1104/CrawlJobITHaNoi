@@ -28,6 +28,21 @@ CREATE TABLE IF NOT EXISTS dwh.dim_date (
     holiday_name VARCHAR
 );
 
+-- Seed dữ liệu cho dim_date từ 2024 đến 2030
+INSERT INTO dwh.dim_date (date_key, full_date, year, quarter, month, day_of_month, day_of_week, is_weekend)
+SELECT 
+    CAST(TO_CHAR(d, 'YYYYMMDD') AS INT) AS date_key,
+    d::DATE AS full_date,
+    EXTRACT(YEAR FROM d)::INT AS year,
+    EXTRACT(QUARTER FROM d)::INT AS quarter,
+    EXTRACT(MONTH FROM d)::INT AS month,
+    EXTRACT(DAY FROM d)::INT AS day_of_month,
+    EXTRACT(ISODOW FROM d)::INT AS day_of_week,
+    CASE WHEN EXTRACT(ISODOW FROM d) IN (6, 7) THEN TRUE ELSE FALSE END AS is_weekend
+FROM generate_series('2024-01-01'::DATE, '2030-12-31'::DATE, '1 day'::INTERVAL) d
+ON CONFLICT (date_key) DO NOTHING;
+
+
 -- Dim Company: SCD Type 2
 CREATE TABLE IF NOT EXISTS dwh.dim_company (
     company_key SERIAL PRIMARY KEY,
@@ -39,7 +54,7 @@ CREATE TABLE IF NOT EXISTS dwh.dim_company (
     valid_to TIMESTAMPTZ,
     is_current BOOLEAN NOT NULL DEFAULT TRUE
 );
-CREATE INDEX idx_dim_company_silver_id ON dwh.dim_company(silver_company_id);
+CREATE INDEX IF NOT EXISTS idx_dim_company_silver_id ON dwh.dim_company(silver_company_id);
 
 -- Dim Skill: SCD Type 1 (Overwrite)
 CREATE TABLE IF NOT EXISTS dwh.dim_skill (
@@ -74,6 +89,15 @@ CREATE TABLE IF NOT EXISTS dwh.dim_job_attributes (
     work_mode VARCHAR,
     CONSTRAINT unq_dim_attributes UNIQUE (job_level, job_type, work_mode)
 );
+
+-- Seed giá trị mặc định cho dim_job_attributes để tránh lỗi FK
+INSERT INTO dwh.dim_job_attributes (attribute_key, job_level, job_type, work_mode)
+VALUES (1, 'UNKNOWN', 'UNKNOWN', 'UNKNOWN')
+ON CONFLICT DO NOTHING;
+
+-- Đồng bộ sequence
+SELECT setval('dwh.dim_job_attributes_attribute_key_seq', COALESCE((SELECT MAX(attribute_key) FROM dwh.dim_job_attributes), 1));
+
 
 
 -- =============================================================================
@@ -111,8 +135,8 @@ CREATE TABLE IF NOT EXISTS dwh.fct_job_posting (
     CONSTRAINT unq_fct_job_snapshot UNIQUE (silver_snapshot_id)
 );
 
-CREATE INDEX idx_fct_job_posting_company ON dwh.fct_job_posting(company_key);
-CREATE INDEX idx_fct_job_posting_date ON dwh.fct_job_posting(posted_date_key);
+CREATE INDEX IF NOT EXISTS idx_fct_job_posting_company ON dwh.fct_job_posting(company_key);
+CREATE INDEX IF NOT EXISTS idx_fct_job_posting_date ON dwh.fct_job_posting(posted_date_key);
 
 -- Bridge Table for M:N relationships
 CREATE TABLE IF NOT EXISTS dwh.bridge_job_skill (
@@ -154,7 +178,7 @@ SELECT
     f.experience_min_years,
     f.experience_max_years,
     j.deadline_date,
-    j.canonical_url,
+    jb.canonical_url,
     j.is_current,
     
     -- Aggregate Skills thành Array (rất nhanh cho Postgres GIN index)
@@ -175,15 +199,16 @@ SELECT
 
 FROM dwh.fct_job_posting f
 JOIN silver.job_snapshots j ON f.silver_snapshot_id = j.snapshot_id -- Lấy các text descriptions từ Silver cho tiết kiệm
+JOIN silver.jobs jb ON j.job_id = jb.job_id
 JOIN dwh.dim_company c ON f.company_key = c.company_key
 JOIN dwh.dim_source so ON f.source_key = so.source_key
 JOIN dwh.dim_job_attributes a ON f.attribute_key = a.attribute_key
 WHERE f.is_active = TRUE AND j.is_current = TRUE;
 
 -- Indexes cho Mart API để Search tốc độ ánh sáng
-CREATE UNIQUE INDEX idx_mart_api_jobs_id ON mart_api.latest_jobs_flat (id);
-CREATE INDEX idx_mart_api_jobs_title ON mart_api.latest_jobs_flat USING gin (to_tsvector('simple', job_title));
-CREATE INDEX idx_mart_api_jobs_skills ON mart_api.latest_jobs_flat USING gin (skills);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mart_api_jobs_id ON mart_api.latest_jobs_flat (id);
+CREATE INDEX IF NOT EXISTS idx_mart_api_jobs_title ON mart_api.latest_jobs_flat USING gin (to_tsvector('simple', job_title));
+CREATE INDEX IF NOT EXISTS idx_mart_api_jobs_skills ON mart_api.latest_jobs_flat USING gin (skills);
 
 COMMIT;
 

@@ -1,4 +1,4 @@
-import os
+﻿import os
 import random
 import re
 import time
@@ -8,7 +8,7 @@ from urllib.parse import urljoin, urlparse, urlunparse
 
 from scrapling.parser import Adaptor
 
-from src.extract.job_online.base_scraper import BaseScraper
+from src.extract.base_scraper import BaseScraper
 
 
 class VietnamWorksScraper(BaseScraper):
@@ -24,6 +24,7 @@ class VietnamWorksScraper(BaseScraper):
     def __init__(self, start_url: str | None = None, **kwargs) -> None:
         kwargs.setdefault("delay_range", (8.0, 15.0))
         kwargs.setdefault("max_retries", 5)
+        kwargs.setdefault("use_playwright", "stealth")
         super().__init__(**kwargs)
         # Giữ nguyên query string (l=24) — không split("?")
         self.start_url = start_url or self.DEFAULT_START_URL

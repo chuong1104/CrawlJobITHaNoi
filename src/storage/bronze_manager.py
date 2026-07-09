@@ -3,11 +3,12 @@ import logging
 import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from pydantic import ValidationError
 
 from src.storage.s3_client import S3ClientWrapper
+from src.storage.delta_manager import DeltaLakeManager
 from src.schema.bronze import RawJobPosting
 from src.utils import ensure_dir
 
@@ -19,6 +20,9 @@ class BronzeManager:
         self.local_bronze_dir = local_bronze_dir
         self.s3_bucket = s3_bucket
         self.s3_client = S3ClientWrapper()
+        self.delta_manager = DeltaLakeManager()
+        # Tích lũy validated records để ghi vào Delta khi finalize
+        self._pending_delta_records: List[Dict[str, Any]] = []
 
     def append_local_batch(
         self,
@@ -56,6 +60,8 @@ class BronzeManager:
         # --- Append to files ---
         if valid_records:
             self._append_jsonl(valid_file, valid_records)
+            # Tích lũy để ghi Delta khi finalize
+            self._pending_delta_records.extend(valid_records)
         if rejected_records:
             self._append_jsonl(rejected_file, rejected_records)
 
@@ -101,7 +107,7 @@ class BronzeManager:
         with meta_file.open("w", encoding="utf-8") as f:
             json.dump(metadata, f, ensure_ascii=False, indent=2)
 
-        # --- Upload to S3 ---
+        # --- Upload JSONL to S3 (backup / compatibility) ---
         self.s3_client.create_bucket(self.s3_bucket)
 
         s3_valid_key    = f"{source}/{date_str}/{valid_file.name}"
@@ -117,6 +123,22 @@ class BronzeManager:
                 upload_success = False
         if not self.s3_client.upload_file(meta_file, self.s3_bucket, s3_meta_key):
             upload_success = False
+
+        # --- Ghi vào Delta Lake (Primary Storage) ---
+        if self._pending_delta_records:
+            try:
+                self.delta_manager.write_bronze(
+                    source=source,
+                    records=self._pending_delta_records,
+                    batch_date=date_str,
+                    mode="append",
+                )
+                # Reset pending records sau khi ghi thành công
+                self._pending_delta_records = []
+            except Exception as exc:
+                logger.error(f"[{source}] Delta write failed (JSONL backup still uploaded): {exc}")
+                # Không raise — JSONL backup đã có trên S3, pipeline không bị crash
+                upload_success = False
 
         return upload_success
 

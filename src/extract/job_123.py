@@ -1,10 +1,10 @@
-import os
+﻿import os
 from datetime import datetime
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
 from scrapling.parser import Adaptor
 
-from src.extract.job_online.base_scraper import BaseScraper
+from src.extract.base_scraper import BaseScraper
 
 
 class Job123Scraper(BaseScraper):

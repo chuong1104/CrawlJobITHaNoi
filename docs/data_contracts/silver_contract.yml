@@ -1,0 +1,146 @@
+# =============================================================================
+# silver_contract.yml — Data Contract cho Silver Layer (PostgreSQL 3NF ODS)
+# Version: 1.0.0 | Owner: data-platform | Tier: critical
+# =============================================================================
+
+contract:
+  id: silver-v1
+  version: "1.0.0"
+  name: "Silver Layer Contract"
+  layer: silver
+  status: active
+  created_at: "2026-07-08"
+  owner:
+    team: data-platform
+    slack: "#data-alerts"
+
+# ---------------------------------------------------------------------------
+# SLA
+# ---------------------------------------------------------------------------
+sla:
+  freshness:
+    max_hours: 28             # Pipeline chạy 6h + ~2h xử lý = sẵn sàng trước 8h sáng
+    check_table: "silver.jobs"
+    check_column: "updated_at"
+    severity: critical
+
+  availability:
+    uptime_pct: 99.5
+    storage: "PostgreSQL on Docker"
+
+# ---------------------------------------------------------------------------
+# Core Tables Contract
+# ---------------------------------------------------------------------------
+tables:
+  # ── silver.jobs ──────────────────────────────────────────────────────────
+  - name: silver.jobs
+    description: "Entity tin tuyển dụng. STATIC identity, không chứa nội dung biến động."
+    tier: critical
+    
+    key_columns:
+      - job_id               # BIGSERIAL PRIMARY KEY
+      - identity_hash        # CHAR(16), SHA-256 của các trường bất biến
+    
+    business_rules:
+      - id: SLV-J-001
+        rule: "Mỗi (source_id, source_job_id) là unique"
+        implemented_by: "UNIQUE CONSTRAINT uq_jobs_source_job_id"
+      
+      - id: SLV-J-002
+        rule: "canonical_url phải unique"
+        implemented_by: "UNIQUE CONSTRAINT uq_jobs_canonical_url"
+      
+      - id: SLV-J-003
+        rule: "closed_at >= first_seen_at (nếu có)"
+        implemented_by: "CHECK CONSTRAINT chk_closed_at"
+      
+      - id: SLV-J-004
+        rule: "not_found_count >= 0"
+        implemented_by: "CHECK CONSTRAINT"
+      
+      - id: SLV-J-005
+        rule: "is_active = FALSE khi job_status IN ('CLOSED', 'EXPIRED', 'DUPLICATE')"
+        implemented_by: "Trigger in sp_process_staging_batch()"
+
+  # ── silver.job_snapshots (SCD Type 2) ─────────────────────────────────
+  - name: silver.job_snapshots
+    description: "Lịch sử nội dung tin theo phiên bản. SCD Type 2."
+    tier: critical
+    
+    scd_type: 2
+    active_record_filter: "is_current = TRUE"
+    
+    business_rules:
+      - id: SLV-S-001
+        rule: "Mỗi job_id chỉ có ĐÚNG 1 bản ghi is_current = TRUE"
+        implemented_by: "UNIQUE CONSTRAINT uq_snapshot_current NULLS NOT DISTINCT"
+      
+      - id: SLV-S-002
+        rule: "salary_min <= salary_max (nếu cả hai đều có giá trị)"
+        implemented_by: "CHECK CONSTRAINT chk_snapshot_salary"
+        dbt_test: "assert_salary_min_le_max"
+      
+      - id: SLV-S-003
+        rule: "experience_min_years <= experience_max_years"
+        implemented_by: "CHECK CONSTRAINT chk_snapshot_exp"
+      
+      - id: SLV-S-004
+        rule: "deadline_date không được ở quá khứ xa (> 2 năm trước hiện tại)"
+        implemented_by: "dbt test"
+        dbt_test: "assert_no_future_postings"
+      
+      - id: SLV-S-005
+        rule: "valid_to > valid_from (nếu đã đóng)"
+        implemented_by: "CHECK CONSTRAINT chk_snapshot_valid"
+
+  # ── silver.companies ──────────────────────────────────────────────────
+  - name: silver.companies
+    description: "Entity công ty. Đã chuẩn hóa tên, xử lý aliases."
+    tier: standard
+    
+    business_rules:
+      - id: SLV-C-001
+        rule: "company_id = 1 là company ẩn danh đặc biệt (is_anonymous = TRUE)"
+        note: "Không được xóa hoặc thay đổi record này"
+      
+      - id: SLV-C-002
+        rule: "normalized_name phải unique trong hệ thống"
+        implemented_by: "Application logic trong dedup_engine.py"
+
+  # ── silver.company_aliases ────────────────────────────────────────────
+  - name: silver.company_aliases
+    description: "N aliases → 1 company_id. Dùng trigram index để lookup."
+    tier: standard
+    
+    business_rules:
+      - id: SLV-A-001
+        rule: "Mỗi alias_text chỉ map về 1 company_id duy nhất"
+        implemented_by: "UNIQUE CONSTRAINT (alias_text)"
+      
+      - id: SLV-A-002
+        rule: "confidence phải trong khoảng 0-100"
+        implemented_by: "CHECK CONSTRAINT"
+
+# ---------------------------------------------------------------------------
+# CDC Contract
+# ---------------------------------------------------------------------------
+cdc:
+  type: "application-level (hash-based)"
+  mechanism: "content_hash comparison trong sp_process_staging_batch()"
+  watermark_table: "silver.cdc_watermarks"
+  expected_latency: "< 2h sau khi scraper hoàn thành"
+  
+  scd_type2_behavior:
+    trigger: "content_hash thay đổi so với latest_content_hash trong silver.jobs"
+    action: "Đóng snapshot cũ (is_current=FALSE, valid_to=NOW()), tạo snapshot mới"
+
+# ---------------------------------------------------------------------------
+# Change Log
+# ---------------------------------------------------------------------------
+changelog:
+  - version: "1.0.0"
+    date: "2026-07-08"
+    changes:
+      - "Khởi tạo Silver Contract"
+      - "Thêm CDC watermark contract section"
+      - "Document đầy đủ SCD Type 2 behavior"

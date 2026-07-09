@@ -1,0 +1,199 @@
+<!-- src/api/static/index.html -->
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JobITVN - Serving Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Background glowing radial vectors -->
+    <div class="glow-bg glow-1"></div>
+    <div class="glow-bg glow-2"></div>
+    
+    <div class="app-container">
+        <!-- Header -->
+        <header>
+            <div class="logo-area">
+                <span class="logo-text"><span class="highlight">JobIT</span>VN</span>
+                <span class="badge">Data Platform v2.2</span>
+            </div>
+            <h1>Khám Phá Dữ Liệu Thị Trường Tuyển Dụng IT</h1>
+            <p class="subtitle">Tìm kiếm full-text siêu tốc & phân tích dữ liệu thực tế thời gian thực</p>
+        </header>
+
+        <!-- KPI Grid with 4 cards -->
+        <section class="kpi-grid">
+            <div class="kpi-card">
+                <div class="kpi-header">
+                    <p class="kpi-label">Tin Tuyển Dụng Đang Mở</p>
+                    <div class="kpi-icon-container text-cyan">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 14.15v4.25c0 .621-.504 1.125-1.125 1.125H4.875c-.621 0-1.125-.504-1.125-1.125v-4.25m16.5 0a2.25 2.25 0 0 0-2.25-2.25H5.625a2.25 2.25 0 0 0-2.25 2.25m16.5 0v-2.25A2.25 2.25 0 0 0 18 7.5H6A2.25 2.25 0 0 0 3.75 9.75v2.25A2.25 2.25 0 0 0 6 14.25h12a2.25 2.25 0 0 0 2.25-2.25ZM12 10.5v3.75m-3.75-3.75h7.5" />
+                        </svg>
+                    </div>
+                </div>
+                <h3 id="stat-total-jobs">-</h3>
+                <span class="trend">+14% tuần này</span>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-header">
+                    <p class="kpi-label">Lương Trung Bình</p>
+                    <div class="kpi-icon-container text-green">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m-3-2.818.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                        </svg>
+                    </div>
+                </div>
+                <h3><span id="stat-avg-salary">-</span> <small>Tr. VND</small></h3>
+                <span class="trend">Dựa trên fct_job_posting</span>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-header">
+                    <p class="kpi-label">Nhà Tuyển Dụng Hoạt Động</p>
+                    <div class="kpi-icon-container text-blue">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21h10.5V3.75c0-.621-.504-1.125-1.125-1.125H7.875c-.621 0-1.125.504-1.125 1.125V21Z" />
+                        </svg>
+                    </div>
+                </div>
+                <h3 id="stat-total-companies">-</h3>
+                <span class="trend">Đã chuẩn hóa (SCD type 2)</span>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-header">
+                    <p class="kpi-label">Top Kỹ Năng Yêu Cầu</p>
+                    <div class="kpi-icon-container text-neon">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z" />
+                        </svg>
+                    </div>
+                </div>
+                <div id="stat-top-skills" class="skills-list">-</div>
+                <span class="trend">Tần suất xuất hiện ở tiêu đề</span>
+            </div>
+        </section>
+
+        <!-- Search box & Advanced Filters -->
+        <section class="filter-section">
+            <div class="search-container">
+                <div class="search-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-5 h-5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.608 10.608Z" />
+                    </svg>
+                </div>
+                <input type="text" id="search-input" placeholder="Tìm nhanh theo chức danh, từ khóa (Python, React, Data Engineer, Fresher, Senior)...">
+                <button id="search-btn">Tìm Kiếm</button>
+            </div>
+            
+            <div class="filters-grid">
+                <!-- Địa điểm -->
+                <div class="filter-group">
+                    <label for="filter-location">📍 Địa Điểm</label>
+                    <select id="filter-location">
+                        <option value="">Tất cả địa điểm</option>
+                        <option value="Hà Nội">Hà Nội</option>
+                        <option value="Hồ Chí Minh">TP. Hồ Chí Minh</option>
+                        <option value="Đà Nẵng">Đà Nẵng</option>
+                    </select>
+                </div>
+                
+                <!-- Mức Lương -->
+                <div class="filter-group">
+                    <label for="filter-salary">💰 Mức Lương</label>
+                    <select id="filter-salary">
+                        <option value="">Tất cả mức lương</option>
+                        <option value="negotiable">Thỏa thuận / Cạnh tranh</option>
+                        <option value="under_15">Dưới 15 triệu</option>
+                        <option value="15_30">15 - 30 triệu</option>
+                        <option value="over_30">Trên 30 triệu</option>
+                    </select>
+                </div>
+                
+                <!-- Kinh Nghiệm -->
+                <div class="filter-group">
+                    <label for="filter-experience">💼 Kinh Nghiệm</label>
+                    <select id="filter-experience">
+                        <option value="">Tất cả kinh nghiệm</option>
+                        <option value="no_exp">Chưa có / Dưới 1 năm</option>
+                        <option value="1_3_years">Từ 1 - 3 năm</option>
+                        <option value="over_3_years">Trên 3 năm</option>
+                    </select>
+                </div>
+                
+                <!-- Nguồn Tuyển Dụng -->
+                <div class="filter-group">
+                    <label for="filter-source">🏢 Nguồn Tuyển Dụng</label>
+                    <select id="filter-source">
+                        <option value="">Tất cả các nguồn</option>
+                        <option value="TopCV">TopCV</option>
+                        <option value="JobsGo">JobsGO</option>
+                        <option value="LinkedIn">LinkedIn</option>
+                        <option value="ITviec">ITViec</option>
+                        <option value="VietnamWorks">VietnamWorks</option>
+                        <option value="CareerViet">CareerViet</option>
+                        <option value="JobOko">JobOko</option>
+                        <option value="123Job">123Job</option>
+                    </select>
+                </div>
+                
+                <!-- Sắp xếp thời gian -->
+                <div class="filter-group">
+                    <label for="filter-sort">⚡ Sắp Xếp</label>
+                    <select id="filter-sort">
+                        <option value="newest">Mới nhất trước</option>
+                        <option value="oldest">Cũ nhất trước</option>
+                    </select>
+                </div>
+            </div>
+        </section>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Jobs Column -->
+            <div class="jobs-column">
+                <div class="jobs-header">
+                    <h2>Danh Sách Việc Làm (<span id="results-count">0</span>)</h2>
+                    <span class="live-indicator">● LIVE UPDATE</span>
+                </div>
+                <div id="jobs-container" class="jobs-list">
+                    <!-- Cards will be populated here by JavaScript -->
+                </div>
+                
+                <!-- Pagination -->
+                <div class="pagination">
+                    <button id="prev-btn" disabled>
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
+                        </svg>
+                        Trang trước
+                    </button>
+                    <span id="page-num">Trang 1 / 1</span>
+                    <button id="next-btn" disabled>
+                        Trang sau
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Detail Pane -->
+            <div class="detail-column" id="detail-pane">
+                <div class="detail-placeholder">
+                    <div class="placeholder-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-12 h-12">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m5.563 9.125L15 15.75m-3 0h.008v.008H12v-.008Z" />
+                        </svg>
+                    </div>
+                    <p>Chọn một công việc từ danh sách để xem chi tiết mô tả công việc bằng AI & nhà tuyển dụng.</p>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

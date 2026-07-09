@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('fct_job_posting') }}
 {{ config(
     materialized='view'
 ) }}
@@ -24,7 +25,7 @@ SELECT
     skill_name,
     COUNT(DISTINCT job_id) AS jobs_with_salary_info,
     ROUND(AVG(salary_avg), 0) AS avg_salary,
-    ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY salary_avg), 0) AS median_salary,
+    ROUND((PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY salary_avg))::numeric, 0) AS median_salary,
     MIN(salary_min) AS lowest_salary,
     MAX(salary_max) AS highest_salary
 FROM valid_salary_jobs

@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 import random
 import re
@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
 from scrapling.parser import Adaptor
 
-from src.extract.job_online.base_scraper import BaseScraper
+from src.extract.base_scraper import BaseScraper
 
 
 class ITViecScraper(BaseScraper):
@@ -32,26 +32,6 @@ class ITViecScraper(BaseScraper):
         kwargs["use_playwright"] = False
         super().__init__(**kwargs)
         self.start_url = self._clean_list_url(start_url or self.DEFAULT_START_URL)
-
-    def _is_valid_html(self, html: str, url: str) -> bool:
-        """Kiểm tra xem trang có bị chặn hoặc lỗi không."""
-        html_lower = html.lower()
-        if "cf-browser-verification" in html_lower or "just a moment" in html_lower:
-            return False
-        if "429 too many requests" in html_lower or "mã lỗi: 429" in html_lower:
-            return False
-        if "503 service temporarily unavailable" in html_lower:
-            return False
-
-        page = Adaptor(html)
-        is_list_page = bool(page.css("div.job-card"))
-        if not is_list_page:
-            title_el = page.css("h1.ipt-xl-6.text-it-black, h1[class*='text-it-black']")
-            company_el = page.css("div.employer-name, a[href*='/companies/'][class*='text-it-black']")
-            if not title_el and not company_el:
-                return False
-                
-        return True
 
         # Thông tin đăng nhập từ .env
         self.email = os.getenv("ITVIEC_EMAIL")
@@ -78,6 +58,26 @@ class ITViecScraper(BaseScraper):
                             self.session.cookies.set(c["name"], c["value"], domain=c.get("domain"))
             except Exception as e:
                 self.logger.warning(f"Lỗi load session: {e}")
+
+    def _is_valid_html(self, html: str, url: str) -> bool:
+        """Kiểm tra xem trang có bị chặn hoặc lỗi không."""
+        html_lower = html.lower()
+        if "cf-browser-verification" in html_lower or "just a moment" in html_lower:
+            return False
+        if "429 too many requests" in html_lower or "mã lỗi: 429" in html_lower:
+            return False
+        if "503 service temporarily unavailable" in html_lower:
+            return False
+
+        page = Adaptor(html)
+        is_list_page = bool(page.css("div.job-card"))
+        if not is_list_page:
+            title_el = page.css("h1.ipt-xl-6.text-it-black, h1[class*='text-it-black']")
+            company_el = page.css("div.employer-name, a[href*='/companies/'][class*='text-it-black']")
+            if not title_el and not company_el:
+                return False
+                
+        return True
 
     # ------------------------------------------------------------------
     # URL Helpers
@@ -219,7 +219,7 @@ class ITViecScraper(BaseScraper):
         # Kiểm tra session cũ xem còn hiệu lực không
         try:
             r = self.session.get("https://itviec.com/profile")
-            if r.status_code == 200 and "sign_in" not in r.url:
+            if r.status_code == 200 and "sign_in" not in r.url and "better job" not in r.text.lower():
                 self.logger.info("Sử dụng session cũ thành công!")
                 return True
         except Exception:
@@ -245,13 +245,14 @@ class ITViecScraper(BaseScraper):
             
             r_post = self.session.post("https://itviec.com/sign_in", data=data, allow_redirects=False)
             
-            if r_post.status_code == 302 and r_post.headers.get("Location"):
+            location = r_post.headers.get("Location", "")
+            if r_post.status_code == 302 and "sign_in" not in location:
                 self.logger.info("Đăng nhập ITViec thành công!")
                 with open(self.session_file, "w") as f:
                     json.dump(self.session.cookies.get_dict(), f)
                 return True
             else:
-                self.logger.error(f"Đăng nhập thất bại (Status: {r_post.status_code}).")
+                self.logger.error(f"Đăng nhập thất bại (Status: {r_post.status_code}, Location: {location}).")
                 return False
 
         except Exception as e:

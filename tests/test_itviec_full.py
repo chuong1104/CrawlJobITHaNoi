@@ -1,4 +1,4 @@
-"""
+﻿"""
 test_itviec_full.py — Integration test: ITViec login + fetch + parse.
 Chạy: python tests/test_itviec_full.py
 """
@@ -8,7 +8,7 @@ import sys
 from dotenv import load_dotenv
 load_dotenv()
 
-from src.extract.job_online.itviec import ITViecScraper
+from src.extract.itviec import ITViecScraper
 
 
 def main():

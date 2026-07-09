@@ -1,10 +1,10 @@
-import os
+﻿import os
 from datetime import datetime
 from urllib.parse import urljoin
 
 from scrapling.parser import Adaptor
 
-from src.extract.job_online.base_scraper import BaseScraper
+from src.extract.base_scraper import BaseScraper
 
 
 class CareerLinkScraper(BaseScraper):

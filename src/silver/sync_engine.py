@@ -61,7 +61,12 @@ class SilverSyncEngine:
         batch_date = date.today()
         records_to_insert = []
         for _, row in df.iterrows():
-            skills = list(row['skills_raw']) if isinstance(row['skills_raw'], (list, tuple, pd.Series)) else None
+            if hasattr(row['skills_raw'], 'tolist') and row['skills_raw'] is not None:
+                skills = row['skills_raw'].tolist()
+            elif isinstance(row['skills_raw'], (list, tuple, pd.Series)):
+                skills = list(row['skills_raw'])
+            else:
+                skills = None
             records_to_insert.append((
                 row['source_code'],
                 str(row['source_job_id']),
@@ -114,7 +119,7 @@ class SilverSyncEngine:
         """
         with self.pg_conn.cursor() as cur:
             cur.execute("""
-                SELECT silver.sp_auto_close_missing_jobs(%s, %s, %s)
+                SELECT silver.sp_auto_close_missing_jobs(%s::SMALLINT, %s::BIGINT, %s::TIMESTAMPTZ)
             """, (source_id, session_id, session_start_time))
             closed_count = cur.fetchone()[0]
             
@@ -131,7 +136,18 @@ if __name__ == "__main__":
     engine = SilverSyncEngine()
     engine.connect()
     try:
+        # Đảm bảo có session_id = 1 trong database để tránh lỗi FK
+        with engine.pg_conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO silver.crawl_sessions (session_id, run_date, source_id, crawl_status)
+                VALUES (1, CURRENT_DATE, 1, 'RUNNING')
+                ON CONFLICT DO NOTHING;
+            """)
+            cur.execute("SELECT setval('silver.crawl_sessions_session_id_seq', COALESCE((SELECT MAX(session_id) FROM silver.crawl_sessions), 1))")
+            engine.pg_conn.commit()
+
         # Mock session ID for standalone test
         engine.sync_staged_jobs(session_id=1)
     finally:
         engine.close()
+

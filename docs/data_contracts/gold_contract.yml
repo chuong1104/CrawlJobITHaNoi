@@ -1,0 +1,181 @@
+# =============================================================================
+# gold_contract.yml — Data Contract cho Gold Layer (Delta Lake + DWH)
+# Version: 1.0.0 | Owner: data-platform | Tier: critical
+# =============================================================================
+
+contract:
+  id: gold-v1
+  version: "1.0.0"
+  name: "Gold Layer Contract"
+  layer: gold
+  status: active
+  created_at: "2026-07-08"
+  owner:
+    team: data-platform
+    slack: "#data-alerts"
+
+# ---------------------------------------------------------------------------
+# Consumers — Ai đang dùng Gold data
+# ---------------------------------------------------------------------------
+consumers:
+  - name: Power BI Dashboard
+    type: bi_tool
+    access_method: "Parquet files local + Delta Lake S3"
+    sla_requirement: "Data sẵn sàng trước 8h sáng"
+    contact: "data-platform"
+  
+  - name: FastAPI Serving Layer
+    type: api
+    access_method: "PostgreSQL DWH schema (dwh.*)"
+    sla_requirement: "Query time < 500ms cho /api/jobs endpoint"
+    contact: "backend-team"
+  
+  - name: ML Pipeline
+    type: ml_training
+    access_method: "Delta Lake mart_ml (job_features table)"
+    sla_requirement: "Weekly refresh, accuracy > 85%"
+    contact: "ml-team"
+
+# ---------------------------------------------------------------------------
+# SLA
+# ---------------------------------------------------------------------------
+sla:
+  freshness:
+    max_hours: 30             # Sẵn sàng 08:00 hàng ngày (pipeline 06:00 + 2h buffer)
+    check_table: "dwh.fct_job_posting"
+    severity: critical
+  
+  query_performance:
+    - consumer: "FastAPI"
+      table: "dwh.fct_job_posting"
+      max_response_ms: 500
+      condition: "WHERE is_active = TRUE LIMIT 100"
+    
+    - consumer: "Power BI"
+      table: "mart_bi.kpi_daily_summary"
+      max_response_ms: 2000
+
+  data_completeness:
+    min_active_jobs: 500      # Cảnh báo nếu total_active_jobs < 500 sau pipeline
+
+# ---------------------------------------------------------------------------
+# Tables Contract
+# ---------------------------------------------------------------------------
+tables:
+  # ── DWH Fact Tables ─────────────────────────────────────────────────────
+  - name: dwh.fct_job_posting
+    description: "Bảng Fact chính — Kimball Dimensional Model. Join với Silver và Dimensions."
+    tier: critical
+    materialization: incremental
+    refresh_strategy: "merge on job_id, trigger: updated_at > last_run"
+    
+    business_rules:
+      - id: GLD-F-001
+        rule: "job_id phải unique"
+        implemented_by: "unique_key='job_id' trong dbt incremental config"
+      
+      - id: GLD-F-002
+        rule: "Chỉ include snapshot is_current = TRUE từ silver.job_snapshots"
+        implemented_by: "JOIN condition: s.is_current = TRUE"
+      
+      - id: GLD-F-003
+        rule: "salary_min <= salary_max"
+        implemented_by: "Kế thừa từ Silver constraint"
+      
+      - id: GLD-F-004
+        rule: "Không có orphan records (company_id phải tồn tại trong dim_company)"
+        implemented_by: "dbt relationship test"
+    
+    key_metrics:
+      # Tham chiếu đến Semantic Layer (sem_job_market.yml)
+      - total_active_jobs
+      - market_avg_salary
+      - total_hiring_companies
+      - fresher_job_ratio
+
+  # ── Dimension Tables ─────────────────────────────────────────────────────
+  - name: dwh.dim_company
+    description: "Dimension bảng công ty. SCD Type 1 (overwrite when changed)."
+    tier: standard
+    materialization: table
+    refresh_strategy: "full refresh daily"
+
+  - name: dwh.dim_date
+    description: "Date dimension — calendar attributes (year, month, week, day_of_week...)."
+    tier: standard
+    materialization: table
+    refresh_strategy: "generated once, extend annually"
+
+  - name: dwh.dim_skill
+    description: "Dimension kỹ năng kỹ thuật."
+    tier: standard
+    materialization: table
+
+  # ── Mart BI Tables ───────────────────────────────────────────────────────
+  - name: mart_bi.kpi_daily_summary
+    description: >
+      KPI snapshot hàng ngày. SINGLE SOURCE OF TRUTH cho Power BI dashboards.
+      Mọi báo cáo KPI phải đọc từ bảng này — không tự query fct_job_posting.
+    tier: critical
+    materialization: incremental
+    consumers: ["Power BI Dashboard"]
+    
+    key_columns:
+      - report_date           # DATE — unique key
+      - total_active_jobs     # sem: total_active_jobs
+      - total_hiring_companies # sem: total_hiring_companies
+      - market_avg_salary_vnd # sem: market_avg_salary
+      - salary_disclosure_rate_pct  # sem: salary_disclosure_rate
+      - fresher_ratio_pct     # sem: fresher_job_ratio
+      - new_jobs_today        # sem: new_jobs_today
+
+  - name: mart_bi.agg_skill_trend_weekly
+    description: >
+      Xu hướng kỹ năng theo tuần. Tính growth_rate, rolling_4w_avg, trend_label.
+      Dùng cho Power BI "Rising Skills" và "Hot Skills" charts.
+    tier: standard
+    materialization: incremental
+    consumers: ["Power BI Dashboard"]
+
+  # ── Mart ML Tables (Delta Lake) ─────────────────────────────────────────
+  - name: "s3://jobit-gold/gold/mart_ml/job_features"
+    format: delta_lake
+    description: "Feature table cho ML model training. Flat table với label (salary)."
+    tier: experimental
+    consumers: ["ML Pipeline"]
+    refresh: "daily overwrite"
+
+# ---------------------------------------------------------------------------
+# Semantic Layer Reference
+# ---------------------------------------------------------------------------
+semantic_layer:
+  definition_file: "dbt_jobitvn/models/metrics/sem_job_market.yml"
+  metrics:
+    - total_active_jobs
+    - total_hiring_companies
+    - new_jobs_today
+    - market_avg_salary
+    - salary_disclosure_rate
+    - fresher_job_count
+    - fresher_job_ratio
+    - remote_job_count
+    - intern_job_count
+    - data_jobs_count
+    - backend_jobs_count
+    - de_avg_salary
+
+  usage_note: >
+    Consumer KHÔNG được tự viết SQL để tính các metrics trên.
+    Hãy dùng dbt metric() function hoặc đọc từ mart_bi.kpi_daily_summary.
+
+# ---------------------------------------------------------------------------
+# Change Log
+# ---------------------------------------------------------------------------
+changelog:
+  - version: "1.0.0"
+    date: "2026-07-08"
+    changes:
+      - "Khởi tạo Gold Contract"
+      - "Migrate Gold exports sang Delta Lake format (mart_bi, mart_ml)"
+      - "Thêm Semantic Layer reference với 12 metrics định nghĩa"
+      - "Tài liệu hóa consumer SLA và query performance requirements"

@@ -13,6 +13,16 @@ WITH unioned AS (
     SELECT * FROM {{ ref('stg_vietnamworks') }}
     UNION ALL
     SELECT * FROM {{ ref('stg_jobsgo') }}
+    UNION ALL
+    SELECT * FROM {{ ref('stg_linkedin') }}
+    UNION ALL
+    SELECT * FROM {{ ref('stg_123job') }}
+    UNION ALL
+    SELECT * FROM {{ ref('stg_careerlink') }}
+    UNION ALL
+    SELECT * FROM {{ ref('stg_careerviet') }}
+    UNION ALL
+    SELECT * FROM {{ ref('stg_joboko') }}
 )
 
 SELECT

@@ -2,158 +2,111 @@
 
 ## Overview
 
-JobITVN áp dụng kiến trúc **Data Lakehouse** hiện đại để quản lý dữ liệu. Thay vì nạp toàn bộ dữ liệu vào một Data Warehouse truyền thống (như PostgreSQL), chúng ta giữ nguyên dữ liệu trên Object Storage (S3/Floci) và sử dụng DuckDB + dbt để biến đổi và truy vấn trực tiếp.
+JobITVN áp dụng kiến trúc **Data Lakehouse** hiện đại để quản lý dữ liệu. Thay vì lưu trữ tệp phẳng đơn thuần, chúng ta lưu trữ dữ liệu dưới định dạng **Delta Lake (Open Table Format)** trên Object Storage (S3/Floci) và sử dụng DuckDB + dbt + PostgreSQL để biến đổi, quản lý ACID Transactions, Time Travel, và phục vụ phân tích hiệu năng cao.
 
-Luồng dữ liệu được chia làm 3 tầng theo **Medallion Architecture** (chuẩn của Databricks):
-- **Bronze (Raw):** Dữ liệu thô nguyên bản.
-- **Silver (Staging & Cleansed):** Dữ liệu đã làm sạch, chuẩn hóa.
-- **Gold (Data Warehouse/Marts):** Dữ liệu tổng hợp (Fact/Dim) phục vụ báo cáo.
-
----
-
-# 1. Why Data Lakehouse?
-
-## Khuyết điểm của Data Warehouse truyền thống (PostgreSQL DWH)
-- Phải tạo bảng (schema) trước khi đưa dữ liệu vào.
-- Data thô (JSON, HTML) khó lưu trữ tối ưu trong DB quan hệ.
-- Tốn kém chi phí lưu trữ (Storage) và tính toán (Compute) vì chúng gắn chặt với nhau.
-
-## Ưu điểm của Local AWS Lakehouse (Floci S3 + DuckDB)
-- **Separation of Compute and Storage:** Dữ liệu nằm ở S3 (rẻ, không giới hạn). Compute do DuckDB thực thi (chỉ tốn CPU khi chạy query, cực kỳ nhanh).
-- **Flexibility:** Xử lý tốt cả dữ liệu phi cấu trúc (HTML), bán cấu trúc (JSON) và có cấu trúc (Parquet).
-- **Hiệu năng:** Định dạng Parquet kết hợp với công cụ Vectorized Execution của DuckDB giúp các truy vấn báo cáo nhanh gấp hàng chục lần so với PostgreSQL.
+Luồng dữ liệu được chia làm 3 tầng theo **Medallion Architecture** nâng cấp:
+- **Bronze (Raw Table):** Dữ liệu thô nguyên bản được lưu dưới dạng **Delta Table** trên S3, hỗ trợ Time Travel và Schema Evolution.
+- **Silver (Operational 3NF):** Dữ liệu được làm sạch, chuẩn hóa và lưu trữ có cấu trúc chuẩn 3NF trong **PostgreSQL** để duy trì tính toàn vẹn nghiệp vụ, xử lý SCD Type 2 lịch sử trạng thái job và thực hiện CDC (Change Data Capture) dựa trên Watermark.
+- **Gold (Data Warehouse & Marts):** Dữ liệu tổng hợp (Fact/Dim) được tổ chức theo Kimball Dimensional Model trong PostgreSQL (tối ưu bằng Materialized Views) đồng thời được xuất ngược ra S3 dưới dạng **Delta Table** (mart_bi, mart_ml) để phục vụ các phân tích nâng cao, ML, và Power BI.
 
 ---
 
-# 2. Bronze Layer (Tầng thô)
+# 1. Why Delta Lake & Data Lakehouse?
+
+## Khuyết điểm của định dạng Parquet "raw" truyền thống
+- Thiếu tính năng giao dịch (ACID): Khi pipeline bị ngắt giữa chừng, file Parquet có thể bị hỏng (corrupt).
+- Không có lịch sử phiên bản (Time Travel): Khó truy vấn lại dữ liệu tại một thời điểm trong quá khứ để debug hoặc train ML model.
+- Schema Drift: Khó quản lý khi các trang tuyển dụng thay đổi cấu trúc/thêm cột.
+
+## Ưu điểm của kiến trúc Delta Lake (via python-deltalake & DuckDB)
+- **ACID Transactions:** Đảm bảo toàn vẹn dữ liệu cho Data Lake, không có tình trạng file hỏng.
+- **Time Travel:** Hỗ trợ đọc dữ liệu tại bất kỳ version nào thông qua lịch sử commits (ví dụ: `read_delta_table(version=5)`).
+- **Schema Evolution:** Tự động gộp schema mới (schema merge) khi scraper thu thập thêm trường thông tin mà không làm lỗi pipeline.
+- **DuckDB Native Integration:** DuckDB truy vấn trực tiếp Delta Table qua extension `delta` bằng hàm `delta_scan()`.
+- **Separation of Compute & Storage:** Toàn bộ compute do DuckDB & PostgreSQL engine gánh trên RAM/CPU, storage nằm hoàn toàn trên Floci S3.
+
+---
+
+# 2. Bronze Layer (Tầng thô - Delta Lake)
 
 ## Mục đích
-Lưu trữ mọi thứ thu thập được từ website ở dạng nguyên bản nhất, không chỉnh sửa, không gọt giũa. Đây là "Single Source of Truth" gốc rễ. Đề phòng trường hợp logic parser ở các bước sau bị sai, chúng ta luôn có thể chạy lại từ đầu.
+Lưu trữ mọi thứ thu thập được từ các scrapers ở dạng nguyên bản nhất dưới dạng Delta Table. Đây là "Single Source of Truth" gốc rễ của hồ dữ liệu. Mọi thay đổi schema của nguồn tuyển dụng đều được Delta Lake tự động merge.
 
 ## Lưu trữ
-- **Định dạng:** `.jsonl` (JSON Lines), `.html`
-- **Vị trí:** `s3://jobit-bronze/`
-- **Cấu trúc thư mục:**
-  ```text
-  s3://jobit-bronze/source=topcv/year=2026/month=06/day=20/data.jsonl
-  ```
+- **Định dạng:** Delta Format (Parquet + Transaction Log `_delta_log`)
+- **Vị trí:** `s3://jobit-bronze/bronze/{source}/`
+- **Cơ chế Partition:** Phân vùng theo `_batch_date` để tối ưu filter pushdown.
+- **Maintenance:** Chạy task `VACUUM` hàng tuần để dọn dẹp các tệp tin cũ quá 7 ngày, giúp tối ưu hóa không gian lưu trữ S3.
 
 ---
 
-# 3. Silver Layer (Tầng làm sạch)
+# 3. Silver Layer (Tầng chuẩn hóa - PostgreSQL 3NF & CDC)
 
 ## Mục đích
-Làm sạch, chuẩn hóa kiểu dữ liệu, giải quyết trùng lặp (deduplication) và hợp nhất dữ liệu từ nhiều nguồn khác nhau (TopCV, ITviec, v.v.) về một cấu trúc chung duy nhất.
+Làm sạch, chuẩn hóa kiểu dữ liệu, giải quyết trùng lặp thực thể (Entity Resolution - Aliases) và đồng bộ vào hệ quản trị cơ sở dữ liệu quan hệ PostgreSQL chuẩn hóa dạng 3NF (`jobs`, `companies`, `job_snapshots`).
 
-## Lưu trữ
-- **Định dạng:** `.parquet` (Siêu nén, truy vấn cột cực nhanh)
-- **Vị trí:** `s3://jobit-silver/`
-
-## Quá trình biến đổi (bởi dbt)
-1. **Làm sạch chuỗi:** Xóa HTML tags thừa trong description.
-2. **Parse Mức lương:** Biến đổi "10-15 triệu" thành `salary_min = 10000000`, `salary_max = 15000000`.
-3. **Parse Ngày tháng:** Chuẩn hóa `posted_date` và `expired_date` về chuẩn ISO-8601.
-4. **Deduplication:** Nếu một Job đăng trên cả TopCV và ITviec, gộp chúng lại làm một bảng ghi duy nhất dựa trên `job_title` và `company_name`.
+## Quá trình biến đổi & Đồng bộ (CDC Watermark)
+1. **Làm sạch dbt (Staging DuckDB):** dbt sử dụng DuckDB đọc trực tiếp từ Delta Bronze trên S3 qua `delta_scan()`, làm sạch chuỗi, chuẩn hóa mức lương, kỹ năng, và ngày tháng.
+2. **CDC Delta-Load dựa trên Watermark:** `CDCWatermarkTracker` lưu lại thời điểm đồng bộ thành công cuối cùng của từng source trong bảng `silver.cdc_watermarks`. Lần chạy tiếp theo chỉ lấy các bản ghi có `scraped_at > last_sync_at`, giảm 80-90% lượng dữ liệu cần xử lý.
+3. **SCD Type 2 (PostgreSQL):** Khi dữ liệu tin tuyển dụng có thay đổi (`content_hash` đổi), trigger/stored procedure trong PostgreSQL tự động đóng phiên bản cũ và tạo phiên bản mới trong bảng `silver.job_snapshots` (`is_current`, `valid_from`, `valid_to`).
+4. **Fuzzy Dedup (Entity Resolution):** Sử dụng pg_trgm (Trigram Index) để map hàng chục bí danh công ty viết sai/viết tắt về một ID công ty chuẩn duy nhất.
 
 ---
 
-# 4. Gold Layer (Tầng phân tích / Data Warehouse)
+# 4. Gold Layer (Tầng phân tích / Data Warehouse & Marts)
 
 ## Mục đích
-Được thiết kế dưới dạng **Star Schema** (Mô hình sao) hoặc các bảng Data Mart cực rộng (One-Big-Table). Tầng này phục vụ trực tiếp cho các công cụ BI (Power BI) và API hiển thị.
+Tổ chức dữ liệu theo **Star Schema** phục vụ trực tiếp cho báo cáo Power BI, API Serving (FastAPI), và Machine Learning.
 
-## Lưu trữ
-- **Định dạng:** `.parquet`
-- **Vị trí:** `s3://jobit-gold/`
-
-## Star Schema Overview
-```text
-                    dim_date
-                        │
-                        │
-                        ▼
-
-dim_company ─── fact_job_posting ─── dim_location
-                        │
-                        │
-                        ▼
-
-                   dim_source
-                        │
-                        │
-                        ▼
-
-                  dim_job_family
-```
+## Lưu trữ & Phục vụ dữ liệu song song (Hybrid)
+1. **PostgreSQL DWH Schema (`dwh`):** Lưu trữ Fact và Dimensions phục vụ cho các truy vấn của API. Được tối ưu hóa bằng **Materialized Views** refresh concurrently (`mv_active_jobs_summary`, `mv_kpi_realtime`).
+2. **Delta Lake Marts (S3):** Xuất ngược dữ liệu từ PostgreSQL DWH ra S3 dưới dạng Delta Tables (`mart_bi`, `mart_ml`) thông qua `GoldExporter` phục vụ cho ML training và Power BI.
 
 ---
 
 # 5. Các bảng quan trọng trong Gold Layer
 
-## 5.1. fact_job_posting
-Bảng lưu trữ các giá trị đo lường và khóa ngoại trỏ tới các Dimensions.
+## 5.1. dwh.fct_job_posting
+Bảng Fact chính chứa các khóa ngoại tới Dimensions và các metrics đã chuẩn hóa.
 ```sql
--- Cấu trúc logic (dbt model: fct_job_posting.sql)
+-- fct_job_posting.sql
 SELECT
-    surrogate_job_key,
-    date_key,
-    company_key,
-    source_key,
-    location_key,
-    family_key,
-    active_job_count,
-    salary_min,
-    salary_max,
-    is_expired
-FROM ...
-```
-
-## 5.2. dim_company
-Mô tả doanh nghiệp. Có thể sử dụng **SCD Type 2** để lưu lịch sử thay đổi (ví dụ công ty thay đổi quy mô từ 100 lên 500 nhân viên).
-```sql
--- Cấu trúc logic (dbt model: dim_company.sql)
-SELECT
-    company_key,
+    job_id,
+    source_id,
     company_id,
-    company_name,
-    industry,
-    company_size,
-    effective_from,
-    effective_to,
-    is_current
-FROM ...
+    first_seen_date_key,
+    last_seen_date_key,
+    salary_avg,
+    job_level,
+    work_mode,
+    is_active
+FROM marts.warehouse.fct_job_posting
 ```
 
-## 5.3. Bridge Table (Cho Skills)
-Vì một Job có thể yêu cầu nhiều Kỹ năng (Python, SQL, AWS) và một Kỹ năng thuộc về nhiều Job (Many-to-Many), Star Schema chuẩn không xử lý tốt việc này.
-Giải pháp là sử dụng bảng cầu nối (Bridge Table):
-
-```text
-fact_job_posting  <---(1:N)---> bridge_job_skill <---(N:1)---> dim_skill
+## 5.2. dwh.mv_active_jobs_summary (Materialized View)
+Cache phi chuẩn hóa (denormalized) của tất cả job đang hoạt động kết hợp với thông tin công ty để phục vụ API FastAPI với thời gian phản hồi < 100ms.
+```sql
+CREATE MATERIALIZED VIEW dwh.mv_active_jobs_summary AS
+SELECT f.job_id, f.title_clean, f.salary_avg, c.display_name AS company_name
+FROM dwh.fct_job_posting f
+JOIN dwh.dim_company c ON f.company_key = c.company_key
+WHERE f.is_active = TRUE;
 ```
+
+## 5.3. dbt Semantic Layer (Metrics Layer)
+Định nghĩa tập trung 13 metrics nghiệp vụ quan trọng nhất tại `models/metrics/sem_job_market.yml` để đảm bảo tính nhất quán (Single Source of Truth) giữa các báo cáo.
 
 ---
 
-# 6. Pipeline thực thi (với dbt-duckdb)
+# 6. Pipeline thực thi (với dbt-duckdb & Delta Lake)
 
-Thay vì insert từng dòng vào PostgreSQL, pipeline hoạt động theo mô hình ELT trên file:
-
-1. Airflow gọi lệnh `dbt run`.
-2. dbt biên dịch file SQL thành các lệnh DuckDB.
-3. DuckDB chạy ngầm lệnh:
+Khi Airflow kích hoạt pipeline hàng ngày:
+1. **Extract & Load:** Scrapers cào dữ liệu thô và gọi `BronzeManager` ghi trực tiếp vào Delta Lake trên S3.
+2. **dbt Transform:** dbt Core load extension `delta` và compile các câu lệnh:
    ```sql
-   -- Ví dụ cách DuckDB đọc trực tiếp S3 và ghi S3
-   COPY (
-       SELECT title, salary_min, salary_max
-       FROM read_json_auto('s3://jobit-bronze/.../*.jsonl')
-       WHERE salary_min > 0
-   ) TO 's3://jobit-silver/cleaned_jobs.parquet' (FORMAT PARQUET);
+   -- dbt staging đọc Delta Lake qua delta_scan
+   SELECT * FROM delta_scan('s3://jobit-bronze/bronze/topcv/')
    ```
-4. Hệ thống hoàn tất mà không cần một server database truyền thống nào.
-
----
-
-# 7. Phục vụ dữ liệu (Data Serving)
-
-- **Với Power BI:** Có thể dùng ODBC driver của DuckDB để kết nối trực tiếp vào file Parquet trên Floci S3.
-- **Với FastAPI:** Import thư viện `duckdb`, chạy query SQL thẳng vào `s3://jobit-gold/fact_job_posting.parquet` và trả kết quả JSON về cho Frontend trong vài mili-giây.
+3. **Sync Silver & Gold:** Python Sync Engine đồng bộ delta vào PostgreSQL Silver (CDC Watermark) và chạy stored procedures để cập nhật Gold DWH và refresh các Materialized Views.
+4. **Gold Export:** `GoldExporter` đọc DWH và ghi ra Delta tables trên S3 (`s3://jobit-gold/gold/mart_bi/`).
+5. **Vacuum:** Chạy `VACUUM` dọn dẹp các tệp tin log và tệp tin Parquet thừa của Delta tables trên S3.

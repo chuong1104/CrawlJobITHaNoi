@@ -1,0 +1,240 @@
+# =============================================================================
+# sem_job_market.yml — dbt Semantic Layer: Metrics Layer cho JobITVN
+# =============================================================================
+#
+# Đây là Single Source of Truth cho mọi chỉ số kinh doanh (KPI).
+# Mọi dashboard Power BI, FastAPI endpoint đều phải gọi qua các metrics này
+# thay vì tự viết SQL inline.
+#
+# Tham khảo: https://docs.getdbt.com/docs/build/semantic-models
+# =============================================================================
+
+semantic_models:
+  # ---------------------------------------------------------------------------
+  # Semantic Model: Job Postings (dựa trên fct_job_posting)
+  # ---------------------------------------------------------------------------
+  - name: job_postings
+    description: >
+      Mô hình ngữ nghĩa cho bảng Fact chính — tin tuyển dụng.
+      Là nguồn dữ liệu cho tất cả metrics về thị trường việc làm IT Việt Nam.
+    model: ref('fct_job_posting')
+
+    defaults:
+      agg_time_dimension: first_seen_date_key
+
+    entities:
+      - name: job_id
+        type: primary
+
+    dimensions:
+      - name: job_status
+        type: categorical
+        description: "Trạng thái tin: NEW, ACTIVE, UPDATED, CLOSED, EXPIRED"
+        expr: job_status
+
+      - name: is_active
+        type: categorical
+        description: "TRUE nếu tin đang tuyển"
+        expr: is_active
+
+      - name: job_level
+        type: categorical
+        description: "Cấp độ: INTERN, FRESHER, JUNIOR, MIDDLE, SENIOR, LEAD, MANAGER"
+        expr: job_level
+
+      - name: job_type
+        type: categorical
+        description: "Loại hình: FULL_TIME, PART_TIME, CONTRACT, INTERNSHIP"
+        expr: job_type
+
+      - name: work_mode
+        type: categorical
+        description: "Hình thức: ONSITE, REMOTE, HYBRID"
+        expr: work_mode
+
+      - name: job_family
+        type: categorical
+        description: "Lĩnh vực: DATA_ENGINEER, DATA_ANALYST, BACKEND, FRONTEND..."
+        expr: job_family
+
+      - name: is_intern
+        type: categorical
+        expr: is_intern
+
+      - name: is_fresher
+        type: categorical
+        expr: is_fresher
+
+      - name: first_seen_date_key
+        type: time
+        description: "Ngày tin đăng (YYYYMMDD integer key)"
+        expr: first_seen_date_key
+        type_params:
+          time_granularity: day
+
+    measures:
+      - name: total_jobs
+        description: "Tổng số tin tuyển dụng (kể cả đã đóng)"
+        agg: count
+        expr: job_id
+
+      - name: active_jobs
+        description: "Số tin đang tuyển (is_active = TRUE)"
+        agg: count
+        expr: "CASE WHEN is_active THEN job_id END"
+
+      - name: avg_salary
+        description: "Lương trung bình (VND) của các tin có thông tin lương"
+        agg: average
+        expr: salary_avg
+
+      - name: median_salary
+        description: "Lương median (VND)"
+        agg: percentile
+        expr: salary_avg
+        agg_params:
+          percentile: 0.5
+          use_discrete_percentile: false
+
+      - name: total_companies
+        description: "Số công ty đang tuyển dụng"
+        agg: count_distinct
+        expr: company_id
+
+      - name: salary_disclosure_count
+        description: "Số tin có thông tin lương rõ ràng"
+        agg: count
+        expr: "CASE WHEN salary_avg IS NOT NULL THEN job_id END"
+
+# =============================================================================
+# Metrics definitions — tham chiếu đến semantic model bên trên
+# =============================================================================
+
+metrics:
+  # ---------------------------------------------------------------------------
+  # Nhóm 1: Volume Metrics — Đo lường khối lượng thị trường
+  # ---------------------------------------------------------------------------
+  - name: total_active_jobs
+    label: "📊 Tổng việc làm đang tuyển"
+    description: >
+      Số lượng tin tuyển dụng đang hoạt động (is_active = TRUE).
+      KPI cốt lõi đo quy mô thị trường việc làm IT Việt Nam hiện tại.
+    type: simple
+    type_params:
+      measure: active_jobs
+
+  - name: total_hiring_companies
+    label: "🏢 Số công ty đang tuyển"
+    description: "Số lượng công ty duy nhất đang đăng tin tuyển dụng."
+    type: simple
+    type_params:
+      measure: total_companies
+
+  - name: new_jobs_today
+    label: "🆕 Tin mới hôm nay"
+    description: "Số tin tuyển dụng được đăng trong ngày hôm nay."
+    type: simple
+    type_params:
+      measure: total_jobs
+    filter: |
+      {{ Dimension('job_postings__job_status') }} = 'NEW'
+
+  # ---------------------------------------------------------------------------
+  # Nhóm 2: Salary Metrics — Đo lường về lương
+  # ---------------------------------------------------------------------------
+  - name: market_avg_salary
+    label: "💰 Lương trung bình thị trường"
+    description: >
+      Lương trung bình (VND) của tất cả tin tuyển dụng có thông tin lương.
+      Tính trên salary_avg = (salary_min + salary_max) / 2.
+    type: simple
+    type_params:
+      measure: avg_salary
+
+  - name: de_avg_salary
+    label: "💰 Lương TB Data Engineer"
+    description: "Lương trung bình cho vị trí Data Engineer."
+    type: simple
+    type_params:
+      measure: avg_salary
+    filter: |
+      {{ Dimension('job_postings__job_family') }} = 'DATA_ENGINEER'
+
+  - name: salary_disclosure_count
+    label: "Số tin công khai lương"
+    type: simple
+    type_params:
+      measure: salary_disclosure_count
+
+  - name: salary_disclosure_rate
+    label: "📈 Tỷ lệ tin có lương rõ ràng"
+    description: >
+      Tỷ lệ phần trăm tin tuyển dụng có thông tin lương cụ thể.
+      Chỉ số này phản ánh độ minh bạch của thị trường.
+    type: ratio
+    type_params:
+      numerator: salary_disclosure_count
+      denominator: total_active_jobs
+
+  # ---------------------------------------------------------------------------
+  # Nhóm 3: Segment Metrics — Đo lường theo phân khúc ứng viên
+  # ---------------------------------------------------------------------------
+  - name: fresher_job_count
+    label: "🌱 Số việc cho Fresher"
+    description: "Số tin tuyển dụng phù hợp với Fresher (0-1 năm kinh nghiệm)."
+    type: simple
+    type_params:
+      measure: active_jobs
+    filter: |
+      {{ Dimension('job_postings__is_fresher') }} = TRUE
+        OR {{ Dimension('job_postings__job_level') }} = 'FRESHER'
+
+  - name: fresher_job_ratio
+    label: "🌱 Tỷ lệ việc cho Fresher"
+    description: "Phần trăm việc làm phù hợp với Fresher trên tổng số tin đang tuyển."
+    type: ratio
+    type_params:
+      numerator: fresher_job_count
+      denominator: total_active_jobs
+
+  - name: remote_job_count
+    label: "🏠 Số việc Remote/Hybrid"
+    description: "Số tin cho phép làm việc từ xa (REMOTE hoặc HYBRID)."
+    type: simple
+    type_params:
+      measure: active_jobs
+    filter: |
+      {{ Dimension('job_postings__work_mode') }} IN ('REMOTE', 'HYBRID')
+
+  - name: intern_job_count
+    label: "📚 Số vị trí Intern"
+    description: "Số lượng vị trí thực tập sinh đang mở."
+    type: simple
+    type_params:
+      measure: active_jobs
+    filter: |
+      {{ Dimension('job_postings__is_intern') }} = TRUE
+        OR {{ Dimension('job_postings__job_level') }} = 'INTERN'
+
+  # ---------------------------------------------------------------------------
+  # Nhóm 4: Job Family Metrics — Đo lường theo lĩnh vực
+  # ---------------------------------------------------------------------------
+  - name: data_jobs_count
+    label: "🔢 Tổng việc ngành Data"
+    description: "Tổng số tin tuyển dụng trong các vai trò Data (DE, DA, DS, ML)."
+    type: simple
+    type_params:
+      measure: active_jobs
+    filter: |
+      {{ Dimension('job_postings__job_family') }} IN (
+        'DATA_ENGINEER', 'DATA_ANALYST', 'DATA_SCIENTIST', 'ML_ENGINEER'
+      )
+
+  - name: backend_jobs_count
+    label: "⚙️ Tổng việc Backend"
+    description: "Số tin tuyển dụng Backend Developer."
+    type: simple
+    type_params:
+      measure: active_jobs
+    filter: |
+      {{ Dimension('job_postings__job_family') }} = 'BACKEND'

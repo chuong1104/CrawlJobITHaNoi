@@ -1,4 +1,4 @@
-"""
+﻿"""
 run_scrapers.py — Chạy tất cả scrapers một lần (manual trigger hoặc từ Airflow).
 
 Usage:
@@ -20,15 +20,15 @@ from src.utils import suppress_noisy_loggers, setup_logger, fmt_duration
 
 suppress_noisy_loggers()
 
-from src.extract.job_online.careerlink import CareerLinkScraper
-from src.extract.job_online.careerviet import CareerVietScraper
-from src.extract.job_online.itviec import ITViecScraper
-from src.extract.job_online.job_123 import Job123Scraper
-from src.extract.job_online.joboko import JobokoScraper
-from src.extract.job_online.jobsgo import JobsGoScraper
-from src.extract.job_online.topcv import TopCVScraper
-from src.extract.job_online.vietnamworks import VietnamWorksScraper
-from src.extract.job_online.linkedin import LinkedInScraperV2
+from src.extract.careerlink import CareerLinkScraper
+from src.extract.careerviet import CareerVietScraper
+from src.extract.itviec import ITViecScraper
+from src.extract.job_123 import Job123Scraper
+from src.extract.joboko import JobokoScraper
+from src.extract.jobsgo import JobsGoScraper
+from src.extract.topcv import TopCVScraper
+from src.extract.vietnamworks import VietnamWorksScraper
+from src.extract.linkedin import LinkedInScraperV2
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +238,18 @@ def main() -> int:
         action="store_true",
         help="Hiển thị DEBUG logs (bao gồm traceback chi tiết).",
     )
+    parser.add_argument(
+        "--scrapers",
+        type=str,
+        default=None,
+        help="Danh sách các scrapers cần chạy, cách nhau bằng dấu phẩy (vd: topcv,itviec). Mặc định chạy tất cả.",
+    )
+    parser.add_argument(
+        "--exclude",
+        type=str,
+        default=None,
+        help="Danh sách các scrapers loại trừ, cách nhau bằng dấu phẩy (vd: linkedin).",
+    )
     args = parser.parse_args()
 
     # Xử lý logic run-type
@@ -252,15 +264,42 @@ def main() -> int:
         logging.getLogger().setLevel(logging.DEBUG)
         log.setLevel(logging.DEBUG)
 
-    _print_banner(args.mode, pages, args.workers)
+    # Lọc scrapers theo tham số include/exclude
+    selected_scrapers = RUNNERS
+    if args.scrapers:
+        include_names = [s.strip().lower() for s in args.scrapers.split(",")]
+        selected_scrapers = [r for r in selected_scrapers if r.name in include_names]
+    
+    if args.exclude:
+        exclude_names = [s.strip().lower() for s in args.exclude.split(",")]
+        selected_scrapers = [r for r in selected_scrapers if r.name not in exclude_names]
+
+    if not selected_scrapers:
+        log.error("Không có scraper nào được chọn để chạy.")
+        return 1
+
+    # Thay đổi banner hiển thị số lượng scraper được chọn thực tế
+    width = 60
+    pages_str = str(pages) if pages else "AUTO"
+    print()
+    print(f"{_B}{_C}{'━' * width}{_R}")
+    print(f"{_B}{_C}{'  JOB SCRAPER PIPELINE':^{width}}{_R}")
+    print(f"{_B}{_C}{'━' * width}{_R}")
+    print(f"  {_D}Started   {_R}{_W}{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}{_R}")
+    print(f"  {_D}Mode      {_R}{_Y}{args.mode.upper()}{_R}")
+    print(f"  {_D}Pages     {_R}{_W}{pages_str}{_R}")
+    print(f"  {_D}Workers   {_R}{_W}{args.workers}{_R}")
+    print(f"  {_D}Scrapers  {_R}{_W}{len(selected_scrapers)}{_R}")
+    print(f"{_C}{'─' * width}{_R}")
+    print()
 
     run_fn = _run_links_only if args.mode == "links" else _run_full
     results: list[ScraperResult] = []
-    total = len(RUNNERS)
+    total = len(selected_scrapers)
     t_start = time.monotonic()
 
     # Gán index cho mỗi runner để hiện thị thứ tự
-    indexed_runners = list(enumerate(RUNNERS, start=1))
+    indexed_runners = list(enumerate(selected_scrapers, start=1))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
         future_map = {

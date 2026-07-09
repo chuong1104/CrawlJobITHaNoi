@@ -1,8 +1,17 @@
+x-logging: &default-logging
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 x-airflow-common: &airflow-common
   build: .
+  <<: *default-logging
   env_file:
     - .env
   environment:
+    POSTGRES_HOST: postgres
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
     AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
@@ -10,9 +19,15 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
     AIRFLOW_UID: ${AIRFLOW_UID:-50000}
     AWS_ENDPOINT_URL: http://floci:4566
+    LOCALSTACK_HOST: floci
     AWS_DEFAULT_REGION: us-east-1
     AWS_ACCESS_KEY_ID: test
     AWS_SECRET_ACCESS_KEY: test
+    # Tối ưu bộ nhớ (RAM) và CPU cho môi trường local:
+    AIRFLOW__WEBSERVER__WORKERS: 1
+    AIRFLOW__SCHEDULER__PARSING_PROCESSES: 1
+    AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: 60
+    AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: 60
   volumes:
     - ./dags:/opt/airflow/dags
     - ./logs:/opt/airflow/logs
@@ -21,10 +36,14 @@ x-airflow-common: &airflow-common
     - ./scripts:/opt/airflow/scripts
     - ./data:/opt/airflow/data
     - ./dbt_jobitvn:/opt/airflow/dbt_jobitvn
+    - ./tests:/opt/airflow/tests
+
 
 services:
   postgres:
     image: postgres:17
+    <<: *default-logging
+    command: postgres -c shared_buffers=512MB -c work_mem=32MB -c maintenance_work_mem=128MB -c effective_cache_size=1GB -c random_page_cost=1.1
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -42,11 +61,11 @@ services:
 
   floci:
     image: floci/floci:latest
+    <<: *default-logging
     ports:
       - "4566:4566"
     volumes:
       - ./data/floci:/app/data
-      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
 
   airflow-init:
@@ -54,6 +73,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      floci:
+        condition: service_started
     entrypoint: /bin/bash
     command:
       - -c
@@ -67,6 +88,20 @@ services:
           --email admin@example.com \
           --password admin || true
 
+        echo "Waiting for Floci S3 mock..."
+        python -c "
+        import socket, time
+        for _ in range(30):
+            try:
+                with socket.create_connection(('floci', 4566), timeout=1):
+                    break
+            except OSError:
+                time.sleep(0.5)
+        "
+        echo "Initializing S3 Buckets..."
+        python -m src.storage.init_buckets
+
+
   airflow:
     <<: *airflow-common
     depends_on:
@@ -79,7 +114,32 @@ services:
     command: standalone
     ports:
       - "8080:8080"
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 6G
+        reservations:
+          memory: 1G
+    restart: unless-stopped
+
+  web-api:
+    build: .
+    entrypoint: []
+    command: python -m src.api.main
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://airflow:airflow@postgres:5432/job_scraper_db
+      PYTHONPATH: /opt/airflow
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - .:/opt/airflow
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
   postgres_data:
+

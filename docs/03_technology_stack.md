@@ -7,9 +7,9 @@ JobITVN Data Platform được thiết kế theo nguyên tắc:
 * Đơn giản nhưng tiệm cận với môi trường Enterprise Cloud.
 * Dễ chạy trên máy cá nhân (siêu nhẹ, ít tốn RAM).
 * Có thể bê nguyên xi (drop-in replacement) lên Production Cloud (AWS).
-* Tập trung vào kỹ năng Data Engineering cốt lõi: Data Lakehouse, dbt, Cloud Storage.
+* Tập trung vào các kỹ năng Data Engineering cốt lõi: Data Lakehouse, dbt, Cloud Storage.
 
-Thay vì dùng các công cụ Big Data cồng kềnh (Hadoop, Spark, Trino), dự án chọn stack "Modern Data Stack" hiện đại và thực dụng nhất.
+Thay vì dùng các công cụ Big Data cồng kềnh (Hadoop, Spark, Trino), dự án chọn stack "Modern Data Stack" hiện đại, thực dụng và được tích hợp các chuẩn doanh nghiệp.
 
 ---
 
@@ -19,13 +19,15 @@ Thay vì dùng các công cụ Big Data cồng kềnh (Hadoop, Spark, Trino), d�
 | ---------------------- | --------------------------------- |
 | Crawling               | Scrapy, Playwright, Python (Regex Fallback) |
 | Local Cloud Simulation | Floci (giả lập AWS S3, RDS)       |
-| Data Lake Storage      | Floci S3 (thay thế MinIO/S3 thật) |
-| Compute Engine         | DuckDB                            |
-| Data Transformation    | dbt-core (dbt-duckdb)             |
-| Orchestration          | Apache Airflow                    |
-| Serving API            | FastAPI                           |
-| Dashboard              | Power BI                          |
-| Containerization       | Docker                            |
+| Data Lake Storage      | **Delta Lake (via python-deltalake)** trên Floci S3 |
+| Operational Database (Silver) | **PostgreSQL (3NF ODS)** |
+| Compute Engine         | DuckDB & PostgreSQL |
+| Data Transformation    | dbt-core (dbt-duckdb, dbt-postgres) |
+| Semantic / Metrics Layer| **dbt Semantic Layer (MetricFlow)** |
+| Orchestration          | Apache Airflow |
+| Serving API            | FastAPI (tận dụng **Materialized Views**) |
+| Dashboard              | Power BI (đọc trực tiếp từ Delta Tables & DWH) |
+| Containerization       | Docker |
 
 ---
 
@@ -35,10 +37,7 @@ Thay vì dùng các công cụ Big Data cồng kềnh (Hadoop, Spark, Trino), d�
 
 ### Purpose
 Ngôn ngữ chính cho toàn bộ hệ thống.
-Sử dụng trong: Crawling, Airflow DAG, dbt orchestration, API.
-
-### Why Python
-Python hiện là ngôn ngữ phổ biến nhất trong Data Engineering. Có hệ sinh thái cực mạnh: `boto3` (AWS), `duckdb-python`, `fastapi`, `playwright`.
+Sử dụng trong: Crawling, Airflow DAG, dbt orchestration, API và các module đồng bộ (Sync Engine).
 
 ---
 
@@ -48,105 +47,53 @@ Python hiện là ngôn ngữ phổ biến nhất trong Data Engineering. Có h�
 
 ### Purpose
 Giả lập toàn bộ môi trường đám mây AWS ngay trên máy tính cá nhân.
-
-### Tại sao lại là Floci?
-Floci là một Local Cloud Emulator tương tự LocalStack nhưng cực kỳ tối ưu:
-- **Tốc độ:** Khởi động trong 24ms.
-- **Tiết kiệm:** Chỉ tốn 13MB RAM khi chạy nền (cực kỳ phù hợp cho môi trường local).
-- **Chuẩn xác:** Hỗ trợ giao thức của AWS S3, RDS, IAM hoàn hảo. Code dùng `boto3` cắm vào Floci y hệt như cắm vào AWS thật. Không cần sửa code khi đưa lên Production.
+Floci tương tự LocalStack nhưng cực kỳ tối ưu: khởi động nhanh (24ms) và chỉ tốn 13MB RAM. Code dùng `boto3` cắm vào Floci y hệt như cắm vào AWS thật.
 
 ---
 
-# 4. Storage Layer: The Data Lake
+# 4. Storage Layer: The Delta Data Lake
 
-## Floci S3 (Amazon S3)
+## Delta Lake (Open Table Format) trên Floci S3
 
 ### Purpose
-Lưu trữ toàn bộ dữ liệu của dự án dưới dạng Object Storage thay vì Database truyền thống.
+Lưu trữ dữ liệu thô (Bronze) và dữ liệu marts phân tích (Gold) dưới dạng **Delta Tables** thay vì các file phẳng Parquet đơn thuần.
 
-### Phân lớp dữ liệu (Medallion Architecture)
-* **Bronze Bucket:** Lưu file JSON/HTML gốc thu được từ Crawler.
-* **Silver Bucket:** Lưu file Parquet đã làm sạch.
-* **Gold Bucket:** Lưu file Parquet đã tổng hợp thành mô hình Fact/Dim.
-
-### Tại sao không dùng Database (như PostgreSQL) để lưu Raw Data?
-Lưu file trên S3 rẻ hơn, không giới hạn dung lượng, dễ dàng tái xử lý (reprocessing) và là tiêu chuẩn của kiến trúc Data Lakehouse.
+### Tại sao lại là Delta Lake?
+- **python-deltalake:** Sử dụng binding Python của Rust Delta engine, cho phép đọc/ghi Delta Table trực tiếp mà không cần cài Hadoop/Spark cồng kềnh.
+- **ACID & Time Travel:** Đảm bảo quá trình ghi không bao giờ bị lỗi nửa chừng gây hỏng file, cho phép truy cập lại lịch sử dữ liệu tại bất kỳ thời điểm nào.
+- **Phân lớp dữ liệu (Medallion Architecture):**
+  * **Bronze Bucket:** Lưu dữ liệu raw Delta Table phân vùng theo `_batch_date` và tự động gộp schema (schema evolution).
+  * **Gold Bucket:** Lưu dữ liệu marts Delta Table (`mart_bi`, `mart_ml`) phục vụ trực tiếp cho Power BI và AI/ML training.
 
 ---
 
-# 5. Compute Engine
+# 5. Operational Database Layer (Tầng nghiệp vụ)
 
-## DuckDB
+## PostgreSQL (Silver Layer ODS)
 
 ### Purpose
-Đóng vai trò là cỗ máy phân tích (Analytical Engine) xử lý hàng triệu dòng dữ liệu siêu tốc.
+Lưu trữ dữ liệu chuẩn hóa dạng 3NF để xử lý lịch sử trạng thái của tin tuyển dụng (SCD Type 2) và giải quyết trùng lặp thực thể.
 
-### Tại sao lại là DuckDB?
-DuckDB giống như "SQLite cho Data Analytics".
-* **Không cần cài đặt Server:** Nó chạy in-process, không tiêu tốn RAM duy trì.
-* **Tích hợp S3 tuyệt vời:** DuckDB có thể dùng thư viện `httpfs` để quét và truy vấn trực tiếp hàng loạt file `.parquet` nằm trên Floci S3 mà không cần nạp dữ liệu vào ổ cứng.
-* **Nhanh:** Kiến trúc Columnar (dạng cột) và Vectorized giúp nó chạy các lệnh GROUP BY, JOIN cực kỳ nhanh.
-
-### Why Not Spark / Trino?
-Spark và Trino quá cồng kềnh cho một lượng dữ liệu dưới vài trăm GB. Chạy Spark trên local sẽ tiêu tốn rất nhiều RAM (thường là 8GB+ chỉ để nhàn rỗi), là sự "giết gà dùng dao mổ trâu" (over-engineering).
+### Tại sao cần PostgreSQL ở Silver Layer?
+Kiến trúc Lakehouse phẳng (Parquet files) khó thực thi triệt để các ràng buộc khóa ngoại (Foreign Keys) và logic fuzzy match. PostgreSQL đóng vai trò là ODS để thực hiện:
+- **pg_trgm (Trigram Index):** Tìm kiếm mờ (fuzzy search) để gom nhiều alias của công ty về một ID duy nhất.
+- **SCD Type 2:** Theo dõi lịch sử thay đổi thông tin tin tuyển dụng (lương, deadline).
+- **CDC Watermark:** Tracking tiến độ sync thông qua bảng `silver.cdc_watermarks` giúp giảm tải và phát hiện anomaly.
 
 ---
 
-# 6. Data Transformation
+# 6. Compute Engine & Serving
 
-## dbt (Data Build Tool)
+## DuckDB & PostgreSQL Materialized Views
 
-### Purpose
-Thực hiện toàn bộ logic biến đổi dữ liệu (ETL/ELT) từ Bronze -> Silver -> Gold.
-
-### Tại sao lại là dbt?
-dbt là tiêu chuẩn vàng của Data Engineering hiện tại.
-* **Chỉ cần biết SQL:** Mọi logic làm sạch, parse lương, lọc trùng lặp đều được viết bằng SQL. dbt tự động biên dịch và bảo DuckDB thực thi.
-* **Quản lý Dependencies:** Tự động xây dựng đồ thị DAG để biết bảng nào cần chạy trước, bảng nào chạy sau.
-* **Kiểm thử dữ liệu (Data Testing):** Tích hợp sẵn tính năng test (ví dụ: cột không được NULL, dữ liệu phải là duy nhất).
+- **DuckDB:** analytical engine in-process siêu tốc, tích hợp S3 (qua `httpfs`) để quét trực tiếp các Delta tables mà không cần nạp vào RAM.
+- **PostgreSQL Materialized Views:** Lưu trữ cache tối ưu các câu truy vấn phức tạp của API và Power BI (như `mv_active_jobs_summary`, `mv_kpi_realtime`). Cấu hình refresh concurrently hàng ngày.
 
 ---
 
-# 7. Orchestration
+# 7. Data Transformation & Semantic Layer
 
-## Apache Airflow
+## dbt (Data Build Tool) & dbt Semantic Layer
 
-### Purpose
-Điều phối toàn bộ vòng đời pipeline. Lên lịch chạy hàng ngày.
-
-### Flow chính
-Airflow sẽ kích hoạt Crawler (chạy Python) -> Đợi Crawler ghi file lên S3 -> Kích hoạt lệnh `dbt run` để DuckDB biến đổi dữ liệu -> Hoàn thành.
-
----
-
-# 8. Crawling Layer
-
-## Scrapy & Playwright
-
-### Purpose
-Thu thập dữ liệu từ các website. Scrapy dùng cho các trang tĩnh (TopCV, CareerLink), Playwright dùng cho các trang render bằng JavaScript (Glints, LinkedIn).
-
----
-
-# 9. API & Serving
-
-## FastAPI
-
-### Purpose
-Cung cấp dữ liệu cho Web Portal hoặc ứng dụng bên thứ 3.
-
-### Cách hoạt động
-FastAPI dùng thư viện `duckdb-python` kết nối trực tiếp vào các file Parquet Gold Layer trên S3 (hoặc DuckDB file) để truy vấn và trả về JSON cho Frontend. Rất nhẹ và nhanh.
-
----
-
-# 10. Technology Decisions Summary
-
-| Component            | Selected Tool          | Reason                                          |
-| -------------------- | ---------------------- | ----------------------------------------------- |
-| **Cloud Emulator**   | **Floci**              | Siêu nhẹ (13MB RAM), giả lập AWS chuẩn xác.     |
-| **Data Lake**        | **Floci S3**           | Lưu trữ file gốc (Raw), tương thích AWS S3.     |
-| **Data Warehouse**   | **DuckDB**             | Phân tích file trực tiếp siêu nhanh, ko cần Server|
-| **Transformation**   | **dbt-core**           | Quản lý SQL logic chuẩn Enterprise.             |
-| **Crawl JS Sites**   | **Playwright**         | Tốt hơn, nhẹ hơn Selenium.                      |
-| **Orchestration**    | **Apache Airflow**     | Tiêu chuẩn của ngành Data.                      |
+- **dbt Core:** Thực hiện transform dữ liệu và quản lý dependencies của các models.
+- **dbt Semantic Layer:** Định nghĩa tập trung các KPI (lương trung bình, tổng job, tỷ lệ fresher) trong file YAML. Đảm bảo tính nhất quán (Single Source of Truth) giữa các dashboard và API.
