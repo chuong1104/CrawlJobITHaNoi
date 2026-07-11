@@ -8,6 +8,7 @@ dbt_jobitvn:
       extensions:
         - parquet
         - httpfs
+        - aws
         - delta    # Đọc Delta Lake tables trực tiếp từ S3 bằng delta_scan()
       settings:
         s3_endpoint: "{{ env_var('AWS_ENDPOINT_URL', 'localhost:4566') | replace('http://', '') }}"
