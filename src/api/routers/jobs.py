@@ -89,7 +89,21 @@ async def get_jobs(
                         ELSE 'Hà Nội' 
                     END
                 ) as location_clean, 
-                COALESCE(js.experience_raw, 'Không yêu cầu') as experience_raw, 
+                CASE 
+                    WHEN f.experience_min_years IS NULL AND f.experience_max_years IS NULL THEN 
+                        COALESCE(
+                            (regexp_match(LOWER(js.experience_raw), '(\d+\s*[-–]\s*\d+\s*(?:năm|year))'))[1],
+                            (regexp_match(LOWER(js.experience_raw), '(trên\s*\d+\s*năm)'))[1],
+                            (regexp_match(LOWER(js.experience_raw), '(dưới\s*\d+\s*năm)'))[1],
+                            (regexp_match(LOWER(js.experience_raw), '(\d+\s*năm)'))[1],
+                            'Không yêu cầu'
+                        )
+                    WHEN f.experience_min_years = 0 AND (f.experience_max_years IS NULL OR f.experience_max_years = 0 OR f.experience_max_years = 1) THEN 'Không yêu cầu'
+                    WHEN f.experience_min_years > 0 AND (f.experience_max_years IS NULL OR f.experience_max_years > 20) THEN f.experience_min_years::text || ' năm'
+                    WHEN f.experience_min_years IS NULL OR f.experience_min_years = 0 AND f.experience_max_years > 0 THEN 'Dưới ' || f.experience_max_years::text || ' năm'
+                    WHEN f.experience_min_years = f.experience_max_years THEN f.experience_min_years::text || ' năm'
+                    ELSE f.experience_min_years::text || ' - ' || f.experience_max_years::text || ' năm'
+                END as experience_raw,
                 j.created_at as scraped_at, 
                 f.canonical_url,
                 f.job_title,

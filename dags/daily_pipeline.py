@@ -278,6 +278,37 @@ with DAG(
         doc_md="Cập nhật Gold schema trên Postgres cho Web Portal và PowerBI.",
     )
 
+    # ── Task 4.6: Export Gold to Delta (S3) ──────────────────────────────────
+    def _export_gold_marts(**kwargs):
+        """
+        Export các Data Mart (BI & ML) từ PostgreSQL ra định dạng Delta Lake 
+        lên S3 (Floci) để lưu trữ Data Lake lâu dài và dùng cho Machine Learning.
+        """
+        import sys
+        sys.path.insert(0, "/opt/airflow")
+        import warnings
+        warnings.simplefilter(action='ignore', category=UserWarning)
+        
+        from src.gold.gold_exporter import GoldExporter
+        exporter = GoldExporter()
+        exporter.connect()
+        try:
+            # Stored Procedures đã được chạy ở task sync_postgres_gold,
+            # nên ở đây chỉ cần export ra Delta/S3
+            exporter.export_mart_bi()
+            exporter.export_mart_ml()
+        finally:
+            exporter.close()
+        
+        return {"status": "success"}
+
+    export_gold_marts = PythonOperator(
+        task_id="export_gold_marts",
+        python_callable=_export_gold_marts,
+        execution_timeout=timedelta(minutes=30),
+        doc_md="Export bảng Data Mart ra Delta Lake S3 (Floci).",
+    )
+
     # ── Task 5: Vacuum Delta Tables ─────────────────────────────────────────
     def _vacuum_delta_tables(**kwargs):
         """
@@ -348,8 +379,8 @@ with DAG(
     start >> crawl_all_sources >> run_dbt_staging
     
     # Phân nhánh song song (Tiết kiệm thời gian)
-    run_dbt_staging >> sync_silver_layer >> sync_postgres_gold
+    run_dbt_staging >> sync_silver_layer >> sync_postgres_gold >> export_gold_marts
     run_dbt_staging >> run_dbt_gold
     run_dbt_staging >> archive_bronze_data
     
-    [sync_postgres_gold, run_dbt_gold] >> vacuum_delta_tables >> end
+    [export_gold_marts, run_dbt_gold] >> vacuum_delta_tables >> end

@@ -1,11 +1,13 @@
 import os
 import re
 import logging
+import shutil
 from datetime import datetime, timedelta
 import duckdb
 from botocore.config import Config
 
 from src.storage.s3_client import S3ClientWrapper
+from src.config import DATA_BRONZE_DIR
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -130,8 +132,33 @@ def archive_old_bronze_partitions(days_to_keep=RETENTION_DAYS):
                 
                 logger.info(f"Đã xóa {len(objects_to_delete)} file thô gốc trong {p}")
                 
+            # 4. Xóa luôn file JSONL cache trên Local Disk (để tránh phình ổ cứng)
+            _purge_local_jsonl(p)
+                
         except Exception as e:
             logger.error(f"Lỗi khi xử lý partition {p}: {e}")
+
+def _purge_local_jsonl(partition_path: str):
+    """
+    Xóa thư mục cache JSONL trên local disk ứng với partition_path.
+    Ví dụ: partition_path = 'topcv/year=2024/month=05/day=01/'
+    Sẽ chuyển thành -> data/bronze/topcv/2024-05-01 và xóa toàn bộ.
+    """
+    match = re.search(r'([^/]+)/year=(\d{4})/month=(\d{2})/day=(\d{2})/?', partition_path)
+    if not match:
+        return
+        
+    source = match.group(1)
+    y, m, d = match.group(2), match.group(3), match.group(4)
+    local_date_str = f"{y}-{m}-{d}"
+    
+    local_dir = DATA_BRONZE_DIR / source / local_date_str
+    if local_dir.exists() and local_dir.is_dir():
+        try:
+            shutil.rmtree(local_dir)
+            logger.info(f"Đã dọn dẹp Local Cache JSONL cũ: {local_dir}")
+        except Exception as e:
+            logger.warning(f"Không thể xóa thư mục local {local_dir}: {e}")
 
 if __name__ == "__main__":
     archive_old_bronze_partitions(days_to_keep=RETENTION_DAYS)

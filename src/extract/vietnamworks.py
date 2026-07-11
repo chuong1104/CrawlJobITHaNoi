@@ -24,7 +24,7 @@ class VietnamWorksScraper(BaseScraper):
     def __init__(self, start_url: str | None = None, **kwargs) -> None:
         kwargs.setdefault("delay_range", (8.0, 15.0))
         kwargs.setdefault("max_retries", 5)
-        kwargs.setdefault("use_playwright", False)
+        kwargs.setdefault("use_playwright", True)
         super().__init__(**kwargs)
         # Giữ nguyên query string (l=24) — không split("?")
         self.start_url = start_url or self.DEFAULT_START_URL

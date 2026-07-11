@@ -303,28 +303,45 @@ class DeltaLakeManager:
             layer:  "bronze" hoặc "gold"
         """
         dl = self._dl()
+        from src.config import DATA_BRONZE_DIR, DATA_GOLD_DIR
 
         if layer == "bronze":
             table_path = f"s3://{self.BRONZE_BUCKET}/bronze/{source}"
+            local_path = DATA_BRONZE_DIR / source / "_delta"
         else:
             table_path = f"s3://{self.GOLD_BUCKET}/gold/{source}"
+            local_path = DATA_GOLD_DIR / source
 
         try:
-            dt = dl.DeltaTable(table_path, storage_options=self._storage_opts)
-            deleted_files = dt.vacuum(
+            # 1. Vacuum trên S3 (Floci)
+            dt_s3 = dl.DeltaTable(table_path, storage_options=self._storage_opts)
+            deleted_s3 = dt_s3.vacuum(
                 retention_hours=self.VACUUM_RETENTION_HOURS,
                 dry_run=False,
                 enforce_retention_duration=False,  # Cho phép retention < 7 ngày trong dev
             )
             msg = (
-                f"[{layer}/{source}] VACUUM complete: "
-                f"deleted {len(deleted_files)} stale files "
-                f"(retention={self.VACUUM_RETENTION_HOURS}h)"
+                f"[{layer}/{source}] S3 VACUUM: "
+                f"deleted {len(deleted_s3)} stale files."
             )
+            
+            # 2. Vacuum trên Local Disk (Cache)
+            if local_path.exists():
+                try:
+                    dt_local = dl.DeltaTable(str(local_path))
+                    deleted_local = dt_local.vacuum(
+                        retention_hours=self.VACUUM_RETENTION_HOURS,
+                        dry_run=False,
+                        enforce_retention_duration=False,
+                    )
+                    msg += f" | Local VACUUM: deleted {len(deleted_local)} files."
+                except Exception as local_exc:
+                    logger.warning(f"[{layer}/{source}] Local VACUUM skipped: {local_exc}")
+
             logger.info(msg)
             return msg
         except Exception as exc:
-            logger.warning(f"[{layer}/{source}] VACUUM skipped (table may not exist yet): {exc}")
+            logger.warning(f"[{layer}/{source}] S3 VACUUM skipped (table may not exist yet): {exc}")
             return f"VACUUM skipped: {exc}"
 
     def vacuum_all_bronze(self, sources: list[str]) -> dict[str, str]:

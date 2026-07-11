@@ -47,7 +47,7 @@ JOIN dwh.dim_source ds ON f.source_key = ds.source_key
 JOIN dwh.dim_job_attributes a ON f.attribute_key = a.attribute_key
 JOIN silver.jobs jb ON f.silver_job_id = jb.job_id
 JOIN silver.job_snapshots js ON f.silver_snapshot_id = js.snapshot_id
-WHERE f.is_active = TRUE
+WHERE f.is_active = TRUE AND js.is_current = TRUE
 WITH DATA;
 
 COMMENT ON MATERIALIZED VIEW dwh.mv_active_jobs_summary IS 
