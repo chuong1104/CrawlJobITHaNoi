@@ -1,27 +1,38 @@
--- depends_on: {{ ref('fct_job_posting') }}
 {{ config(
     materialized='view'
 ) }}
 
--- Thống kê số lượng việc làm hiện tại theo thành phố
+-- ============================================================
+-- agg_jobs_by_city.sql — Phân bổ việc làm theo thành phố
+-- Câu hỏi: "Việc làm IT tập trung ở đâu?"
+-- ============================================================
 
-WITH active_jobs AS (
-    SELECT 
-        j.job_id,
-        l.display_name AS city_name,
-        l.region
-    FROM {{ ref('fct_job_posting') }} j
-    JOIN {{ source('silver', 'job_snapshot_locations') }} sl 
-      ON j.snapshot_id = sl.snapshot_id
-    JOIN {{ ref('dim_location') }} l 
-      ON sl.location_id = l.location_id
-    WHERE j.is_active = TRUE
+WITH job_locs AS (
+    SELECT
+        f.job_id,
+        f.job_family,
+        f.has_salary,
+        f.salary_avg,
+        -- Location từ location_code trong fct_job_posting
+        COALESCE(l.display_name, 'Khác / Toàn quốc')   AS city_name,
+        COALESCE(l.region, 'unknown')                    AS region,
+        COALESCE(l.is_remote, FALSE)                     AS is_remote
+    FROM {{ ref('fct_job_posting') }} f
+    LEFT JOIN {{ ref('dim_location') }} l
+        ON LOWER(TRIM(f.location_code)) = LOWER(TRIM(l.location_code))
+    WHERE f.is_active = TRUE
 )
 
-SELECT 
+SELECT
     region,
     city_name,
-    COUNT(DISTINCT job_id) AS active_job_count
-FROM active_jobs
-GROUP BY 1, 2
+    is_remote,
+    COUNT(DISTINCT job_id)                              AS active_job_count,
+    COUNT(DISTINCT CASE WHEN has_salary THEN job_id END) AS jobs_with_salary,
+    ROUND(AVG(CASE WHEN has_salary THEN salary_avg END), 0) AS avg_salary_vnd,
+    -- Top role by city
+    MODE() WITHIN GROUP (ORDER BY job_family)           AS top_job_family,
+    RANK() OVER (ORDER BY COUNT(DISTINCT job_id) DESC)  AS city_rank
+FROM job_locs
+GROUP BY 1, 2, 3
 ORDER BY active_job_count DESC

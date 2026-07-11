@@ -1,15 +1,17 @@
 version: 2
 
-sources:
-  - name: silver
-    description: "Tầng Silver (Operational DB) nằm trong PostgreSQL"
-    schema: silver
-    tables:
-      - name: jobs
-      - name: job_snapshots
-      - name: companies
-      - name: skills
-      - name: locations
-      - name: job_snapshot_skills
-      - name: job_snapshot_locations
-      - name: sources
+# =============================================================================
+# sources.yml — Gold Layer (Warehouse) Sources
+#
+# NOTE: Warehouse models ĐÃ CHUYỂN sang DuckDB-native (không cần PostgreSQL).
+# Các models warehouse đọc từ:
+#   - int_deduped_jobs (via ref())
+#   - int_job_skills_exploded (via ref())
+#   - Seeds: dim_skill_mapping, dim_location_mapping (via ref())
+#
+# File này giữ lại để tham chiếu, nhưng các {{ source('silver', ...) }}
+# đã được xóa khỏi tất cả warehouse models.
+# =============================================================================
+
+# Không có sources PostgreSQL được dùng trong Gold layer nữa.
+# Seeds được truy cập qua {{ ref('dim_skill_mapping') }} và {{ ref('dim_location_mapping') }}

@@ -18,6 +18,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
     AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+    PYTHONPATH: /opt/airflow
     AWS_ENDPOINT_URL: http://floci:4566
     LOCALSTACK_HOST: floci
     AWS_DEFAULT_REGION: us-east-1
@@ -52,6 +53,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./scripts/sql/silver:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
@@ -86,7 +88,10 @@ services:
           --lastname User \
           --role Admin \
           --email admin@example.com \
-          --password admin || true
+          --password admin || \
+        airflow users reset-password \
+          --username admin \
+          --password admin
 
         echo "Waiting for Floci S3 mock..."
         python -c "

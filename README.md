@@ -4,7 +4,7 @@ Hệ thống thu thập, phân tích dữ liệu việc làm từ các trang tuy
 
 ---
 
-## 🚀 Công nghệ sử dụng (The Modern Data Stack v2.1)
+##  Công nghệ sử dụng (The Modern Data Stack v2.1)
 
 | Layer | Công cụ | Vai trò |
 |---|---|---|
@@ -18,7 +18,7 @@ Hệ thống thu thập, phân tích dữ liệu việc làm từ các trang tuy
 
 ---
 
-## 🏗 Kiến trúc Pipeline (Medallion ELT)
+##  Kiến trúc Pipeline (Medallion ELT)
 
 Dữ liệu di chuyển theo chuẩn **Medallion Architecture**, tách biệt hoàn toàn Storage (S3) và Compute (DuckDB/PostgreSQL):
 
@@ -44,7 +44,7 @@ Dữ liệu di chuyển theo chuẩn **Medallion Architecture**, tách biệt ho
 
 ---
 
-## 🌐 Các nguồn dữ liệu đang hỗ trợ
+##  Các nguồn dữ liệu đang hỗ trợ
 
 Hệ thống được thiết kế linh hoạt để đối phó với nhiều cấp độ bảo mật Anti-bot khác nhau:
 

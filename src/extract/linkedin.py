@@ -429,7 +429,7 @@ class LinkedInScraperV2(BaseScraper):
             if reached_bottom:
                 self.logger.info(f"Chạm đáy container. Hiện có {urls_after} jobs.")
                 if urls_after < 25:
-                    self.logger.warning(f"⚠ Chỉ tìm được {urls_after} jobs (kỳ vọng 25). Chờ thêm để đảm bảo không miss job...")
+                    self.logger.warning(f" Chỉ tìm được {urls_after} jobs (kỳ vọng 25). Chờ thêm để đảm bảo không miss job...")
 
                     page.evaluate(f"""() => {{
                         const el = document.querySelector("{job_list_container}");

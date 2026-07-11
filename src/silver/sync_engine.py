@@ -100,7 +100,14 @@ class SilverSyncEngine:
                 logger.info(f"Executing bulk insert of {len(records_to_insert)} records to staging.stg_jobs...")
                 execute_values(cur, insert_query, records_to_insert, page_size=1000)
                 
-                # 3. Chạy DB-side Processing
+                # 3. Create Crawl Session for the batch to satisfy FK constraints
+                cur.execute("""
+                    INSERT INTO silver.crawl_sessions (session_id, run_date, crawl_status)
+                    VALUES (%s, %s, 'RUNNING')
+                    ON CONFLICT DO NOTHING;
+                """, (session_id, batch_date))
+                
+                # 4. Chạy DB-side Processing
                 logger.info("Calling silver.sp_process_staging_batch() for Set-Based UPSERT...")
                 cur.execute("CALL silver.sp_process_staging_batch(%s, %s)", (session_id, batch_date))
                 

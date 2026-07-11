@@ -3,5 +3,5 @@
 ) }}
 
 select 
-    cast(d as date) as date_day
-from generate_series('2024-01-01'::date, '2030-12-31'::date, '1 day'::interval) d
+    cast(generate_series as date) as date_day
+from generate_series('2024-01-01'::date, '2030-12-31'::date, INTERVAL 1 DAY)

@@ -235,7 +235,7 @@ COMMENT ON COLUMN silver.company_aliases.confidence IS '0-100: độ tin cậy m
 CREATE TABLE IF NOT EXISTS silver.crawl_sessions (
     session_id      BIGSERIAL    PRIMARY KEY,
     run_date        DATE         NOT NULL,
-    source_id       SMALLINT     NOT NULL REFERENCES silver.sources(source_id),
+    source_id       SMALLINT     REFERENCES silver.sources(source_id),
     crawl_status    crawl_status_enum NOT NULL DEFAULT 'RUNNING',
     total_scraped   INT          NOT NULL DEFAULT 0,
     total_validated INT          NOT NULL DEFAULT 0,
@@ -251,8 +251,7 @@ CREATE TABLE IF NOT EXISTS silver.crawl_sessions (
     completed_at    TIMESTAMPTZ,
     duration_seconds INT GENERATED ALWAYS AS (
         EXTRACT(EPOCH FROM (completed_at - started_at))::INT
-    ) STORED,
-    UNIQUE (run_date, source_id)
+    ) STORED
 );
 
 COMMENT ON TABLE silver.crawl_sessions IS 'Mỗi phiên crawl 1 source trong 1 ngày. Guard cho logic auto-close.';
@@ -380,7 +379,7 @@ COMMENT ON COLUMN silver.job_snapshots.is_current IS 'TRUE = phiên bản đang 
 COMMENT ON COLUMN silver.job_snapshots.valid_to IS 'NULL = đang hiệu lực. Timestamp khi bị đóng bởi bản ghi mới hơn.';
 
 -- ---------------------------------------------------------------------------
--- 10. silver.job_snapshot_skills — N:N bridge: snapshot ↔ skill
+-- 10. silver.job_snapshot_skills — N:N bridge: snapshot  skill
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS silver.job_snapshot_skills (
     id              BIGSERIAL    PRIMARY KEY,
@@ -395,7 +394,7 @@ CREATE TABLE IF NOT EXISTS silver.job_snapshot_skills (
 COMMENT ON TABLE silver.job_snapshot_skills IS 'Liên kết N:N giữa snapshot và danh mục kỹ năng';
 
 -- ---------------------------------------------------------------------------
--- 11. silver.job_snapshot_locations — N:N bridge: snapshot ↔ location
+-- 11. silver.job_snapshot_locations — N:N bridge: snapshot  location
 --     Xử lý tình huống 5: tin có nhiều địa điểm làm việc
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS silver.job_snapshot_locations (
@@ -407,7 +406,7 @@ CREATE TABLE IF NOT EXISTS silver.job_snapshot_locations (
     UNIQUE (snapshot_id, location_id)
 );
 
-COMMENT ON TABLE silver.job_snapshot_locations IS 'Liên kết N:N: snapshot ↔ địa điểm. 1 tin có thể có nhiều địa điểm.';
+COMMENT ON TABLE silver.job_snapshot_locations IS 'Liên kết N:N: snapshot  địa điểm. 1 tin có thể có nhiều địa điểm.';
 
 -- ---------------------------------------------------------------------------
 -- 12. silver.job_events — Event Log (Audit Trail)

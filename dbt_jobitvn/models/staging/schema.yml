@@ -2,7 +2,7 @@ version: 2
 
 models:
   - name: stg_topcv
-    description: "Staging model cho TopCV"
+    description: "Staging model cho TopCV — đọc trực tiếp từ bronze JSONL files"
     columns:
       - name: source_job_id
         tests:
@@ -13,17 +13,33 @@ models:
       - name: company_raw
         tests:
           - not_null
-      - name: identity_hash
-        tests:
-          - not_null
+      - name: industry_raw
+        description: "Industry/category label từ nguồn (KHÔNG phải skills)"
+      - name: job_type_raw
+        description: "Loại hình công việc: Toàn thời gian, Bán thời gian..."
+      - name: job_position_raw
+        description: "Cấp bậc công việc: Nhân viên, Quản lý..."
+      - name: requirements_text
+        description: "Nội dung yêu cầu (dùng cho keyword skill extraction)"
+      - name: experience_min_years
+        description: "Số năm kinh nghiệm tối thiểu (parsed từ experience_raw)"
+      - name: experience_max_years
+        description: "Số năm kinh nghiệm tối đa (parsed từ experience_raw)"
+      - name: salary_avg
+        description: "Lương trung bình (min+max)/2"
       - name: salary_min
         tests:
           - assert_salary_min_le_max:
-              severity: warn
-              
+              config:
+                severity: warn
+      - name: identity_hash
+        tests:
+          - not_null
+      - name: skills_raw
+        description: "Luôn NULL tại staging — skills được extract tại int_job_skills_exploded"
+
   - name: stg_itviec
     description: "Staging model cho ITviec"
-    # Các test tương tự
 
   - name: stg_vietnamworks
     description: "Staging model cho VietnamWorks"
@@ -37,12 +53,8 @@ models:
   - name: stg_123job
     description: "Staging model cho 123job"
 
-  - name: stg_careerlink
-    description: "Staging model cho CareerLink"
-
   - name: stg_careerviet
     description: "Staging model cho CareerViet"
 
   - name: stg_joboko
     description: "Staging model cho JobOko"
-

@@ -554,6 +554,6 @@ if __name__ == "__main__":
         with open(output_file, "w", encoding="utf-8") as f:
             for job in jobs:
                 f.write(json.dumps(job, ensure_ascii=False) + "\n")
-        print(f"\n✅ Cào thành công {len(jobs)} jobs. Đã lưu toàn bộ dữ liệu vào file {output_file}")
+        print(f"\n Cào thành công {len(jobs)} jobs. Đã lưu toàn bộ dữ liệu vào file {output_file}")
     else:
         print("Không có data nào được cào.")

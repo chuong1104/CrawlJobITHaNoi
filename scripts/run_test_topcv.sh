@@ -14,7 +14,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 
 # Kiểm tra xem Docker có đang chạy không
 if ! docker compose ps | grep -q airflow; then
-    echo "⚠️ Lỗi: Airflow container chưa chạy. Bạn cần chạy 'docker compose up -d' trước."
+    echo " Lỗi: Airflow container chưa chạy. Bạn cần chạy 'docker compose up -d' trước."
     exit 1
 fi
 
@@ -23,7 +23,7 @@ echo ""
 echo "0. Khởi tạo S3 buckets nếu chưa có..."
 docker compose exec airflow awslocal s3 mb s3://jobit-bronze 2>/dev/null || true
 docker compose exec airflow awslocal s3 mb s3://jobit-gold 2>/dev/null || true
-echo "   ✔ s3://jobit-bronze  s3://jobit-gold  sẵn sàng."
+echo "    s3://jobit-bronze  s3://jobit-gold  sẵn sàng."
 
 # ── Bước 1: Cào TopCV và lưu vào Bronze (S3 + Local) ───────────────────────
 echo ""
@@ -36,7 +36,7 @@ echo "1. [SKIPPED] Cào dữ liệu TopCV (đã có sẵn trong Bronze)..."
 # scraper = TopCVScraper()
 # print('   Đang cào dữ liệu (giới hạn 1 trang để test)...')
 # jobs = scraper.run(pages=1)
-# print(f'   ✔ Đã cào và lưu {len(jobs)} jobs vào Bronze.')
+# print(f'    Đã cào và lưu {len(jobs)} jobs vào Bronze.')
 # \"
 # "
 
@@ -93,5 +93,5 @@ docker compose exec airflow awslocal s3 ls s3://jobit-gold --recursive
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  ✔ Hoàn tất luồng kiểm thử TopCV!"
+echo "   Hoàn tất luồng kiểm thử TopCV!"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

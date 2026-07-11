@@ -26,11 +26,9 @@ models:
       +enabled: true
       warehouse:
         +materialized: table
-        +schema: dwh
         +tags: ["gold", "kimball", "daily"]
       mart_bi:
-        +materialized: incremental        # Nâng từ view lên incremental table
-        +schema: mart_bi
+        +materialized: table
         +tags: ["gold", "bi", "power_bi", "daily"]
 
 

@@ -115,7 +115,7 @@ metrics:
   # Nhóm 1: Volume Metrics — Đo lường khối lượng thị trường
   # ---------------------------------------------------------------------------
   - name: total_active_jobs
-    label: "📊 Tổng việc làm đang tuyển"
+    label: " Tổng việc làm đang tuyển"
     description: >
       Số lượng tin tuyển dụng đang hoạt động (is_active = TRUE).
       KPI cốt lõi đo quy mô thị trường việc làm IT Việt Nam hiện tại.
@@ -124,14 +124,14 @@ metrics:
       measure: active_jobs
 
   - name: total_hiring_companies
-    label: "🏢 Số công ty đang tuyển"
+    label: " Số công ty đang tuyển"
     description: "Số lượng công ty duy nhất đang đăng tin tuyển dụng."
     type: simple
     type_params:
       measure: total_companies
 
   - name: new_jobs_today
-    label: "🆕 Tin mới hôm nay"
+    label: " Tin mới hôm nay"
     description: "Số tin tuyển dụng được đăng trong ngày hôm nay."
     type: simple
     type_params:
@@ -143,7 +143,7 @@ metrics:
   # Nhóm 2: Salary Metrics — Đo lường về lương
   # ---------------------------------------------------------------------------
   - name: market_avg_salary
-    label: "💰 Lương trung bình thị trường"
+    label: " Lương trung bình thị trường"
     description: >
       Lương trung bình (VND) của tất cả tin tuyển dụng có thông tin lương.
       Tính trên salary_avg = (salary_min + salary_max) / 2.
@@ -152,7 +152,7 @@ metrics:
       measure: avg_salary
 
   - name: de_avg_salary
-    label: "💰 Lương TB Data Engineer"
+    label: " Lương TB Data Engineer"
     description: "Lương trung bình cho vị trí Data Engineer."
     type: simple
     type_params:
@@ -167,7 +167,7 @@ metrics:
       measure: salary_disclosure_count
 
   - name: salary_disclosure_rate
-    label: "📈 Tỷ lệ tin có lương rõ ràng"
+    label: " Tỷ lệ tin có lương rõ ràng"
     description: >
       Tỷ lệ phần trăm tin tuyển dụng có thông tin lương cụ thể.
       Chỉ số này phản ánh độ minh bạch của thị trường.
@@ -180,7 +180,7 @@ metrics:
   # Nhóm 3: Segment Metrics — Đo lường theo phân khúc ứng viên
   # ---------------------------------------------------------------------------
   - name: fresher_job_count
-    label: "🌱 Số việc cho Fresher"
+    label: " Số việc cho Fresher"
     description: "Số tin tuyển dụng phù hợp với Fresher (0-1 năm kinh nghiệm)."
     type: simple
     type_params:
@@ -190,7 +190,7 @@ metrics:
         OR {{ Dimension('job_postings__job_level') }} = 'FRESHER'
 
   - name: fresher_job_ratio
-    label: "🌱 Tỷ lệ việc cho Fresher"
+    label: " Tỷ lệ việc cho Fresher"
     description: "Phần trăm việc làm phù hợp với Fresher trên tổng số tin đang tuyển."
     type: ratio
     type_params:
@@ -198,7 +198,7 @@ metrics:
       denominator: total_active_jobs
 
   - name: remote_job_count
-    label: "🏠 Số việc Remote/Hybrid"
+    label: " Số việc Remote/Hybrid"
     description: "Số tin cho phép làm việc từ xa (REMOTE hoặc HYBRID)."
     type: simple
     type_params:
@@ -207,7 +207,7 @@ metrics:
       {{ Dimension('job_postings__work_mode') }} IN ('REMOTE', 'HYBRID')
 
   - name: intern_job_count
-    label: "📚 Số vị trí Intern"
+    label: " Số vị trí Intern"
     description: "Số lượng vị trí thực tập sinh đang mở."
     type: simple
     type_params:
@@ -220,7 +220,7 @@ metrics:
   # Nhóm 4: Job Family Metrics — Đo lường theo lĩnh vực
   # ---------------------------------------------------------------------------
   - name: data_jobs_count
-    label: "🔢 Tổng việc ngành Data"
+    label: " Tổng việc ngành Data"
     description: "Tổng số tin tuyển dụng trong các vai trò Data (DE, DA, DS, ML)."
     type: simple
     type_params:
@@ -231,7 +231,7 @@ metrics:
       )
 
   - name: backend_jobs_count
-    label: "⚙️ Tổng việc Backend"
+    label: " Tổng việc Backend"
     description: "Số tin tuyển dụng Backend Developer."
     type: simple
     type_params:

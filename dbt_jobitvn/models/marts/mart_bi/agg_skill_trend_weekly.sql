@@ -14,21 +14,21 @@
 -- =============================================================================
 
 WITH weekly_skill_demand AS (
-    -- Số lần kỹ năng xuất hiện trong tuần, theo rolling window
     SELECT
-        sk.skill_code,
-        sk.display_name                         AS skill_name,
-        sk.skill_category,
+        fs.normalized_skill                             AS skill_code,
+        COALESCE(ds.display_name, UPPER(SUBSTRING(REPLACE(fs.normalized_skill, '_', ' '), 1, 1)) || LOWER(SUBSTRING(REPLACE(fs.normalized_skill, '_', ' '), 2)))
+                                                        AS skill_name,
+        fs.skill_category,
         -- Tuần bắt đầu (Monday)
         DATE_TRUNC('week', CAST(
             SUBSTR(CAST(f.first_seen_date_key AS VARCHAR), 1, 4) || '-' ||
             SUBSTR(CAST(f.first_seen_date_key AS VARCHAR), 5, 2) || '-' ||
             SUBSTR(CAST(f.first_seen_date_key AS VARCHAR), 7, 2)
         AS DATE))                               AS week_start_date,
-        COUNT(DISTINCT fjs.job_id)              AS job_count
-    FROM {{ ref('fct_job_skill') }}             fjs
-    JOIN {{ ref('fct_job_posting') }}           f   ON fjs.job_id = f.job_id
-    JOIN {{ source('silver', 'skills') }}       sk  ON fjs.skill_id = sk.skill_id
+        COUNT(DISTINCT fs.job_id)              AS job_count
+    FROM {{ ref('fct_job_skill') }}             fs
+    JOIN {{ ref('fct_job_posting') }}           f   ON fs.job_id = f.job_id
+    LEFT JOIN {{ ref('dim_skill') }}            ds  ON fs.normalized_skill = ds.skill_code
     WHERE f.is_active = TRUE
     GROUP BY 1, 2, 3, 4
 ),

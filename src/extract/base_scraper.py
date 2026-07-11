@@ -1,4 +1,4 @@
-﻿"""
+"""
 BaseScraper — Class cha chứa toàn bộ hạ tầng chung cho mọi scraper:
 
   Phase 1 · collect_urls(pages)         → list[str]  (raw, có thể trùng)
@@ -396,9 +396,9 @@ class BaseScraper(abc.ABC):
             elapsed_b = time.time() - t_batch
             self.logger.info(
                 f"[Phase 3] [Batch {idx}/{total_batches}] "
-                f"✔ {ok}/{len(batch)} parsed  "
+                f" {ok}/{len(batch)} parsed  "
                 f"({fmt_duration(elapsed_b)})"
-                + (f"  ✖ {fail} failed" if fail else "")
+                + (f"   {fail} failed" if fail else "")
             )
 
             if idx < total_batches:
@@ -410,7 +410,10 @@ class BaseScraper(abc.ABC):
     def _process_batch(self, batch: list[str]) -> list[dict]:
         """Fetch và parse song song một batch URL."""
         results: list[dict] = []
-        with ThreadPoolExecutor(max_workers=len(batch)) as executor:
+        # Tối ưu hóa: Tăng giới hạn lên 5 luồng. Đây là "điểm ngọt" (sweet spot)
+        # giúp chạy nhanh nhất có thể mà vẫn an toàn, không làm crash libcurl.
+        max_threads = min(len(batch), 5)
+        with ThreadPoolExecutor(max_workers=max_threads) as executor:
             future_to_url = {
                 executor.submit(self._fetch_and_parse, url): url for url in batch
             }
@@ -531,7 +534,7 @@ class BaseScraper(abc.ABC):
             else:
                 self.logger.warning("Bronze process/upload completed with some errors.")
 
-            self.logger.info(f"Finished — {len(results)} jobs processed  ⏱ {fmt_duration(elapsed)}")
+            self.logger.info(f"Finished — {len(results)} jobs processed   {fmt_duration(elapsed)}")
             return results
             
         except Exception as exc:

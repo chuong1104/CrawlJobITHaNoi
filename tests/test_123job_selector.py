@@ -51,6 +51,6 @@ for key, val in result.items():
 REQUIRED = ["title", "company", "location", "salary", "deadline", "job_description"]
 missing = [f for f in REQUIRED if not result.get("job_" + f.replace("job_", "")) and not result.get(f)]
 if missing:
-    print(f"\n⚠  Các field có thể bị None: {missing}")
+    print(f"\n  Các field có thể bị None: {missing}")
 else:
-    print("\n✅ Tất cả field quan trọng đều có dữ liệu!")
+    print("\n Tất cả field quan trọng đều có dữ liệu!")

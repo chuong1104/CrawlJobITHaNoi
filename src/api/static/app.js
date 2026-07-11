@@ -78,8 +78,19 @@ async function loadSummaryStats() {
         const stats = await res.json();
 
         document.getElementById("stat-total-jobs").innerText = stats.total_jobs.toLocaleString();
+        if (document.getElementById("trend-total-jobs")) {
+            document.getElementById("trend-total-jobs").innerText = `+${(stats.new_jobs_7d || 0).toLocaleString()} job mới tuần này`;
+        }
+        
         document.getElementById("stat-avg-salary").innerText = stats.average_salary_million;
+        if (document.getElementById("trend-avg-salary")) {
+            document.getElementById("trend-avg-salary").innerText = `Trung vị: ${stats.median_salary || 0} Tr | Công khai: ${stats.disclosure_rate || 0}%`;
+        }
+
         document.getElementById("stat-total-companies").innerText = stats.total_companies.toLocaleString();
+        if (document.getElementById("trend-total-companies")) {
+            document.getElementById("trend-total-companies").innerText = `Fresher: ${(stats.fresher_jobs || 0).toLocaleString()} | Remote: ${(stats.remote_jobs || 0).toLocaleString()}`;
+        }
 
         const skillsContainer = document.getElementById("stat-top-skills");
         skillsContainer.innerHTML = stats.top_skills.map(s => 

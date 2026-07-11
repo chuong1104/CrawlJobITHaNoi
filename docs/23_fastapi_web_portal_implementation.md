@@ -792,9 +792,9 @@ function renderJobsList(jobs) {
             <h4>${job.title_clean}</h4>
             <div class="company">${job.company_display_name}</div>
             <div class="job-details-row">
-                <span>📍 ${job.location_clean || 'Hà Nội'}</span>
-                <span>💰 ${job.salary_raw || 'Thỏa thuận'}</span>
-                <span>💼 ${job.experience_raw || 'Không yêu cầu'}</span>
+                <span> ${job.location_clean || 'Hà Nội'}</span>
+                <span> ${job.salary_raw || 'Thỏa thuận'}</span>
+                <span> ${job.experience_raw || 'Không yêu cầu'}</span>
             </div>
         </div>
     `).join("");

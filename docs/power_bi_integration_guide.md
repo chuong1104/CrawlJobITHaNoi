@@ -4,7 +4,7 @@ Tài liệu này hướng dẫn từng bước chi tiết từ kết nối cơ s
 
 ---
 
-## 🔌 BƯỚC 1: KẾT NỐI POWER BI TỚI POSTGRESQL (REAL-TIME)
+##  BƯỚC 1: KẾT NỐI POWER BI TỚI POSTGRESQL (REAL-TIME)
 
 Để báo cáo luôn cập nhật số liệu mới nhất khi hệ thống cào dữ liệu chạy hàng ngày, chúng ta sử dụng phương thức kết nối trực tiếp **DirectQuery** tới PostgreSQL.
 
@@ -28,7 +28,7 @@ Tài liệu này hướng dẫn từng bước chi tiết từ kết nối cơ s
 
 ---
 
-## 📐 BƯỚC 2: CHỌN BẢNG VÀ THIẾT LẬP MÔ HÌNH HÌNH SAO (STAR SCHEMA)
+##  BƯỚC 2: CHỌN BẢNG VÀ THIẾT LẬP MÔ HÌNH HÌNH SAO (STAR SCHEMA)
 
 Mô hình hình sao là chuẩn mực thiết kế giúp tối ưu hiệu năng tính toán DAX và liên kết các biểu đồ trong Power BI.
 
@@ -72,7 +72,7 @@ Di chuyển sang tab **Model View** (biểu tượng sơ đồ kết nối ở t
 
 ---
 
-## 🧮 BƯỚC 3: VIẾT CÔNG THỨC ĐO LƯỜNG DAX (MEASURES)
+##  BƯỚC 3: VIẾT CÔNG THỨC ĐO LƯỜNG DAX (MEASURES)
 
 > [!IMPORTANT]
 > **Lưu ý về tên bảng trong Power BI:** Khi import từ PostgreSQL, Power BI sẽ tự động đặt tên bảng là `'dwh fct_job_posting'` (chứa cả tên schema `dwh` và dấu cách). Do đó, trong công thức DAX bạn phải bọc tên bảng trong dấu nháy đơn: `'dwh fct_job_posting'`.
@@ -124,7 +124,7 @@ DIVIDE(
 
 ---
 
-## 🎨 BƯỚC 4: THIẾT KẾ CÁC BIỂU ĐỒ TRỰC QUAN (VISUALS)
+##  BƯỚC 4: THIẾT KẾ CÁC BIỂU ĐỒ TRỰC QUAN (VISUALS)
 
 Chuyển sang tab **Report View** (Thanh công cụ bên trái trên cùng) để kéo thả thiết kế giao diện Dashboard phân tích.
 
@@ -162,7 +162,7 @@ Chuyển sang tab **Report View** (Thanh công cụ bên trái trên cùng) đ�
 
 ---
 
-## 🔄 BƯỚC 5: THIẾT LẬP TỰ ĐỘNG LÀM MỚI BÁO CÁO (PAGE REFRESH)
+##  BƯỚC 5: THIẾT LẬP TỰ ĐỘNG LÀM MỚI BÁO CÁO (PAGE REFRESH)
 
 Vì chúng ta sử dụng cổng PostgreSQL qua docker local ở chế độ DirectQuery, bạn có thể thiết lập cho Power BI tự động cập nhật biểu đồ liên tục:
 1. Nhấp chuột vào một khoảng trống bất kỳ trên trang báo cáo để bỏ chọn các biểu đồ.

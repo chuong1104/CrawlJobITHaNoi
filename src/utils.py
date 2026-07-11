@@ -32,10 +32,10 @@ class _ColorFormatter(logging.Formatter):
 
     LEVEL_STYLES = {
         logging.DEBUG:    (_DIM,    "·"),
-        logging.INFO:     (_CYAN,   "ℹ"),
-        logging.WARNING:  (_YELLOW, "⚠"),
-        logging.ERROR:    (_RED,    "✖"),
-        logging.CRITICAL: (_RED + _BOLD, "✖✖"),
+        logging.INFO:     (_CYAN,   ""),
+        logging.WARNING:  (_YELLOW, ""),
+        logging.ERROR:    (_RED,    ""),
+        logging.CRITICAL: (_RED + _BOLD, ""),
     }
 
     def format(self, record: logging.LogRecord) -> str:

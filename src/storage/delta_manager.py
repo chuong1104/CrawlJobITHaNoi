@@ -145,13 +145,13 @@ class DeltaLakeManager:
                     s3_key = f"bronze/{source}/{relative_path.as_posix()}"
                     s3_client.upload_file(file_path, self.BRONZE_BUCKET, s3_key)
             logger.info(
-                f"[{source}] ✅ Wrote {len(enriched)} records to Delta "
+                f"[{source}]  Wrote {len(enriched)} records to Delta "
                 f"(batch_date={batch_date}, mode={mode}) and synced to S3"
             )
             return len(enriched)
 
         except Exception as exc:
-            logger.error(f"[{source}] ❌ Failed to write Delta Bronze: {exc}")
+            logger.error(f"[{source}]  Failed to write Delta Bronze: {exc}")
             raise
 
     # ------------------------------------------------------------------
@@ -204,7 +204,7 @@ class DeltaLakeManager:
             return df
 
         except Exception as exc:
-            logger.error(f"[{source}] ❌ Failed to read Delta Bronze: {exc}")
+            logger.error(f"[{source}]  Failed to read Delta Bronze: {exc}")
             raise
 
     # ------------------------------------------------------------------
@@ -281,13 +281,13 @@ class DeltaLakeManager:
                     s3_key = f"gold/{relative_path.as_posix()}"
                     s3_client.upload_file(file_path, self.GOLD_BUCKET, s3_key)
             logger.info(
-                f"[Gold] ✅ Wrote {len(df)} rows to Delta "
+                f"[Gold]  Wrote {len(df)} rows to Delta "
                 f"s3://{self.GOLD_BUCKET}/gold/{mart_name}/{table_name} (via local write and sync)"
             )
             return len(df)
 
         except Exception as exc:
-            logger.error(f"[Gold] ❌ Failed to write {mart_name}/{table_name}: {exc}")
+            logger.error(f"[Gold]  Failed to write {mart_name}/{table_name}: {exc}")
             raise
 
     # ------------------------------------------------------------------

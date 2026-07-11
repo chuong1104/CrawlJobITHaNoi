@@ -131,9 +131,9 @@ class CDCWatermarkTracker:
                     f"Consecutive low runs: {new_consecutive}."
                 )
                 level = "CRITICAL" if new_consecutive >= self.CRITICAL_CONSECUTIVE else "WARNING"
-                logger.warning(f"[{source_code}] 🚨 {level} ANOMALY: {anomaly_reason}")
+                logger.warning(f"[{source_code}]  {level} ANOMALY: {anomaly_reason}")
             else:
-                logger.info(f"[{source_code}] ✅ Watermark updated: {now.isoformat()} ({new_records} records)")
+                logger.info(f"[{source_code}]  Watermark updated: {now.isoformat()} ({new_records} records)")
 
             # UPSERT watermark
             cur.execute(

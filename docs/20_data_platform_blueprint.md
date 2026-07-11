@@ -763,7 +763,7 @@ job_scraper_de_project/
 
 ## 13. Checklist triển khai theo phase
 
-### 🔴 Phase 1 — Foundation (Tuần 1–2)
+###  Phase 1 — Foundation (Tuần 1–2)
 
 - [ ] Implement Pydantic validation trong tất cả scrapers (reject queue)
 - [ ] Content hash trong mỗi record
@@ -773,7 +773,7 @@ job_scraper_de_project/
 - [ ] dbt staging models cho tất cả 11 sources (incremental)
 - [ ] Airflow DAG với TaskGroups và failure alerts
 
-### 🟡 Phase 2 — Warehouse (Tuần 3–4)
+###  Phase 2 — Warehouse (Tuần 3–4)
 
 - [ ] `dim_date` (static table, generate once)
 - [ ] `dim_skill` + seed `dim_skill_mapping.csv`
@@ -784,7 +784,7 @@ job_scraper_de_project/
 - [ ] `int_changed_jobs` (pseudo-CDC)
 - [ ] Bảng `pipeline_run_metrics` + task `collect_metrics` trong Airflow
 
-### 🟠 Phase 3 — Marts & Serving (Tuần 5–6)
+###  Phase 3 — Marts & Serving (Tuần 5–6)
 
 - [ ] `mart_bi`: agg_demand_trend, agg_salary_by_skill, kpi_daily
 - [ ] `mart_api`: latest_jobs_flat (denormalized), company_profiles, skill_stats
@@ -794,7 +794,7 @@ job_scraper_de_project/
 - [ ] Power BI connection + Operational dashboard
 - [ ] Power BI Pipeline Health dashboard (từ `pipeline_run_metrics`)
 
-### 🟢 Phase 4 — AI/ML & Search (Tuần 7–10)
+###  Phase 4 — AI/ML & Search (Tuần 7–10)
 
 - [ ] Elasticsearch docker service + index creation + bulk load
 - [ ] Airflow task: sync Gold → ES (incremental)

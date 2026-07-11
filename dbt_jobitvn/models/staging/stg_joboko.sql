@@ -4,30 +4,33 @@
 
 WITH source_data AS (
     SELECT * 
-    FROM read_json_auto('data/bronze/joboko/**/*_valid.jsonl', format='newline_delimited', ignore_errors=true)
+    FROM read_json_auto('/opt/airflow/data/bronze/joboko/**/*_valid.jsonl', format='newline_delimited', ignore_errors=true)
     WHERE job_id IS NOT NULL
 ),
 parsed AS (
     SELECT
-        'joboko' AS source_code,
-        CAST(job_id AS VARCHAR) AS source_job_id,
-        job_url AS canonical_url,
-        title AS title_raw,
-        {{ clean_title('title') }} AS title_clean,
-        company AS company_raw,
-        job_description AS description,
-        location AS location_raw,
+        'joboko'                             AS source_code,
+        CAST(job_id AS VARCHAR)             AS source_job_id,
+        CAST(job_url AS VARCHAR)                             AS canonical_url,
+        CAST(title AS VARCHAR)              AS title_raw,
+        {{ clean_title('title') }}           AS title_clean,
+        CAST(company AS VARCHAR)                             AS company_raw,
+        CAST(job_description AS VARCHAR)                     AS description,
+        CAST(requirements AS VARCHAR)                        AS requirements_text,
+        CAST(location AS VARCHAR)                            AS location_raw,
         {{ normalize_location('location') }} AS location_normalized,
-        salary AS salary_raw,
+        CAST(job_industry AS VARCHAR)                         AS industry_raw,
+        CAST(job_type AS VARCHAR)                             AS job_type_raw,
+        CAST(job_position AS VARCHAR)                         AS job_position_raw,
+        CAST(salary AS VARCHAR)                               AS salary_raw,
         {{ parse_salary('salary') }},
-        experience_level AS experience_raw,
-        NULL::SMALLINT AS experience_min_years,
-        NULL::SMALLINT AS experience_max_years,
-        STRING_TO_ARRAY(job_industry, ',') AS skills_raw,
-        job_deadline AS deadline_raw,
-        NULL::DATE AS posted_date_raw,
+        CAST(experience_level AS VARCHAR)                     AS experience_raw,
+        {{ parse_experience('experience_level', 'job_description') }},
+        NULL::VARCHAR[]                      AS skills_raw,
+        CAST(job_deadline AS VARCHAR)                         AS deadline_raw,
+        NULL::DATE                           AS posted_date_raw,
         TRY_CAST(scraped_at AS TIMESTAMPTZ) AS scraped_at,
-        CURRENT_DATE AS batch_date
+        CURRENT_DATE                         AS batch_date
     FROM source_data
 )
 SELECT 

@@ -20,12 +20,13 @@ dbt_jobitvn:
     pg_dev:
       type: postgres
       threads: 4
-      host: "{{ env_var('DB_HOST', 'localhost') }}"
+      host: "{{ env_var('DB_HOST', 'postgres') }}"
       port: 5432
       user: "{{ env_var('DB_USER', 'postgres') }}"
       pass: "{{ env_var('DB_PASSWORD', 'postgres') }}"
       dbname: "{{ env_var('DB_NAME', 'jobitvn') }}"
       schema: dwh
       
-  # Đặt mặc định là postgres cho tầng Gold, khi chạy Bronze->Silver có thể override bằng cờ --target duckdb_dev
-  target: pg_dev
+  # Default: DuckDB (toàn bộ pipeline từ Bronze → Gold đều chạy trên DuckDB)
+  # Để dùng PostgreSQL cho Gold: dbt run --target pg_dev
+  target: duckdb_dev

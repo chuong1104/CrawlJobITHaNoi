@@ -2,60 +2,124 @@ version: 2
 
 models:
   - name: dim_date
-    description: "Bảng kích thước ngày tháng (Time Dimension)"
+    description: "Bảng kích thước ngày tháng (Time Dimension) — Spine từ 2024-2030"
     columns:
       - name: date_key
+        description: "Integer key YYYYMMDD"
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_source
+    description: "Danh sách các nguồn dữ liệu tuyển dụng (TopCV, ITviec, ...)"
+    columns:
+      - name: source_id
+        tests:
+          - unique
+          - not_null
+      - name: source_code
         tests:
           - unique
           - not_null
 
   - name: dim_company
-    description: "Bảng kích thước công ty"
+    description: "Danh sách công ty tuyển dụng đã chuẩn hóa tên (SCD Type 1)"
     columns:
       - name: company_id
+        description: "MD5 hash của normalized_name"
         tests:
           - unique
           - not_null
+      - name: normalized_name
+        tests:
+          - not_null
+      - name: job_count
+        description: "Số tin tuyển dụng đã thấy — dùng để xếp hạng"
 
   - name: dim_skill
-    description: "Bảng kích thước kỹ năng IT"
+    description: "Danh sách kỹ năng IT chuẩn hóa từ seed dim_skill_mapping"
     columns:
       - name: skill_id
+        description: "MD5 hash của skill_code"
+        tests:
+          - unique
+          - not_null
+      - name: skill_code
         tests:
           - unique
           - not_null
 
   - name: dim_location
-    description: "Bảng kích thước địa điểm"
+    description: "Danh sách địa điểm từ seed dim_location_mapping"
     columns:
       - name: location_id
+        description: "MD5 hash của location_code"
         tests:
           - unique
           - not_null
 
   - name: fct_job_posting
-    description: "Bảng sự kiện trọng tâm: Tin tuyển dụng ở trạng thái mới nhất"
+    description: |
+      Bảng Fact trung tâm: Tin tuyển dụng ở trạng thái mới nhất.
+      Source: int_deduped_jobs (DuckDB-native, không cần PostgreSQL).
+      Mỗi job_id là unique.
+
+      Các cột phân loại (degenerate dimensions):
+      - job_family: phân loại vai trò (DATA_ENGINEER, BACKEND, FRONTEND...)
+      - work_mode: REMOTE / HYBRID / ONSITE
+      - is_fresher, is_intern: flags phân khúc
     columns:
       - name: job_id
+        description: "Surrogate key — MD5(source_code || '::' || source_job_id)"
         tests:
           - unique
           - not_null
       - name: company_id
+        description: "FK → dim_company.company_id"
         tests:
-          - relationships:
-              to: ref('dim_company')
-              field: company_id
+          - not_null
+      - name: source_code
+        description: "FK → dim_source.source_code"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['topcv','itviec','vietnamworks','jobsgo','linkedin','123job','careerviet','joboko']
+      - name: salary_avg
+        description: "Lương trung bình (min+max)/2 — tính từ text"
+      - name: job_family
+        description: "Phân loại vai trò từ title"
+        tests:
+          - not_null
+      - name: work_mode
+        description: "REMOTE / HYBRID / ONSITE"
+        tests:
+          - accepted_values:
+              values: ['REMOTE','HYBRID','ONSITE']
 
   - name: fct_job_skill
-    description: "Bảng nối (Bridge) giữa Job và Skill"
+    description: |
+      Bridge table: Kết nối job  skill.
+      Skills được trích xuất từ text (requirements + description) bằng keyword matching.
+    columns:
+      - name: job_id
+        description: "FK → fct_job_posting.job_id"
+        tests:
+          - not_null
+      - name: skill_id
+        description: "FK → dim_skill.skill_id"
+        tests:
+          - not_null
+      - name: normalized_skill
+        description: "Skill code đã chuẩn hóa"
+        tests:
+          - not_null
+
+  - name: bridge_job_location
+    description: "Bridge table: Kết nối job  location"
     columns:
       - name: job_id
         tests:
-          - relationships:
-              to: ref('fct_job_posting')
-              field: job_id
-      - name: skill_id
+          - not_null
+      - name: location_id
         tests:
-          - relationships:
-              to: ref('dim_skill')
-              field: skill_id
+          - not_null

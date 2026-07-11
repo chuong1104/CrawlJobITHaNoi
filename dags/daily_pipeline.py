@@ -16,6 +16,7 @@ Schedule: 6h sáng mỗi ngày (Asia/Ho_Chi_Minh)
 import json
 import subprocess
 import time
+import os
 from datetime import datetime, timedelta
 
 from airflow import DAG
@@ -45,13 +46,12 @@ def _crawl_and_push_metrics(**kwargs) -> dict:
     ti = kwargs["ti"]
     t0 = time.monotonic()
 
-    import os
     cmd = [
         "python",
         "/opt/airflow/scripts/run_scrapers.py",
         "--mode", "full",
-        "--workers", "4",
-        "--run-type", "incremental",
+        "--workers", "3",
+        "--run-type", "auto",
     ]
     
     # Tự động loại trừ linkedin nếu chưa có session cookie
@@ -59,16 +59,30 @@ def _crawl_and_push_metrics(**kwargs) -> dict:
        not os.path.exists("/opt/airflow/data/linkedin_session.json"):  # legacy fallback
         cmd.extend(["--exclude", "linkedin"])
 
-    result = subprocess.run(
+    # Chạy lệnh bằng Popen để log được stream trực tiếp lên giao diện Airflow
+    process = subprocess.Popen(
         cmd,
-        capture_output=True,
+        cwd="/opt/airflow",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
-        timeout=3600,  # 60 minutes
+        bufsize=1,
     )
 
+    stdout_lines = []
+    # Stream logs live
+    for line in process.stdout:
+        print(line, end="")
+        stdout_lines.append(line)
+
+    try:
+        returncode = process.wait(timeout=18000) # 5 tiếng timeout
+    except subprocess.TimeoutExpired:
+        process.kill()
+        raise RuntimeError("run_scrapers.py bị treo (hang) và quá thời gian chờ 5 tiếng.")
+
     duration = time.monotonic() - t0
-    stdout   = result.stdout or ""
-    stderr   = result.stderr or ""
+    stdout = "".join(stdout_lines)
 
     # ----- Parse metrics từ stdout -----
     success_count = 0
@@ -77,11 +91,11 @@ def _crawl_and_push_metrics(**kwargs) -> dict:
     scraper_rows: list[dict] = []
 
     for line in stdout.splitlines():
-        if "✔ ok" in line or "✖ fail" in line:
+        if " ok" in line or " fail" in line:
             parts = line.split()
             try:
                 name    = next((p for p in parts if p.isalpha() and len(p) > 2), "")
-                status  = "ok" if "✔ ok" in line else "fail"
+                status  = "ok" if " ok" in line else "fail"
                 records = int(next((p for p in parts if p.isdigit()), 0))
                 scraper_rows.append({"name": name, "status": status, "records": records})
                 if status == "ok":
@@ -98,7 +112,7 @@ def _crawl_and_push_metrics(**kwargs) -> dict:
         "failed_count":   failed_count,
         "total_records":  total_records,
         "duration_secs":  round(duration, 1),
-        "exit_code":      result.returncode,
+        "exit_code":      returncode,
         "scrapers":       scraper_rows,
     }
 
@@ -110,15 +124,9 @@ def _crawl_and_push_metrics(**kwargs) -> dict:
     print(json.dumps(metrics, indent=2, ensure_ascii=False))
     print("=" * 60)
 
-    if stderr:
-        print("\n--- STDERR (errors only) ---")
-        for ln in stderr.splitlines():
-            if any(k in ln.upper() for k in ("ERROR", "CRITICAL", "EXCEPTION", "TRACEBACK")):
-                print(ln)
-
-    if result.returncode != 0:
+    if returncode != 0:
         raise RuntimeError(
-            f"run_scrapers.py exited with code {result.returncode}. "
+            f"run_scrapers.py exited with code {returncode}. "
             f"failed_count={failed_count}"
         )
 
@@ -140,7 +148,7 @@ with DAG(
     crawl_all_sources = PythonOperator(
         task_id="crawl_all_sources",
         python_callable=_crawl_and_push_metrics,
-        execution_timeout=timedelta(minutes=70),
+        execution_timeout=timedelta(hours=5, minutes=15),
         doc_md="Chạy toàn bộ scrapers song song và push metrics lên XCom",
     )
 
@@ -220,54 +228,57 @@ with DAG(
         doc_md="Sync dữ liệu từ DuckDB Staging vào PostgreSQL Silver (chống N+1, cập nhật SCD, TF-IDF dedup).",
     )
 
-    # ── Task 4: Run Gold DWH ───────────────────────
-    def _run_gold_dwh(**kwargs):
-        """Gọi SQL Procedures để đồng bộ Silver sang Gold DWH"""
+    # ── Task 4: Run Gold DWH (DuckDB Native) ───────────────────────
+    run_dbt_gold = BashOperator(
+        task_id="run_dbt_gold",
+        bash_command=(
+            "dbt run --select marts "
+            "--target duckdb_dev "
+            "--profiles-dir /opt/airflow/dbt_jobitvn "
+            "--project-dir /opt/airflow/dbt_jobitvn"
+        ),
+        doc_md="Build Gold DWH và Marts bằng DuckDB siêu tốc.",
+    )
+
+    # ── Task 4.5: Sync PostgreSQL Gold (Web API & Power BI) ────────
+    def _sync_postgres_gold(**kwargs):
+        """
+        Khởi chạy các Stored Procedures để đồng bộ và cập nhật 
+        Gold DWH & Materialized Views trên PostgreSQL phục vụ Web API và PowerBI.
+        """
         import sys
         sys.path.insert(0, "/opt/airflow")
+        import psycopg2
+        from src.config import DBConfig
         
-        from src.gold.gold_exporter import GoldExporter
-        exporter = GoldExporter(output_dir="/opt/airflow/data")
-        exporter.connect()
+        conn = psycopg2.connect(DBConfig.dsn())
+        conn.autocommit = True
         try:
-            exporter.run_dwh_sync()
+            with conn.cursor() as cur:
+                print("Syncing dimensions...")
+                cur.execute("CALL dwh.sp_sync_dim_source();")
+                cur.execute("CALL dwh.sp_sync_dim_company();")
+                print("Syncing facts...")
+                cur.execute("CALL dwh.sp_sync_fact_job_posting();")
+                print("Syncing skills and locations...")
+                cur.execute("CALL dwh.sp_sync_skills_and_locations();")
+                print("Refreshing materialized views for Web API and Power BI...")
+                cur.execute("CALL dwh.sp_refresh_mart_api();")
+                cur.execute("CALL dwh.sp_refresh_all_materialized_views();")
+                print("PostgreSQL Gold Sync completed successfully.")
         finally:
-            exporter.close()
+            conn.close()
             
         return {"status": "success"}
 
-    run_gold_dwh = PythonOperator(
-        task_id="run_gold_dwh",
-        python_callable=_run_gold_dwh,
-        execution_timeout=timedelta(minutes=15),
-        doc_md="Nạp dữ liệu vào schema DWH và refresh materialized view API.",
+    sync_postgres_gold = PythonOperator(
+        task_id="sync_postgres_gold",
+        python_callable=_sync_postgres_gold,
+        execution_timeout=timedelta(minutes=30),
+        doc_md="Cập nhật Gold schema trên Postgres cho Web Portal và PowerBI.",
     )
 
-    # ── Task 5: Export Gold Marts ───────────────────────
-    def _export_gold_marts(**kwargs):
-        """Export Data Marts sang Parquet"""
-        import sys
-        sys.path.insert(0, "/opt/airflow")
-        
-        from src.gold.gold_exporter import GoldExporter
-        exporter = GoldExporter(output_dir="/opt/airflow/data")
-        exporter.connect()
-        try:
-            exporter.export_mart_bi()
-            exporter.export_mart_ml()
-        finally:
-            exporter.close()
-            
-        return {"status": "success"}
-
-    export_gold_marts = PythonOperator(
-        task_id="export_gold_marts",
-        python_callable=_export_gold_marts,
-        execution_timeout=timedelta(minutes=20),
-        doc_md="Dùng DuckDB đọc DWH và ghi ra Parquet cho Power BI và AI/ML.",
-    )
-
-    # ── Task 6: Vacuum Delta Tables ─────────────────────────────────────────
+    # ── Task 5: Vacuum Delta Tables ─────────────────────────────────────────
     def _vacuum_delta_tables(**kwargs):
         """
         Chạy VACUUM trên tất cả Delta Tables — xóa file cũ quá retention period.
@@ -284,7 +295,7 @@ with DAG(
         # Vacuum tất cả Bronze sources
         bronze_sources = [
             "topcv", "itviec", "linkedin", "vietnamworks",
-            "jobsgo", "123job", "careerviet", "careerlink", "joboko"
+            "jobsgo", "123job", "careerviet", "joboko"
         ]
         bronze_results = manager.vacuum_all_bronze(bronze_sources)
         
@@ -306,11 +317,11 @@ with DAG(
         task_id="vacuum_delta_tables",
         python_callable=_vacuum_delta_tables,
         execution_timeout=timedelta(minutes=15),
-        trigger_rule="all_done",  # Chạy dù export_gold_marts có fail không
+        trigger_rule="all_done",
         doc_md="VACUUM tất cả Delta Tables Bronze + Gold. Xóa file cũ > 7 ngày.",
     )
 
-    # ── Task 7: Archive Bronze Data (v2.1) ──────────────────────────────────
+    # ── Task 6: Archive Bronze Data (v2.1) ──────────────────────────────────
     def _archive_bronze_data(**kwargs):
         """
         Gom nén dữ liệu JSON thô cũ hơn 30 ngày thành Parquet ZSTD
@@ -327,20 +338,18 @@ with DAG(
         task_id="archive_bronze_data",
         python_callable=_archive_bronze_data,
         execution_timeout=timedelta(minutes=20),
-        trigger_rule="all_done",  # Chạy dù export_gold_marts có fail không
+        trigger_rule="all_done",
         doc_md="Gom nén JSON thô Bronze cũ > 30 ngày thành Parquet ZSTD trên S3.",
     )
 
     end = EmptyOperator(task_id="end")
 
     # Workflow dependencies (DAG Graph)
-    (
-        start
-        >> crawl_all_sources
-        >> run_dbt_staging
-        >> sync_silver_layer
-        >> run_gold_dwh
-        >> export_gold_marts
-        >> [vacuum_delta_tables, archive_bronze_data]
-        >> end
-    )
+    start >> crawl_all_sources >> run_dbt_staging
+    
+    # Phân nhánh song song (Tiết kiệm thời gian)
+    run_dbt_staging >> sync_silver_layer >> sync_postgres_gold
+    run_dbt_staging >> run_dbt_gold
+    run_dbt_staging >> archive_bronze_data
+    
+    [sync_postgres_gold, run_dbt_gold] >> vacuum_delta_tables >> end

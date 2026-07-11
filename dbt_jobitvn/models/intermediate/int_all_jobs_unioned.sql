@@ -18,8 +18,6 @@ WITH unioned AS (
     UNION ALL
     SELECT * FROM {{ ref('stg_123job') }}
     UNION ALL
-    SELECT * FROM {{ ref('stg_careerlink') }}
-    UNION ALL
     SELECT * FROM {{ ref('stg_careerviet') }}
     UNION ALL
     SELECT * FROM {{ ref('stg_joboko') }}
@@ -33,11 +31,16 @@ SELECT
     title_clean,
     company_raw,
     description,
+    requirements_text,
     location_raw,
     location_normalized,
+    industry_raw,
+    job_type_raw,
+    job_position_raw,
     salary_raw,
     salary_min,
     salary_max,
+    salary_avg,
     salary_is_negotiable,
     salary_currency,
     experience_raw,

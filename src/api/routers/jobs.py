@@ -7,7 +7,8 @@ router = APIRouter(prefix="/api/v1", tags=["Jobs"])
 @router.get("/stats/summary")
 async def get_summary_stats():
     """Lấy dữ liệu thống kê nhanh (KPIs) hiển thị trên đỉnh Dashboard"""
-    query_kpis = "SELECT total_active_jobs, market_avg_salary_vnd, total_hiring_companies FROM dwh.mv_kpi_realtime LIMIT 1;"
+    query_kpis = "SELECT total_active_jobs, market_avg_salary_vnd, total_hiring_companies, market_median_salary_vnd, salary_disclosure_rate_pct, total_fresher_jobs, total_remote_hybrid_jobs FROM dwh.mv_kpi_realtime LIMIT 1;"
+    query_new_jobs = "SELECT COUNT(*) FROM silver.jobs WHERE first_seen_at >= CURRENT_DATE - INTERVAL '7 days';"
     query_skills = """
         SELECT word as name, count(*) as count 
         FROM (
@@ -22,16 +23,26 @@ async def get_summary_stats():
     
     async with db.pool.acquire() as conn:
         kpi_row = await conn.fetchrow(query_kpis)
+        new_jobs_count = await conn.fetchval(query_new_jobs)
+        
         if kpi_row and kpi_row["total_active_jobs"] > 0:
             total_jobs = kpi_row["total_active_jobs"]
             total_companies = kpi_row["total_hiring_companies"]
             avg_salary = round(float(kpi_row["market_avg_salary_vnd"] or 0) / 1000000.0, 1) if kpi_row["market_avg_salary_vnd"] else 0.0
+            median_salary = round(float(kpi_row["market_median_salary_vnd"] or 0) / 1000000.0, 1) if kpi_row["market_median_salary_vnd"] else 0.0
+            disclosure_rate = round(float(kpi_row["salary_disclosure_rate_pct"] or 0), 1)
+            fresher_jobs = kpi_row["total_fresher_jobs"] or 0
+            remote_jobs = kpi_row["total_remote_hybrid_jobs"] or 0
         else:
             # Fallback to direct queries
             total_jobs = await conn.fetchval("SELECT COUNT(*) FROM mart_api.latest_jobs_flat;")
             total_companies = await conn.fetchval("SELECT COUNT(DISTINCT company_name) FROM mart_api.latest_jobs_flat;")
             avg_salary_val = await conn.fetchval("SELECT AVG(salary_midpoint_vnd) FROM dwh.fct_job_posting WHERE is_active = TRUE AND has_salary = TRUE;")
             avg_salary = round(float(avg_salary_val or 0) / 1000000.0, 1) if avg_salary_val else 0.0
+            median_salary = 0.0
+            disclosure_rate = 0.0
+            fresher_jobs = 0
+            remote_jobs = 0
 
         skills_rows = await conn.fetch(query_skills)
         top_skills = [{"name": r["name"].upper(), "count": r["count"]} for r in skills_rows]
@@ -40,7 +51,12 @@ async def get_summary_stats():
         "total_jobs": total_jobs,
         "average_salary_million": avg_salary,
         "total_companies": total_companies,
-        "top_skills": top_skills
+        "top_skills": top_skills,
+        "new_jobs_7d": new_jobs_count or 0,
+        "median_salary": median_salary,
+        "disclosure_rate": disclosure_rate,
+        "fresher_jobs": fresher_jobs,
+        "remote_jobs": remote_jobs
     }
 
 @router.get("/jobs")

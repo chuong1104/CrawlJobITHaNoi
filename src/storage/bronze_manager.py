@@ -87,6 +87,18 @@ class BronzeManager:
         rejected_file = source_dir / f"{source}_{date_str}_rejected.jsonl"
         meta_file     = source_dir / f"{source}_{date_str}_meta.json"
 
+        # Create dummy file if scraper returned nothing, to prevent dbt IO Error
+        if not valid_file.exists():
+            dummy_record = {
+                "job_id": None, "job_url": None, "title": None, "company": None,
+                "job_description": None, "requirements": None, "location": None,
+                "job_industry": None, "job_type": None, "job_position": None,
+                "salary": None, "experience_level": None, "job_deadline": None,
+                "scraped_at": None, "source": source
+            }
+            with valid_file.open("w", encoding="utf-8") as f:
+                f.write(json.dumps(dummy_record, ensure_ascii=False) + "\n")
+
         # --- Metadata ---
         file_size    = valid_file.stat().st_size if valid_file.exists() else 0
         md5_checksum = self._calculate_md5(valid_file) if valid_file.exists() else ""

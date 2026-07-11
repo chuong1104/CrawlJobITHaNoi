@@ -106,14 +106,14 @@ def main():
                 parsed_job = scraper._fetch_job_detail_with_playwright(url, context)
                 if parsed_job:
                     jobs.append(parsed_job)
-                    print(f"  ✔  title    = {parsed_job.get('title')}")
+                    print(f"    title    = {parsed_job.get('title')}")
                     print(f"     company  = {parsed_job.get('company')}")
                     print(f"     salary   = {parsed_job.get('salary')}")
                     print(f"     location = {parsed_job.get('location')}")
                 else:
-                    print("  ✖  parse failed (None returned)")
+                    print("    parse failed (None returned)")
             except Exception as exc:
-                print(f"  ✖  error: {type(exc).__name__}: {exc}")
+                print(f"    error: {type(exc).__name__}: {exc}")
 
         browser.close()
 

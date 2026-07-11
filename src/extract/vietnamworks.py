@@ -1,4 +1,4 @@
-﻿import os
+import os
 import random
 import re
 import time
@@ -24,7 +24,7 @@ class VietnamWorksScraper(BaseScraper):
     def __init__(self, start_url: str | None = None, **kwargs) -> None:
         kwargs.setdefault("delay_range", (8.0, 15.0))
         kwargs.setdefault("max_retries", 5)
-        kwargs.setdefault("use_playwright", "stealth")
+        kwargs.setdefault("use_playwright", False)
         super().__init__(**kwargs)
         # Giữ nguyên query string (l=24) — không split("?")
         self.start_url = start_url or self.DEFAULT_START_URL
@@ -42,9 +42,10 @@ class VietnamWorksScraper(BaseScraper):
         page = Adaptor(html)
         is_list_page = bool(page.css("div.sc-cdaca-d h2 a, a[href*='-jv'], a[href*='viec-lam-']"))
         if not is_list_page:
-            title_el = page.css("h1[name='title']")
-            company_el = page.css("a[name='label'][href*='/nha-tuyen-dung/']")
-            if not title_el and not company_el:
+            # VietnamWorks đã đổi sang giao diện SPA, không còn <h1> khi load lần đầu
+            # Chúng ta dùng thẻ <title> để xác thực thay vì h1
+            title_text = page.css("title::text").get()
+            if not title_text or ("tuyển" not in title_text.lower() and "việc làm" not in title_text.lower() and "vietnamworks" not in title_text.lower()):
                 return False
                 
         return True

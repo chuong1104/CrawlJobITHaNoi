@@ -1,4 +1,4 @@
-﻿"""
+"""
 run_scrapers.py — Chạy tất cả scrapers một lần (manual trigger hoặc từ Airflow).
 
 Usage:
@@ -8,6 +8,7 @@ Usage:
 import argparse
 import concurrent.futures
 import logging
+import os
 import sys
 import time
 import traceback
@@ -15,12 +16,17 @@ from dataclasses import dataclass, field
 from typing import Callable
 from datetime import datetime
 
+# Đảm bảo thư mục gốc của project luôn có trong sys.path
+# khi script được chạy trực tiếp (e.g., python /opt/airflow/scripts/run_scrapers.py)
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 # Suppress noisy 3rd-party logs trước khi import bất cứ thứ gì khác
 from src.utils import suppress_noisy_loggers, setup_logger, fmt_duration
 
 suppress_noisy_loggers()
 
-from src.extract.careerlink import CareerLinkScraper
 from src.extract.careerviet import CareerVietScraper
 from src.extract.itviec import ITViecScraper
 from src.extract.job_123 import Job123Scraper
@@ -67,7 +73,6 @@ class ScraperResult:
 
 
 RUNNERS: list[RunnerItem] = [
-    RunnerItem("careerlink",   CareerLinkScraper),
     RunnerItem("careerviet",   CareerVietScraper),
     RunnerItem("itviec",       ITViecScraper),
     RunnerItem("job123",       Job123Scraper),
@@ -99,15 +104,15 @@ def _print_banner(mode: str, pages: int | None, workers: int) -> None:
 
 
 def _print_scraper_start(name: str, index: int, total: int) -> None:
-    print(f"  {_D}[{index:02d}/{total}]{_R}  {_C}▶ {_B}{name:<14}{_R}  {_D}starting...{_R}")
+    print(f"  {_D}[{index:02d}/{total}]{_R}  {_C} {_B}{name:<14}{_R}  {_D}starting...{_R}")
 
 
 def _print_scraper_done(result: ScraperResult, index: int, total: int) -> None:
     if result.success:
-        status = f"{_G}✔ DONE{_R}"
+        status = f"{_G} DONE{_R}"
         detail = f"{_G}{result.count:>4} records{_R}  {_D}{fmt_duration(result.elapsed)}{_R}"
     else:
-        status = f"{_RD}✖ FAIL{_R}"
+        status = f"{_RD} FAIL{_R}"
         err_short = result.error[:50].replace("\n", " ") if result.error else "unknown"
         detail = f"{_RD}{err_short}{_R}"
     print(f"  {_D}[{index:02d}/{total}]{_R}  {status} {_B}{result.name:<14}{_R}  {detail}")
@@ -130,8 +135,8 @@ def _print_summary(results: list[ScraperResult], total_elapsed: float) -> None:
         f"{_D}Records  {_R}{_G}{_B}{total_records}{_R}"
     )
     print(
-        f"  {_D}Scrapers    {_R}{_G}✔ {len(success_results)} succeeded{_R}  "
-        f"{_RD}✖ {len(failed_results)} failed{_R}"
+        f"  {_D}Scrapers    {_R}{_G} {len(success_results)} succeeded{_R}  "
+        f"{_RD} {len(failed_results)} failed{_R}"
     )
     print(f"{_C}{'─' * width}{_R}")
 
@@ -141,11 +146,11 @@ def _print_summary(results: list[ScraperResult], total_elapsed: float) -> None:
 
     for r in sorted(results, key=lambda x: x.name):
         if r.success:
-            status_col = f"{_G}✔ ok{_R}"
+            status_col = f"{_G} ok{_R}"
             count_col  = f"{_G}{r.count:>7}{_R}"
             err_col    = ""
         else:
-            status_col = f"{_RD}✖ fail{_R}"
+            status_col = f"{_RD} fail{_R}"
             count_col  = f"{_D}{'—':>7}{_R}"
             err_col    = f"{_RD}{r.error[:30].replace(chr(10), ' ')}{_R}" if r.error else ""
 
@@ -155,7 +160,7 @@ def _print_summary(results: list[ScraperResult], total_elapsed: float) -> None:
     print(f"{_C}{'━' * width}{_R}")
 
     if failed_results:
-        print(f"\n  {_Y}⚠  Failed scrapers:{_R}")
+        print(f"\n  {_Y}  Failed scrapers:{_R}")
         for r in failed_results:
             print(f"  {_RD}  • {r.name}{_R}: {r.error[:120]}")
         print()
@@ -177,17 +182,46 @@ def _run_full(scraper: object, pages: int | None) -> int:
 def _run_single_scraper(
     item: RunnerItem,
     run_fn: Callable,
-    pages: int | None,
+    run_type: str,
+    global_pages: int | None,
     index: int,
     total: int,
 ) -> ScraperResult:
     _print_scraper_start(item.name, index, total)
     t0 = time.monotonic()
+
+    # Xác định số trang (pages) tự động dựa trên cờ của từng scraper
+    flag_path = f"/opt/airflow/data/historical/.historical_done_{item.name}"
+    is_historical_run = False
+
+    if run_type == "auto":
+        if os.path.exists(flag_path):
+            pages = 10
+        else:
+            pages = 40
+            is_historical_run = True
+    elif run_type == "historical":
+        pages = 40
+        is_historical_run = True
+    elif run_type == "incremental":
+        pages = 10
+    else:
+        pages = global_pages
     try:
         scraper = item.factory()
         count = run_fn(scraper, pages)
         elapsed = time.monotonic() - t0
         result = ScraperResult(item.name, True, count, elapsed)
+
+        # Nếu cào historical thành công, ghi lại cờ cho riêng web này
+        if is_historical_run and result.success:
+            try:
+                os.makedirs(os.path.dirname(flag_path), exist_ok=True)
+                with open(flag_path, "w") as f:
+                    f.write(datetime.now().isoformat())
+            except Exception as e:
+                log.warning(f"Không thể tạo cờ {flag_path}: {e}")
+
     except Exception as exc:
         elapsed = time.monotonic() - t0
         err_msg = f"{type(exc).__name__}: {exc}"
@@ -218,9 +252,9 @@ def main() -> int:
     )
     parser.add_argument(
         "--run-type",
-        choices=["historical", "incremental", "custom"],
-        default="custom",
-        help="historical: cào toàn bộ (pages=None); incremental: cào 5 trang; custom: dùng --pages.",
+        choices=["auto", "historical", "incremental", "custom"],
+        default="auto",
+        help="auto: tự động historical/incremental; historical: cào 40 trang; incremental: cào 10 trang; custom: dùng --pages.",
     )
     parser.add_argument(
         "--stop-on-error",
@@ -252,13 +286,8 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    # Xử lý logic run-type
-    if args.run_type == "historical":
-        pages = None
-    elif args.run_type == "incremental":
-        pages = 5
-    else:
-        pages = args.pages
+    # Xử lý logic run-type display trong banner (các logic pages detail đã dời vào _run_single_scraper)
+    pages = args.pages
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -303,7 +332,7 @@ def main() -> int:
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
         future_map = {
-            executor.submit(_run_single_scraper, item, run_fn, pages, idx, total): item
+            executor.submit(_run_single_scraper, item, run_fn, args.run_type, pages, idx, total): item
             for idx, item in indexed_runners
         }
         for future in concurrent.futures.as_completed(future_map):

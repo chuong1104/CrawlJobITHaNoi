@@ -51,6 +51,28 @@
     CASE
         WHEN {{ salary_raw_column }} ~ '\$' OR {{ salary_raw_column }} ILIKE '%usd%' THEN 'USD'
         ELSE 'VND'
-    END AS salary_currency
+    END AS salary_currency,
+
+    -- salary_avg: trung bình min+max / 2 (dùng cho analytics)
+    CASE
+        WHEN {{ salary_raw_column }} ILIKE '%thoả thuận%'
+          OR {{ salary_raw_column }} ILIKE '%cạnh tranh%'
+          OR {{ salary_raw_column }} ILIKE '%thỏa thuận%' THEN NULL
+        WHEN {{ salary_raw_column }} ~ '(\d+)\s*(?:-|đến|tới)\s*(\d+)\s*(triệu|tr|m)' THEN
+            (
+                TRY_CAST(REGEXP_EXTRACT({{ salary_raw_column }}, '(\d+)\s*(?:-|đến|tới)\s*(\d+)\s*(?:triệu|tr|m)', 1) AS NUMERIC)
+                + TRY_CAST(REGEXP_EXTRACT({{ salary_raw_column }}, '(\d+)\s*(?:-|đến|tới)\s*(\d+)\s*(?:triệu|tr|m)', 2) AS NUMERIC)
+            ) / 2.0 * 1000000
+        WHEN {{ salary_raw_column }} ~ '(?i)(tới|lên đến|up to)\s*(\d+)\s*(triệu|tr|m)' THEN
+            TRY_CAST(REGEXP_EXTRACT({{ salary_raw_column }}, '(?i)(?:tới|lên đến|up to)\s*(\d+)\s*(?:triệu|tr|m)', 1) AS NUMERIC) * 1000000
+        WHEN {{ salary_raw_column }} ~ '(\d+)\s*(triệu|tr|m)' THEN
+            TRY_CAST(REGEXP_EXTRACT({{ salary_raw_column }}, '(\d+)\s*(?:triệu|tr|m)', 1) AS NUMERIC) * 1000000
+        WHEN {{ salary_raw_column }} ~ '\$(\d+)\s*(?:-|đến|tới)\s*\$?(\d+)' THEN
+            (
+                TRY_CAST(REGEXP_EXTRACT({{ salary_raw_column }}, '\$(\d+)\s*(?:-|đến|tới)\s*\$?(\d+)', 1) AS NUMERIC)
+                + TRY_CAST(REGEXP_EXTRACT({{ salary_raw_column }}, '\$(\d+)\s*(?:-|đến|tới)\s*\$?(\d+)', 2) AS NUMERIC)
+            ) / 2.0 * 25000
+        ELSE NULL
+    END AS salary_avg
 
 {% endmacro %}
