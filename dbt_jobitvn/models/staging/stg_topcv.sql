@@ -29,7 +29,7 @@ parsed AS (
         {{ parse_salary('salary') }},
         -- Experience — parse từ text thực tế
         CAST(experience_level AS VARCHAR)                     AS experience_raw,
-        {{ parse_experience('experience_level', 'job_description') }},
+        {{ parse_experience('experience_level', "COALESCE(requirements, '') || ' ' || COALESCE(job_description, '')") }},
         -- Skills: NULL tại staging — sẽ được extract tại int_job_skills_extracted
         NULL::VARCHAR[]                      AS skills_raw,
         -- Dates

@@ -114,17 +114,17 @@ Mặc định Oracle Cloud sẽ chặn tất cả các cổng ngoại trừ cổ
 5. Thực hiện khởi tạo cơ sở dữ liệu (Database Migrations):
    *(Thực hiện giống như lúc chạy local nhưng đã có cấu hình tự động điền mật khẩu)*
    ```bash
-   # Tạo schema silver, indexes và procedures
-   docker compose exec airflow env PGPASSWORD=airflow psql -h postgres -U airflow -d job_scraper_db -f /opt/airflow/scripts/silver/01_create_silver_schema.sql
-   docker compose exec airflow env PGPASSWORD=airflow psql -h postgres -U airflow -d job_scraper_db -f /opt/airflow/scripts/silver/02_create_cdc_tables.sql
-   docker compose exec airflow env PGPASSWORD=airflow psql -h postgres -U airflow -d job_scraper_db -f /opt/airflow/scripts/silver/02_create_indexes.sql
-   docker compose exec airflow env PGPASSWORD=airflow psql -h postgres -U airflow -d job_scraper_db -f /opt/airflow/scripts/silver/03_create_procedures.sql
-   docker compose exec airflow env PGPASSWORD=airflow psql -h postgres -U airflow -d job_scraper_db -f /opt/airflow/scripts/silver/04_create_batch_procedures.sql
+    # Tạo schema silver, indexes và procedures
+    docker compose exec airflow env PGPASSWORD=airflow psql -h postgres -U airflow -d job_scraper_db -f /opt/airflow/scripts/sql/silver/01_create_silver_schema.sql
+    docker compose exec airflow env PGPASSWORD=airflow psql -h postgres -U airflow -d job_scraper_db -f /opt/airflow/scripts/sql/silver/02_create_cdc_tables.sql
+    docker compose exec airflow env PGPASSWORD=airflow psql -h postgres -U airflow -d job_scraper_db -f /opt/airflow/scripts/sql/silver/02_create_indexes.sql
+    docker compose exec airflow env PGPASSWORD=airflow psql -h postgres -U airflow -d job_scraper_db -f /opt/airflow/scripts/sql/silver/03_create_procedures.sql
+    docker compose exec airflow env PGPASSWORD=airflow psql -h postgres -U airflow -d job_scraper_db -f /opt/airflow/scripts/sql/silver/04_create_batch_procedures.sql
 
-   # Tạo tầng Gold DWH
-   docker compose exec airflow env PGPASSWORD=airflow psql -h postgres -U airflow -d job_scraper_db -f /opt/airflow/scripts/gold/01_create_gold_dwh_schema.sql
-   docker compose exec airflow env PGPASSWORD=airflow psql -h postgres -U airflow -d job_scraper_db -f /opt/airflow/scripts/gold/02_create_gold_procedures.sql
-   docker compose exec airflow env PGPASSWORD=airflow psql -h postgres -U airflow -d job_scraper_db -f /opt/airflow/scripts/gold/02_create_materialized_views.sql
+    # Tạo tầng Gold DWH
+    docker compose exec airflow env PGPASSWORD=airflow psql -h postgres -U airflow -d job_scraper_db -f /opt/airflow/scripts/sql/gold/01_create_gold_dwh_schema.sql
+    docker compose exec airflow env PGPASSWORD=airflow psql -h postgres -U airflow -d job_scraper_db -f /opt/airflow/scripts/sql/gold/02_create_gold_procedures.sql
+    docker compose exec airflow env PGPASSWORD=airflow psql -h postgres -U airflow -d job_scraper_db -f /opt/airflow/scripts/sql/gold/02_create_materialized_views.sql
    ```
 
 ---

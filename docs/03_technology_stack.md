@@ -17,7 +17,7 @@ Thay vì dùng các công cụ Big Data cồng kềnh (Hadoop, Spark, Trino), d�
 
 | Layer                  | Technology                        |
 | ---------------------- | --------------------------------- |
-| Crawling               | Scrapy, Playwright, Python (Regex Fallback) |
+| Crawling               | Scrapling, Playwright, Python (Regex Fallback) |
 | Local Cloud Simulation | Floci (giả lập AWS S3, RDS)       |
 | Data Lake Storage      | **Delta Lake (via python-deltalake)** trên Floci S3 |
 | Operational Database (Silver) | **PostgreSQL (3NF ODS)** |

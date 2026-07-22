@@ -132,10 +132,22 @@ class BaseScraper(abc.ABC):
     
     @staticmethod
     def _block_media(route):
-        if route.request.resource_type in ("image", "media", "font", "stylesheet"):
-            route.abort()
-        else:
-            route.continue_() 
+        try:
+            if route.request.resource_type in ("image", "media", "font", "stylesheet"):
+                ret = route.abort()
+            else:
+                ret = route.continue_()
+                
+            import asyncio
+            if asyncio.iscoroutine(ret):
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(ret)
+                except RuntimeError:
+                    asyncio.run(ret)
+        except Exception:
+            pass
+
 
     # ------------------------------------------------------------------
     # HTTP fetch (private)
@@ -191,14 +203,18 @@ class BaseScraper(abc.ABC):
                 url,
                 headless=True,
                 disable_resources=True,
-                network_idle=True,
+                network_idle=False,
+                page_until="domcontentloaded",
+                timeout=20000,
                 proxy=self.proxy or None,
             )
         elif self.use_playwright in ("stealth", "stealthy"):
             page = StealthyFetcher.fetch(
                 url,
                 block_resources=True,
-                network_idle=True,
+                network_idle=False,
+                page_until="domcontentloaded",
+                timeout=20000,
                 proxy=self.proxy or None,
             )
         else:
@@ -207,6 +223,7 @@ class BaseScraper(abc.ABC):
                 url,
                 proxy=self.proxy or None,
                 stealthy_headers=True,
+                timeout=20000,
             )
 
         return self._adaptor_to_html(page)
@@ -248,9 +265,16 @@ class BaseScraper(abc.ABC):
     # ------------------------------------------------------------------
     # Phase 1: Collect URLs
     # ------------------------------------------------------------------
-    def _collect_urls(self, pages: Optional[int] = None) -> list[str]:
+    def _collect_urls(
+        self,
+        pages: Optional[int] = None,
+        existing_urls: Optional[set[str]] = None,
+        consecutive_stop_threshold: int = 6,
+    ) -> list[str]:
         """
         Thu thập URL theo pagination.
+        Hỗ trợ Early Stopping: dừng cào ngay khi phát hiện consecutive_stop_threshold URL
+        liên tiếp đã tồn tại trong existing_urls.
 
         - pages=None: auto-crawl đến khi gặp điều kiện dừng an toàn.
         - pages>0: crawl tối đa số trang chỉ định.
@@ -260,10 +284,14 @@ class BaseScraper(abc.ABC):
         seen_urls: set[str] = set()
         visited_pages: set[str] = set()
 
+        existing_set = existing_urls or set()
+        consecutive_duplicates = 0
+        early_stopped = False
+
         page_num = 1
         current_url = self.get_list_page_url(page_num)
 
-        while current_url:
+        while current_url and not early_stopped:
             if current_url in visited_pages:
                 self.logger.debug(f"[Phase 1] Loop detected at page {page_num} → stop")
                 break
@@ -289,10 +317,26 @@ class BaseScraper(abc.ABC):
                     seen_urls.add(u)
                     new_urls_count += 1
 
+                # Kiểm tra Early Stopping
+                if existing_set and u in existing_set:
+                    consecutive_duplicates += 1
+                    if consecutive_duplicates >= consecutive_stop_threshold:
+                        self.logger.info(
+                            f"[Phase 1] Early Stopping triggered! Encountered {consecutive_stop_threshold} "
+                            f"consecutive existing job URLs at page {page_num}."
+                        )
+                        early_stopped = True
+                        break
+                else:
+                    consecutive_duplicates = 0
+
             self.logger.info(
                 f"[Phase 1] {page_label} → {len(urls)} URLs found, {new_urls_count} new"
             )
             all_urls.extend(urls)
+
+            if early_stopped:
+                break
 
             if len(urls) == 0:
                 self.logger.info(f"[Phase 1] No URLs on page {page_num} → stop")
@@ -348,11 +392,11 @@ class BaseScraper(abc.ABC):
         return unique
 
     # ------------------------------------------------------------------
-    # Phase 3: Batch-parallel detail fetch
+    # Phase 3: Batch-parallel detail fetch (AsyncIO Enabled)
     # ------------------------------------------------------------------
     def _fetch_details_batch(self, urls: list[str], manager, date_str: str, state: dict) -> list[dict]:
         """
-        Chia URLs thành batches, mỗi batch fetch song song bằng ThreadPoolExecutor.
+        Chia URLs thành batches, mỗi batch fetch song song bằng asyncio concurrent workers.
         Sleep random giữa các batch để tránh rate limit.
         """
         results: list[dict] = []
@@ -408,24 +452,35 @@ class BaseScraper(abc.ABC):
         return results
 
     def _process_batch(self, batch: list[str]) -> list[dict]:
-        """Fetch và parse song song một batch URL."""
-        results: list[dict] = []
-        # Tối ưu hóa: Tăng giới hạn lên 5 luồng. Đây là "điểm ngọt" (sweet spot)
-        # giúp chạy nhanh nhất có thể mà vẫn an toàn, không làm crash libcurl.
-        max_threads = min(len(batch), 5)
-        with ThreadPoolExecutor(max_workers=max_threads) as executor:
-            future_to_url = {
-                executor.submit(self._fetch_and_parse, url): url for url in batch
-            }
-            for future in as_completed(future_to_url):
-                url = future_to_url[future]
-                try:
-                    result = future.result()
-                    if result:
-                        results.append(result)
-                except Exception as exc:
-                    self.logger.warning(f"[Phase 3] Error processing URL: {type(exc).__name__}")
-        return results
+        """Fetch và parse song song một batch URL bằng asyncio concurrent execution."""
+        import asyncio
+
+        max_concurrent = min(len(batch), 10)  # Tăng concurrency limit lên 10 requests
+
+        async def _worker(url: str, sem: asyncio.Semaphore) -> Optional[dict]:
+            async with sem:
+                # Tránh blocking main loop khi fetch HTTP đồng bộ trong wrapper
+                return await asyncio.to_thread(self._fetch_and_parse, url)
+
+        async def _run_all() -> list[dict]:
+            sem = asyncio.Semaphore(max_concurrent)
+            tasks = [_worker(url, sem) for url in batch]
+            raw_res = await asyncio.gather(*tasks, return_exceptions=True)
+            res = []
+            for r in raw_res:
+                if isinstance(r, dict) and r:
+                    res.append(r)
+                elif isinstance(r, Exception):
+                    self.logger.warning(f"[Phase 3] Async worker exception: {type(r).__name__}")
+            return res
+
+        # Chạy event loop bất đồng bộ
+        try:
+            return asyncio.run(_run_all())
+        except RuntimeError:
+            # Fallback nếu đang chạy trong môi trường có sẵn event loop (e.g. Jupyter/Tornado)
+            loop = asyncio.get_event_loop()
+            return loop.run_until_complete(_run_all())
 
     def _fetch_and_parse(self, url: str) -> Optional[dict]:
         """Fetch 1 URL và parse, trả về dict hoặc None nếu thất bại."""
@@ -443,8 +498,15 @@ class BaseScraper(abc.ABC):
                 from src.extract.utils.regex_extractor import FallbackRegexExtractor
                 extracted = FallbackRegexExtractor.parse_all(full_text)
                 for key, val in extracted.items():
-                    if not job.get(key) and val:
+                    current_val = (str(job.get(key)) if job.get(key) is not None else "").strip()
+                    current_val_lower = current_val.lower()
+
+                    if not current_val and val:
                         job[key] = val
+                    elif key == "experience_level" and val and any(char.isdigit() for char in str(val)):
+                        generic_terms = ("không yêu cầu", "chưa có kinh nghiệm", "không yêu cầu kinh nghiệm", "thương lượng", "n/a", "unknown", "không xác định")
+                        if not current_val or any(term in current_val_lower for term in generic_terms):
+                            job[key] = val
             # ------------------------------------
             
             # Đảm bảo các field bắt buộc luôn có
@@ -483,9 +545,13 @@ class BaseScraper(abc.ABC):
             pages_label = str(self._resolve_pages(pages)) if pages is not None else "AUTO"
             self.logger.info(f"Start  pages={pages_label}")
 
-            # Phase 1: collect URLs
+            # Tự động nạp danh sách URL gần nhất nếu chưa được truyền từ ngoài
+            if existing_urls is None:
+                existing_urls = manager.get_recent_job_urls(self.source_name, days=14)
+
+            # Phase 1: collect URLs (với Early Stopping)
             t1 = time.monotonic()
-            raw_urls = self._collect_urls(pages)
+            raw_urls = self._collect_urls(pages, existing_urls=existing_urls)
             self.logger.info(f"[Phase 1] Done — {len(raw_urls)} URLs in {fmt_duration(time.monotonic()-t1)}")
 
             # Phase 2: dedup
@@ -549,7 +615,12 @@ class BaseScraper(abc.ABC):
         existing_urls: Optional[set[str]] = None,
     ) -> list[str]:
         """Cào links chỉ, không cần parse. pages=None sẽ dùng config trung tâm."""
-        raw_urls = self._collect_urls(pages)
+        if existing_urls is None:
+            from src.storage.bronze_manager import BronzeManager
+            from src.config import DATA_BRONZE_DIR
+            manager = BronzeManager(local_bronze_dir=DATA_BRONZE_DIR)
+            existing_urls = manager.get_recent_job_urls(self.source_name, days=14)
+
+        raw_urls = self._collect_urls(pages, existing_urls=existing_urls)
         links = self._deduplicate_urls(raw_urls, existing_urls)
-        self.save_links(links)
         return links

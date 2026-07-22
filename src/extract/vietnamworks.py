@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from urllib.parse import urljoin, urlparse, urlunparse
 
+from scrapling import Fetcher
 from scrapling.parser import Adaptor
 
 from src.extract.base_scraper import BaseScraper
@@ -22,12 +23,13 @@ class VietnamWorksScraper(BaseScraper):
     SCROLL_PAUSE = (1.5, 3.0)
 
     def __init__(self, start_url: str | None = None, **kwargs) -> None:
-        kwargs.setdefault("delay_range", (8.0, 15.0))
+        kwargs.setdefault("delay_range", (2.0, 5.0))
         kwargs.setdefault("max_retries", 5)
         kwargs.setdefault("use_playwright", True)
         super().__init__(**kwargs)
         # Giữ nguyên query string (l=24) — không split("?")
         self.start_url = start_url or self.DEFAULT_START_URL
+        self._employer_cache: dict[str, tuple[str | None, str | None]] = {}
 
     def _is_valid_html(self, html: str, url: str) -> bool:
         """Kiểm tra xem trang có bị chặn hoặc lỗi không."""
@@ -88,6 +90,20 @@ class VietnamWorksScraper(BaseScraper):
                 links.append(full_url)
         return links
 
+    def _do_fetch(self, url: str) -> Optional[str]:
+        """Override to force HTTP requests for job details instead of Playwright to save RAM and time."""
+        try:
+            page = Fetcher.get(
+                url,
+                proxy=self.proxy or None,
+                stealthy_headers=True,
+                timeout=15000,
+            )
+            return self._adaptor_to_html(page)
+        except Exception as e:
+            self.logger.error(f"HTTP fetch failed for {url}: {e}")
+            return None
+
     # ------------------------------------------------------------------
     # Các selector tìm nút "trang kế tiếp" trên VietnamWorks
     # ------------------------------------------------------------------
@@ -144,7 +160,12 @@ class VietnamWorksScraper(BaseScraper):
                         pass
         return None
 
-    def _collect_urls(self, pages: Optional[int] = None) -> list[str]:
+    def _collect_urls(
+        self,
+        pages: Optional[int] = None,
+        existing_urls: Optional[set[str]] = None,
+        **kwargs,
+    ) -> list[str]:
         """
         VietnamWorks: cuộn dần từng bước + pagination fallback.
         - Scroll từng 800px, đợi lazy load, thu URL mới.
@@ -156,12 +177,14 @@ class VietnamWorksScraper(BaseScraper):
         all_urls: list[str] = []
         seen_urls: set[str] = set()
         max_pages = pages  # None = tự động dừng khi hết data
+        existing_set = existing_urls or set()
+        consecutive_stop_threshold = kwargs.get("consecutive_stop_threshold", 6)
 
         # Use BaseScraper._block_media for resource blocking
         _block_media = BaseScraper._block_media
 
-        def _scroll_page(pw_page, page_label: str) -> int:
-            """Scroll đến đáy trang, thu URL, trả về số URL mới."""
+        def _scroll_page(pw_page, page_label: str) -> tuple[int, bool]:
+            """Scroll đến đáy trang, thu URL, trả về (số URL mới, early_stopped)."""
             collected = 0
             scroll_step = 800      # px mỗi bước — scroll rộng hơn để tăng tốc
             current_pos = 0
@@ -169,6 +192,8 @@ class VietnamWorksScraper(BaseScraper):
             MAX_BOTTOM_STREAK = 5   # dừng sau 5 lần đáy "không có gì mới"
             no_new_links_streak = 0
             MAX_NO_NEW_LINKS_STREAK = 5
+            consecutive_duplicates = 0
+            early_stopped = False
 
             for scroll_num in range(1, self.MAX_SCROLLS + 1):
                 # Thu URL trước khi scroll
@@ -177,6 +202,22 @@ class VietnamWorksScraper(BaseScraper):
                     if u not in seen_urls:
                         seen_urls.add(u)
                         all_urls.append(u)
+
+                    if existing_set and u in existing_set:
+                        consecutive_duplicates += 1
+                        if consecutive_duplicates >= consecutive_stop_threshold:
+                            self.logger.info(
+                                f"[{page_label}] Early Stopping triggered! Encountered {consecutive_stop_threshold} "
+                                f"consecutive existing job URLs."
+                            )
+                            early_stopped = True
+                            break
+                    else:
+                        consecutive_duplicates = 0
+
+                if early_stopped:
+                    break
+
                 new_count = len(all_urls) - before
                 collected += new_count
 
@@ -228,61 +269,67 @@ class VietnamWorksScraper(BaseScraper):
                         # Đợi thêm trước lần thử tiếp theo
                         time.sleep(2.0)
 
-            return collected
+            return collected, early_stopped
 
         try:
             with sync_playwright() as pw:
                 browser = pw.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
-                ctx_opts = {
-                    "viewport": {"width": 1280, "height": 900},
-                    "user_agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/122.0.0.0 Safari/537.36"
-                    ),
-                }
-                if self.proxy:
-                    ctx_opts["proxy"] = {"server": self.proxy}
-                context = browser.new_context(**ctx_opts)
-                pw_page = context.new_page()
-                pw_page.route("**/*", _block_media)
+                try:
+                    ctx_opts = {
+                        "viewport": {"width": 1280, "height": 900},
+                        "user_agent": (
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/122.0.0.0 Safari/537.36"
+                        ),
+                    }
+                    if self.proxy:
+                        ctx_opts["proxy"] = {"server": self.proxy}
+                    context = browser.new_context(**ctx_opts)
+                    pw_page = context.new_page()
+                    pw_page.route("**/*", _block_media)
 
-                current_url = self.start_url
-                page_num = 1
+                    current_url = self.start_url
+                    page_num = 1
 
-                while True:
-                    if max_pages is not None and page_num > max_pages:
-                        self.logger.info(f"[Phase 1] Đã đủ {max_pages} trang → dừng")
-                        break
+                    while True:
+                        if max_pages is not None and page_num > max_pages:
+                            self.logger.info(f"[Phase 1] Đã đủ {max_pages} trang → dừng")
+                            break
 
-                    self.logger.info(f"[Phase 1] Trang {page_num} → {current_url}")
-                    pw_page.goto(current_url, wait_until="domcontentloaded", timeout=45_000)
+                        self.logger.info(f"[Phase 1] Trang {page_num} → {current_url}")
+                        pw_page.goto(current_url, wait_until="domcontentloaded", timeout=45_000)
 
-                    try:
-                        pw_page.wait_for_selector("a[href*='-jv']", timeout=20_000)
-                        self.logger.info(f"Job links đã render ✓ (trang {page_num})")
-                    except PlaywrightTimeout:
-                        self.logger.warning(f"Timeout chờ job links trang {page_num} — thử tiếp")
-                        self.logger.debug(f"HTML snippet:\n{pw_page.content()[:2000]}")
+                        try:
+                            pw_page.wait_for_selector("a[href*='-jv']", timeout=20_000)
+                            self.logger.info(f"Job links đã render ✓ (trang {page_num})")
+                        except PlaywrightTimeout:
+                            self.logger.warning(f"Timeout chờ job links trang {page_num} — thử tiếp")
+                            self.logger.debug(f"HTML snippet:\n{pw_page.content()[:2000]}")
 
-                    collected = _scroll_page(pw_page, f"Trang {page_num}")
+                        collected, early_stopped = _scroll_page(pw_page, f"Trang {page_num}")
 
-                    # Trang mới (page_num > 1) mà không có URL mới → đã hết data
-                    if collected == 0 and page_num > 1:
-                        self.logger.info("[Phase 1] Trang kế không có URL mới → dừng")
-                        break
+                        if early_stopped:
+                            self.logger.info("[Phase 1] Early Stopping triggered → dừng cào trang kế")
+                            break
 
-                    # Tìm nút next page
-                    next_url = self._find_next_page_url(pw_page)
-                    if not next_url:
-                        self.logger.info("[Phase 1] Không tìm thấy trang kế → dừng")
-                        break
+                        # Trang mới (page_num > 1) mà không có URL mới → đã hết data
+                        if collected == 0 and page_num > 1:
+                            self.logger.info("[Phase 1] Trang kế không có URL mới → dừng")
+                            break
 
-                    current_url = next_url
-                    page_num += 1
-                    time.sleep(random.uniform(*self.SCROLL_PAUSE))
+                        # Tìm nút next page
+                        next_url = self._find_next_page_url(pw_page)
+                        if not next_url:
+                            self.logger.info("[Phase 1] Không tìm thấy trang kế → dừng")
+                            break
 
-                browser.close()
+                        current_url = next_url
+                        page_num += 1
+                        time.sleep(random.uniform(*self.SCROLL_PAUSE))
+
+                finally:
+                    browser.close()
 
         except Exception as exc:
             self.logger.error(f"[Phase 1] Lỗi: {exc!r}")
@@ -483,38 +530,50 @@ class VietnamWorksScraper(BaseScraper):
             employer_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
 
         if employer_url:
-            self.logger.info(f"Fetching employer page: {employer_url}")
-            comp_html = self._fetch_html(employer_url)
-            if comp_html:
-                comp_page = Adaptor(comp_html)
+            if employer_url in self._employer_cache:
+                self.logger.info(f"Dùng cache trang nhà tuyển dụng: {employer_url}")
+                company_info, company_website = self._employer_cache[employer_url]
+            else:
+                self.logger.info(f"Fetching employer page: {employer_url}")
+                try:
+                    res_page = Fetcher.get(employer_url, proxy=self.proxy or None, stealthy_headers=True, timeout=8000)
+                    comp_html = self._adaptor_to_html(res_page) if res_page else None
+                    if not comp_html:
+                        comp_html = self._fetch_html(employer_url)
+                    if comp_html:
+                        comp_page = Adaptor(comp_html)
 
-                # Thông tin công ty: <p name="paragraph" ...> hoặc <p class*='ePFWJD'>
-                # Dùng name attribute vì class là generated
-                for p_el in comp_page.css("p[name='paragraph']"):
-                    val = p_el.css("::text").get() or ""
-                    # Tìm đoạn dài nhất (mô tả công ty thường nhiều chữ)
-                    if len(val.strip()) > 100:
-                        parts = p_el.css("::text").getall()
-                        lines = [p.strip() for p in parts if p.strip()]
-                        company_info = "\n".join(lines) or None
-                        break
+                        # Thông tin công ty: <p name="paragraph" ...> hoặc <p class*='ePFWJD'>
+                        # Dùng name attribute vì class là generated
+                        for p_el in comp_page.css("p[name='paragraph']"):
+                            val = p_el.css("::text").get() or ""
+                            # Tìm đoạn dài nhất (mô tả công ty thường nhiều chữ)
+                            if len(val.strip()) > 100:
+                                parts = p_el.css("::text").getall()
+                                lines = [p.strip() for p in parts if p.strip()]
+                                company_info = "\n".join(lines) or None
+                                break
 
-                # Fallback: lấy bất kỳ đoạn text dài trong trang employer
-                if not company_info:
-                    for div in comp_page.css("div"):
-                        parts = div.css("p::text").getall()
-                        text = " ".join(p.strip() for p in parts if p.strip())
-                        if len(text) > 200:
-                            lines = [p.strip() for p in parts if p.strip()]
-                            company_info = "\n".join(lines) or None
-                            break
+                        # Fallback: lấy bất kỳ đoạn text dài trong trang employer
+                        if not company_info:
+                            for div in comp_page.css("div"):
+                                parts = div.css("p::text").getall()
+                                text = " ".join(p.strip() for p in parts if p.strip())
+                                if len(text) > 200:
+                                    lines = [p.strip() for p in parts if p.strip()]
+                                    company_info = "\n".join(lines) or None
+                                    break
 
-                # Website công ty: tìm link ngoài domain vietnamworks trong trang employer
-                for a in comp_page.css("a[href]"):
-                    href = a.css("::attr(href)").get() or ""
-                    if href.startswith("http") and "vietnamworks.com" not in href:
-                        company_website = href.strip()
-                        break
+                        # Website công ty: tìm link ngoài domain vietnamworks trong trang employer
+                        for a in comp_page.css("a[href]"):
+                            href = a.css("::attr(href)").get() or ""
+                            if href.startswith("http") and "vietnamworks.com" not in href:
+                                company_website = href.strip()
+                                break
+                except Exception as exc:
+                    self.logger.warning(f"Lỗi fetch employer page {employer_url}: {exc}")
+
+                self._employer_cache[employer_url] = (company_info, company_website)
 
         return {
             "title": title,

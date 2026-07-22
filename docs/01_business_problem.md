@@ -38,14 +38,10 @@ Ví dụ:
 * TopCV
 * VietnamWorks
 * CareerViet
-* TopDev
-* Glints
 * JobsGO
-* Vieclam24h
 * JobOKO
-* CareerLink
-* YBOX
-* Indeed
+* LinkedIn
+* Job123
 
 Mỗi nền tảng có:
 
@@ -420,14 +416,10 @@ Thu thập dữ liệu từ:
 * TopCV
 * VietnamWorks
 * CareerViet
-* TopDev
-* Glints
 * JobsGO
 * JobOKO
-* CareerLink
-* Vieclam24h
-* YBOX
-* Indeed
+* LinkedIn
+* Job123
 
 ---
 

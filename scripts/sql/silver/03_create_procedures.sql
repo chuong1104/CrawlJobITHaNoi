@@ -146,23 +146,25 @@ BEGIN
             p_deadline_raw, p_deadline_date, p_is_intern, p_is_fresher, p_content_hash
         ) RETURNING snapshot_id INTO v_snapshot_id;
 
-        -- A3. Insert Skills
-        IF p_skills_raw IS NOT NULL THEN
-            FOREACH v_skill_name IN ARRAY p_skills_raw
-            LOOP
-                v_skill_name := TRIM(v_skill_name);
-                IF v_skill_name != '' THEN
-                    INSERT INTO silver.skills (skill_code, display_name)
-                    VALUES (LOWER(v_skill_name), v_skill_name)
-                    ON CONFLICT (skill_code) DO NOTHING;
-                    
-                    SELECT skill_id INTO v_skill_id FROM silver.skills WHERE skill_code = LOWER(v_skill_name);
-                    
-                    INSERT INTO silver.job_snapshot_skills (snapshot_id, skill_id)
-                    VALUES (v_snapshot_id, v_skill_id)
-                    ON CONFLICT DO NOTHING;
-                END IF;
-            END LOOP;
+        -- A3. Insert Skills (Tối ưu hóa bằng Set-Based Bulk Insert với UNNEST)
+        IF p_skills_raw IS NOT NULL AND array_length(p_skills_raw, 1) > 0 THEN
+            WITH target_skills AS (
+                SELECT DISTINCT TRIM(s) AS skill_name, LOWER(TRIM(s)) AS skill_code
+                FROM unnest(p_skills_raw) s
+                WHERE TRIM(s) != ''
+            ),
+            inserted_skills AS (
+                INSERT INTO silver.skills (skill_code, display_name)
+                SELECT skill_code, skill_name FROM target_skills
+                ON CONFLICT (skill_code) DO UPDATE SET display_name = EXCLUDED.display_name
+                RETURNING skill_id, skill_code
+            )
+            INSERT INTO silver.job_snapshot_skills (snapshot_id, skill_id)
+            SELECT v_snapshot_id, COALESCE(ins.skill_id, s.skill_id)
+            FROM target_skills ts
+            LEFT JOIN inserted_skills ins ON ts.skill_code = ins.skill_code
+            LEFT JOIN silver.skills s ON ts.skill_code = s.skill_code
+            ON CONFLICT DO NOTHING;
         END IF;
 
         -- A4. Log event
@@ -230,23 +232,25 @@ BEGIN
             p_deadline_raw, p_deadline_date, p_is_intern, p_is_fresher, p_content_hash
         ) RETURNING snapshot_id INTO v_snapshot_id;
 
-        -- B3. Insert Skills cho Snapshot mới
-        IF p_skills_raw IS NOT NULL THEN
-            FOREACH v_skill_name IN ARRAY p_skills_raw
-            LOOP
-                v_skill_name := TRIM(v_skill_name);
-                IF v_skill_name != '' THEN
-                    INSERT INTO silver.skills (skill_code, display_name)
-                    VALUES (LOWER(v_skill_name), v_skill_name)
-                    ON CONFLICT (skill_code) DO NOTHING;
-                    
-                    SELECT skill_id INTO v_skill_id FROM silver.skills WHERE skill_code = LOWER(v_skill_name);
-                    
-                    INSERT INTO silver.job_snapshot_skills (snapshot_id, skill_id)
-                    VALUES (v_snapshot_id, v_skill_id)
-                    ON CONFLICT DO NOTHING;
-                END IF;
-            END LOOP;
+        -- B3. Insert Skills cho Snapshot mới (Tối ưu hóa bằng Set-Based Bulk Insert với UNNEST)
+        IF p_skills_raw IS NOT NULL AND array_length(p_skills_raw, 1) > 0 THEN
+            WITH target_skills AS (
+                SELECT DISTINCT TRIM(s) AS skill_name, LOWER(TRIM(s)) AS skill_code
+                FROM unnest(p_skills_raw) s
+                WHERE TRIM(s) != ''
+            ),
+            inserted_skills AS (
+                INSERT INTO silver.skills (skill_code, display_name)
+                SELECT skill_code, skill_name FROM target_skills
+                ON CONFLICT (skill_code) DO UPDATE SET display_name = EXCLUDED.display_name
+                RETURNING skill_id, skill_code
+            )
+            INSERT INTO silver.job_snapshot_skills (snapshot_id, skill_id)
+            SELECT v_snapshot_id, COALESCE(ins.skill_id, s.skill_id)
+            FROM target_skills ts
+            LEFT JOIN inserted_skills ins ON ts.skill_code = ins.skill_code
+            LEFT JOIN silver.skills s ON ts.skill_code = s.skill_code
+            ON CONFLICT DO NOTHING;
         END IF;
 
         -- B4. Cập nhật latest hash vào jobs

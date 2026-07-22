@@ -69,11 +69,11 @@ class FallbackRegexExtractor:
             r'(?:từ\s+|tối\s+thiểu\s+|ít\s+nhất\s+)?(\d+\s*[-–~]\s*\d+|\d+\+?)\s*năm(?:\s+kinh\s+nghiệm|\s+làm\s+việc)?',
             r'(?:kinh\s+nghiệm|yêu\s+cầu\s+kinh\s+nghiệm)\s*[:\-]?\s*(?:từ\s+|tối\s+thiểu\s+|ít\s+nhất\s+)?(\d+\s*[-–~]\s*\d+|\d+\+?)\s*năm?',
             r'(?:có|yêu\s+cầu)?\s*(?:ít\s+nhất|tối\s+thiểu)?\s*(\d+\s*[-–~]\s*\d+|\d+\+?)\s*năm\s+(?:kinh\s+nghiệm|làm\s+việc)',
+            r'(\d+\s*[-–~]\s*\d+|\d+\+?)\s*years?(?:\s+of)?\s+(?:working\s+|relevant\s+|industry\s+)?experience',
+            r'(?:minimum|at\s+least|min\.?)\s+(?:of\s+)?(\d+\s*[-–~]\s*\d+|\d+\+?)\s*years?(?:\s+of)?\s+(?:working\s+|relevant\s+|industry\s+)?experience',
+            r'experience\s*[:\-]?\s*(?:minimum\s+)?(\d+\s*[-–~]\s*\d+|\d+\+?)\s*years?',
             r'(?:kinh\s+nghiệm|yêu\s+cầu\s+kinh\s+nghiệm)\s*[:\-]?\s*(không\s+yêu\s+cầu|chưa\s+có\s+kinh\s+nghiệm|dưới\s+1\s+năm)',
             r'(không\s+yêu\s+cầu\s+kinh\s+nghiệm|chấp\s+nhận\s+sinh\s+viên\s+mới\s+ra\s+trường|chấp\s+nhận\s+fresher)',
-            r'(\d+\s*[-–~]\s*\d+|\d+\+?)\s*years?(?:\s+of)?\s+(?:working\s+|relevant\s+|industry\s+)?experience',
-            r'(?:minimum|at\s+least|min\.?)\s+(?:of\s+)?(\d+)\s*\+?\s*years?(?:\s+of)?\s+(?:working\s+|relevant\s+|industry\s+)?experience',
-            r'experience\s*[:\-]?\s*(?:minimum\s+)?(\d+\s*[-–~]\s*\d+|\d+\+?)\s*years?',
             r'(no\s+experience\s+required|entry[- ]level|fresh\s+graduate)'
         ]
         search_text = text[:3000]
@@ -82,6 +82,11 @@ class FallbackRegexExtractor:
             if m:
                 snippet = m.group(1).strip() if len(m.groups()) > 0 and m.group(1) else m.group(0).strip()
                 snippet = re.sub(r'\s+', ' ', snippet)
+                if re.match(r'^\d+\s*[-–~]\s*\d+$', snippet):
+                    parts = re.split(r'[-–~]', snippet)
+                    return f"{parts[0].strip()} - {parts[1].strip()} năm"
+                elif re.match(r'^\d+\+?$', snippet):
+                    return f"{snippet} năm"
                 return snippet
         return None
 

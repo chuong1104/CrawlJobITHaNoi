@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
+from typing import Optional
+
 from scrapling.parser import Adaptor
 
 from src.extract.base_scraper import BaseScraper
@@ -262,11 +264,16 @@ class ITViecScraper(BaseScraper):
     # ------------------------------------------------------------------
     # Override _collect_urls để gọi login trước
     # ------------------------------------------------------------------
-    def _collect_urls(self, pages: int | None = None) -> list[str]:
+    def _collect_urls(
+        self,
+        pages: Optional[int] = None,
+        existing_urls: Optional[set[str]] = None,
+        **kwargs,
+    ) -> list[str]:
         # Thực hiện login trước khi collect urls
         self._perform_login()
         # Delegate cho base class thu thập URL (sẽ gọi _fetch_html của mình)
-        return super()._collect_urls(pages)
+        return super()._collect_urls(pages=pages, existing_urls=existing_urls, **kwargs)
 
     # ------------------------------------------------------------------
     # Helpers cho parse

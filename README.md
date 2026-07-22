@@ -57,7 +57,6 @@ Hệ thống được thiết kế linh hoạt để đối phó với nhiều c
 | **Joboko** | joboko.com | Thấp | `Scrapling HTTP` |
 | **123job** | 123job.vn | Trung bình | `Scrapling HTTP` |
 | **CareerViet** | careerviet.vn | Trung bình | `Scrapling HTTP` |
-| **CareerLink** | careerlink.vn | Thấp | `Scrapling HTTP` |
 | **LinkedIn** | linkedin.com | **Rất Khắc Nghiệt** | `Playwright` + Proxy + **Quản lý Session Cookie** |
 
 ---
@@ -72,7 +71,7 @@ Chạy script dưới đây. Một cửa sổ trình duyệt Chromium sẽ bật
 python scripts/login_linkedin_interactive.py
 ```
 > [!NOTE]
-> Cookie được lưu tự động tại thư mục: `src/extract/job_online/auth/linkedin_state.json`. Thư mục này đã được thêm vào `.gitignore` để tránh rò rỉ phiên đăng nhập của bạn lên Git.
+> Cookie được lưu tự động tại: `data/auth/linkedin_session.json`. Thư mục này đã được thêm vào `.gitignore` để tránh rò rỉ phiên đăng nhập của bạn lên Git.
 
 ---
 
@@ -118,16 +117,16 @@ docker compose up -d
 Chạy các scripts SQL để tạo các bảng logic CDC, logging và Materialized Views tối ưu cho Serving API:
 ```bash
 # Tạo bảng Silver ODS, companies, jobs, snapshots
-docker compose exec airflow psql -U airflow -d job_scraper_db -f /opt/airflow/scripts/silver/01_create_silver_schema.sql
+docker compose exec airflow psql -U airflow -d job_scraper_db -f /opt/airflow/scripts/sql/silver/01_create_silver_schema.sql
 
 # Tạo bảng CDC Watermark và Run log (v2.1)
-docker compose exec airflow psql -U airflow -d job_scraper_db -f /opt/airflow/scripts/silver/02_create_cdc_tables.sql
+docker compose exec airflow psql -U airflow -d job_scraper_db -f /opt/airflow/scripts/sql/silver/02_create_cdc_tables.sql
 
 # Tạo Gold DWH schema
-docker compose exec airflow psql -U airflow -d job_scraper_db -f /opt/airflow/scripts/gold/01_create_gold_dwh_schema.sql
+docker compose exec airflow psql -U airflow -d job_scraper_db -f /opt/airflow/scripts/sql/gold/01_create_gold_dwh_schema.sql
 
 # Tạo Materialized Views DWH (v2.1)
-docker compose exec airflow psql -U airflow -d job_scraper_db -f /opt/airflow/scripts/gold/02_create_materialized_views.sql
+docker compose exec airflow psql -U airflow -d job_scraper_db -f /opt/airflow/scripts/sql/gold/02_create_materialized_views.sql
 ```
 
 ### 6. Khởi tạo Data Lake (Delta Lake Buckets)

@@ -77,7 +77,7 @@ Toàn bộ scrapers được xây dựng theo mô hình **Abstract Base Class**.
 
 **Rate limiting:** Giữa mỗi request, scraper chờ một khoảng thời gian ngẫu nhiên trong khoảng cho phép (ví dụ 1–3 giây) để mô phỏng hành vi người dùng thật và tránh bị phát hiện.
 
-**Proxy rotation:** LinkedIn và JobStreet có anti-bot rất mạnh, cần rotate IP qua danh sách proxy. ProxyManager sẽ tự động chọn proxy khác khi proxy hiện tại bị block.
+**Proxy rotation:** LinkedIn và TopCV có anti-bot rất mạnh, cần rotate IP qua danh sách proxy. ProxyManager sẽ tự động chọn proxy khác khi proxy hiện tại bị block.
 
 ### 2.3 Schema validation — Pydantic
 
@@ -652,14 +652,11 @@ job_scraper_de_project/
 │   │   │   ├── stg_jobsgo.sql
 │   │   │   ├── stg_123job.sql
 │   │   │   ├── stg_careerviet.sql
-│   │   │   ├── stg_careerlink.sql
-│   │   │   ├── stg_ybox.sql
-│   │   │   ├── stg_jobstreet.sql
 │   │   │   ├── stg_joboko.sql
 │   │   │   ├── sources.yml               ← Khai báo Bronze S3 sources
 │   │   │   └── schema.yml               ← Data tests cho mỗi staging model
 │   │   ├── intermediate/
-│   │   │   ├── int_all_jobs_unioned.sql  ← UNION ALL 11 sources (ephemeral)
+│   │   │   ├── int_all_jobs_unioned.sql  ← UNION ALL 8 sources (ephemeral)
 │   │   │   ├── int_deduped_jobs.sql      ← Cross-source dedup (incremental)
 │   │   │   ├── int_job_skills_exploded.sql ← Explode skill arrays (ephemeral)
 │   │   │   ├── int_changed_jobs.sql      ← Pseudo-CDC: detect thay đổi

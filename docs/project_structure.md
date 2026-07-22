@@ -52,7 +52,7 @@ job_scraper_de_project/
   - `extract/`: Chứa logic dùng để cào dữ liệu (scraping), ví dụ như code tương tác với API hoặc HTML của các trang web việc làm.
   - `schema/`: Định nghĩa cấu trúc dữ liệu (Data Schemas), thường dùng Pydantic để kiểm tra tính hợp lệ của dữ liệu đầu vào/đầu ra.
   - `storage/`: Chứa mã nguồn quản lý việc kết nối với cơ sở dữ liệu và lưu trữ (đọc/ghi file, insert database).
-  - `sync/`: Chứa các logic đồng bộ hóa hoặc di chuyển dữ liệu giữa các môi trường lưu trữ (ví dụ từ file Bronze vào staging area của cơ sở dữ liệu).
+  - `silver/`: Chứa các logic nghiệp vụ chuẩn hóa dữ liệu, đồng bộ hóa (Sync Engine), theo dõi CDC (CDC Watermark Tracker), và loại bỏ trùng lặp (Dedup Engine).
 
 ### 5. `scripts/`
 - **Mục đích:** Chứa các tập lệnh thực thi độc lập (standalone scripts) thường dùng để test nhanh, chạy thủ công hoặc xử lý một tác vụ cụ thể ngoài pipeline.

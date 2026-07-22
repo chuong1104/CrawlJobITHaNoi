@@ -186,7 +186,7 @@ COMMENT ON TABLE silver.skills IS 'Danh mục kỹ năng kỹ thuật chuẩn h�
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS silver.companies (
     company_id      SERIAL       PRIMARY KEY,
-    normalized_name VARCHAR(255) NOT NULL,  -- Tên đã loại bỏ suffix pháp lý
+    normalized_name VARCHAR(255) NOT NULL UNIQUE,  -- Tên đã loại bỏ suffix pháp lý
     display_name    VARCHAR(255),            -- Tên hiển thị đẹp nhất tìm được
     website         TEXT,
     industry        VARCHAR(100),
@@ -221,9 +221,6 @@ CREATE TABLE IF NOT EXISTS silver.company_aliases (
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     UNIQUE (alias_text)  -- Mỗi alias chỉ map về 1 company
 );
-
-CREATE INDEX IF NOT EXISTS idx_company_aliases_text_trgm
-    ON silver.company_aliases USING gin (alias_text gin_trgm_ops);
 
 COMMENT ON TABLE silver.company_aliases IS 'Map N cách viết tên công ty về 1 company_id';
 COMMENT ON COLUMN silver.company_aliases.confidence IS '0-100: độ tin cậy mapping, 100=exact match';
@@ -569,31 +566,6 @@ CREATE TRIGGER trg_companies_updated_at
 CREATE TRIGGER trg_sources_updated_at
     BEFORE UPDATE ON silver.sources
     FOR EACH ROW EXECUTE FUNCTION silver.fn_update_updated_at();
-
--- ---------------------------------------------------------------------------
--- 16. Indexes Optimization
--- ---------------------------------------------------------------------------
--- Bảng jobs
-CREATE INDEX IF NOT EXISTS idx_jobs_company_id ON silver.jobs (company_id);
-CREATE INDEX IF NOT EXISTS idx_jobs_status_active ON silver.jobs (job_status, is_active);
-CREATE INDEX IF NOT EXISTS idx_jobs_identity_hash ON silver.jobs (identity_hash);
-CREATE INDEX IF NOT EXISTS idx_jobs_latest_content ON silver.jobs (latest_content_hash);
-CREATE INDEX IF NOT EXISTS idx_jobs_duplicate_group ON silver.jobs (duplicate_group_id);
-
--- Bảng job_snapshots
-CREATE INDEX IF NOT EXISTS idx_snapshots_job_current ON silver.job_snapshots (job_id, is_current);
-CREATE INDEX IF NOT EXISTS idx_snapshots_content_hash ON silver.job_snapshots (content_hash);
-CREATE INDEX IF NOT EXISTS idx_snapshots_valid_to ON silver.job_snapshots (valid_to) WHERE valid_to IS NULL;
-
--- Bảng junction
-CREATE INDEX IF NOT EXISTS idx_snapshot_skills_skill ON silver.job_snapshot_skills (skill_id);
-CREATE INDEX IF NOT EXISTS idx_snapshot_locations_location ON silver.job_snapshot_locations (location_id);
-
--- Bảng duplicate_group_members
-CREATE INDEX IF NOT EXISTS idx_dup_group_members_job ON silver.job_duplicate_group_members (job_id);
-
--- Bảng job_events
-CREATE INDEX IF NOT EXISTS idx_job_events_job_id ON silver.job_events (job_id);
 
 COMMIT;
 

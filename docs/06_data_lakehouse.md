@@ -71,26 +71,55 @@ Bảng Fact chính chứa các khóa ngoại tới Dimensions và các metrics �
 ```sql
 -- fct_job_posting.sql
 SELECT
-    job_id,
-    source_id,
-    company_id,
-    first_seen_date_key,
-    last_seen_date_key,
-    salary_avg,
-    job_level,
-    work_mode,
-    is_active
-FROM marts.warehouse.fct_job_posting
+    job_posting_fact_id,
+    silver_job_id,
+    silver_snapshot_id,
+    posted_date_key,
+    company_key,
+    source_key,
+    attribute_key,
+    salary_min_vnd,
+    salary_max_vnd,
+    salary_midpoint_vnd,
+    experience_min_years,
+    experience_max_years,
+    is_active,
+    is_intern,
+    is_fresher
+FROM dwh.fct_job_posting;
 ```
 
 ## 5.2. dwh.mv_active_jobs_summary (Materialized View)
 Cache phi chuẩn hóa (denormalized) của tất cả job đang hoạt động kết hợp với thông tin công ty để phục vụ API FastAPI với thời gian phản hồi < 100ms.
 ```sql
 CREATE MATERIALIZED VIEW dwh.mv_active_jobs_summary AS
-SELECT f.job_id, f.title_clean, f.salary_avg, c.display_name AS company_name
+SELECT
+    f.silver_job_id          AS job_id,
+    c.silver_company_id      AS company_id,
+    ds.silver_source_id      AS source_id,
+    jb.canonical_url,
+    jb.job_status,
+    f.silver_snapshot_id     AS snapshot_id,
+    js.title_clean,
+    f.salary_min_vnd         AS salary_min,
+    f.salary_max_vnd         AS salary_max,
+    f.salary_midpoint_vnd    AS salary_avg,
+    js.salary_currency,
+    f.experience_min_years,
+    f.experience_max_years,
+    a.job_level,
+    a.job_type,
+    a.work_mode,
+    js.job_family,
+    c.company_name          AS company_name,
+    c.industry              AS company_industry
 FROM dwh.fct_job_posting f
 JOIN dwh.dim_company c ON f.company_key = c.company_key
-WHERE f.is_active = TRUE;
+JOIN dwh.dim_source ds ON f.source_key = ds.source_key
+JOIN dwh.dim_job_attributes a ON f.attribute_key = a.attribute_key
+JOIN silver.jobs jb ON f.silver_job_id = jb.job_id
+JOIN silver.job_snapshots js ON f.silver_snapshot_id = js.snapshot_id
+WHERE f.is_active = TRUE AND js.is_current = TRUE;
 ```
 
 ## 5.3. dbt Semantic Layer (Metrics Layer)

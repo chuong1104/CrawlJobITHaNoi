@@ -2,10 +2,10 @@
 
 ## Overview
 
-Data Pipeline là xương sống của JobITVN. Trong kiến trúc hiện tại, chúng ta áp dụng mô hình **ELT** (Extract, Load, Transform) kết hợp Data Lake (Floci S3), cơ sở dữ liệu OLAP (DuckDB) và cơ sở dữ liệu OLTP/Serving (PostgreSQL).
+Data Pipeline là xương sống của dự án JobITVN. Trong kiến trúc hiện tại, chúng ta áp dụng mô hình **ELT** (Extract, Load, Transform) kết hợp giữa Data Lake (Floci S3), cơ sở dữ liệu OLAP cục bộ (DuckDB) và cơ sở dữ liệu OLTP/Serving (PostgreSQL).
 
-1. **Extract & Load (E & L):** Scrapers cào dữ liệu, ghi file **JSONL (Bronze Layer)** cục bộ và đồng thời **upload lên Floci (S3)** dưới dạng Data Lake dự phòng cũng như định dạng Delta Lake.
-2. **Transform (T - dbt trên DuckDB):** Airflow kích hoạt `dbt` sử dụng DuckDB để đọc file JSONL, làm sạch cơ bản, parse mức lương và kinh nghiệm qua Regex, sau đó xây dựng các bảng Staging và Warehouse trực tiếp bên trong `dwh.duckdb`. (Đọc từ local để tối ưu tốc độ xử lý).
+1. **Extract & Load (E & L):** Scrapers cào dữ liệu thô, ghi file **JSONL (Bronze Layer)** cục bộ và đồng thời **upload lên S3 (Floci)** dưới dạng Delta Table.
+2. **Transform (T - dbt trên DuckDB):** Airflow kích hoạt `dbt` sử dụng DuckDB để đọc file JSONL, làm sạch, parse mức lương và kinh nghiệm qua Regex, sau đó xây dựng các bảng Staging và Warehouse trực tiếp bên trong file database `jobitvn.duckdb` (Đọc từ local cache để tối ưu tốc độ xử lý).
 3. **Sync Silver (PostgreSQL 3NF):** Python Sync Engine tải dữ liệu từ DuckDB vào bảng đệm `staging.stg_jobs`, sau đó sử dụng CDC Watermark để Upsert dữ liệu vào tầng Silver của PostgreSQL (mô hình 3NF, xử lý SCD Type 2).
 4. **Gold Layer & MVs:** Các Stored Procedure chạy trong PostgreSQL để đồng bộ từ Silver lên Gold, tạo ra `latest_jobs_flat` và các `Materialized Views` phục vụ riêng cho Web API.
 
@@ -20,26 +20,26 @@ Data Pipeline là xương sống của JobITVN. Trong kiến trúc hiện tại,
                          │
                          ▼
 ┌──────────────────────────────────────────────────┐
-│       CRAWLER LAYER (Python, Playwright)         │
+│       CRAWLER LAYER (Python, Scrapling)          │
 └────────────────────────┬─────────────────────────┘
                          │ Extract & Load
                          ▼
 ┌──────────────────────────────────────────────────┐
 │     BRONZE LAYER (S3 Data Lake & Local JSONL)    │
 │   - Floci S3: s3://jobit-bronze/                 │
-│   - Local: data/raw/{source}/{date}/             │
+│   - Local: data/bronze/{source}/                 │
 └────────────────────────┬─────────────────────────┘
                          │
              dbt run (DuckDB read_json)
                          │
                          ▼
 ┌──────────────────────────────────────────────────┐
-│      STAGING & WAREHOUSE (DuckDB dwh.duckdb)     │
+│      STAGING & WAREHOUSE (DuckDB jobitvn.duckdb) │
 │   - Parse Salary, Experience (Regex)             │
-│   - Build Star Schema (fct_job_posting, dim_*)   │
+│   - Build Staging & Intermediate models          │
 └────────────────────────┬─────────────────────────┘
                          │
-       Python Bulk Sync (Postgres staging.stg_jobs)
+        Python Bulk Sync (Postgres staging.stg_jobs)
                          │
                          ▼
 ┌──────────────────────────────────────────────────┐
@@ -49,7 +49,7 @@ Data Pipeline là xương sống của JobITVN. Trong kiến trúc hiện tại,
 │   - SCD Type 2 History (job_snapshots)           │
 └────────────────────────┬─────────────────────────┘
                          │
-      SQL Stored Procedures (dwh / mart_api)
+       SQL Stored Procedures (dwh / mart_api)
                          │
                          ▼
 ┌──────────────────────────────────────────────────┐
@@ -57,10 +57,10 @@ Data Pipeline là xương sống của JobITVN. Trong kiến trúc hiện tại,
 │   - mart_api.latest_jobs_flat (For API)          │
 │   - dwh.mv_active_jobs_summary, mv_kpi_realtime  │
 └───────┬──────────────────────────────────────┬───┘
-        │                                      │
-        ▼                                      ▼
-    Power BI (ODBC)                        FastAPI API
-  (Read DuckDB DWH)                    (Read Postgres Gold)
+         │                                      │
+         ▼                                      ▼
+     Power BI (ODBC)                        FastAPI API
+   (Read DuckDB DWH)                    (Read Postgres Gold)
 ```
 
 ---
@@ -69,9 +69,9 @@ Data Pipeline là xương sống của JobITVN. Trong kiến trúc hiện tại,
 
 Cơ chế **Change Data Capture (CDC)** dựa trên watermark đã được tích hợp nhằm tối ưu hóa việc đồng bộ từ DuckDB sang Postgres:
 
-1. **Watermark tracking (`silver.cdc_watermarks`):** Lưu timestamp `last_sync_at`.
-2. **Pipeline Logging (`silver.pipeline_run_log`):** Mọi pipeline run đều được log trạng thái, số bản ghi mới/reject.
-3. **Phát hiện Anomaly:** Nếu số tin mới quá thấp, hệ thống bật cờ `anomaly_flag` cảnh báo scraper.
+1. **Watermark tracking (`silver.crawl_sessions`):** Lưu lại session, số tin quét được, số tin bị lỗi/validated.
+2. **Watermark sync (`silver.cdc_watermarks`):** Lưu timestamp `last_sync_at`.
+3. **Phát hiện Anomaly:** Nếu số tin mới quá thấp hoặc tỷ lệ reject quá cao, hệ thống bật cờ cảnh báo.
 
 ---
 
@@ -80,47 +80,46 @@ Cơ chế **Change Data Capture (CDC)** dựa trên watermark đã được tíc
 - **Tầng API (Postgres):** 
   - Tạo view `mart_api.latest_jobs_flat` đã được de-normalize, phục vụ web tìm kiếm siêu tốc.
   - Các `Materialized Views` như `dwh.mv_kpi_realtime` được tính toán trước để render KPI trên Dashboard ngay lập tức.
-- **Tầng BI (DuckDB):** Power BI kết nối thẳng vào `dwh.duckdb` qua ODBC để phân tích Star Schema mà không làm nặng Postgres.
-- **Tầng S3 (Floci):** Dữ liệu Gold cũng được đồng bộ ra S3 (Delta Format) qua `DeltaLakeManager` để phục vụ Data Science (ML Models).
+- **Tầng BI (DuckDB):** Power BI kết nối thẳng vào `jobitvn.duckdb` qua ODBC để phân tích Star Schema mà không làm nặng Postgres.
+- **Tầng S3 (Floci):** Dữ liệu Gold cũng được đồng bộ ra S3 (Delta Format) qua `GoldExporter` để phục vụ Data Science (ML Models).
 
 ---
 
 # 4. Airflow DAG Workflow (Daily Execution Pipeline)
 
-Mỗi ngày lúc 6h sáng, Airflow kích hoạt pipeline và giám sát luồng chạy:
+Mỗi ngày lúc 6h sáng, Airflow kích hoạt pipeline và giám sát luồng chạy song song:
 
 ```text
-┌────────────────┐
-│     start      │
-└───────┬────────┘
-        │
-        ▼
-┌───────────────────────┐
-│   crawl_all_sources   │  (Scrape dữ liệu -> ghi JSONL file & upload Floci S3)
-└───────┬───────────────┘
-        │
-        ▼
-┌───────────────────────┐
-│    run_dbt_staging    │  (dbt: Staging & Warehouse DuckDB)
-└───────┬───────────────┘
-        │
-        ▼
-┌───────────────────────┐
-│   sync_silver_layer   │  (Python: Postgres 3NF + SCD Type 2 + CDC Watermark)
-└───────┬───────────────┘
-        │
-        ▼
-┌───────────────────────┐
-│     run_gold_dwh      │  (Python: Stored Procs update Postgres Gold + MVs)
-└───────┬───────────────┘
-        │
-        ▼
-┌───────────────────────┐
-│    vacuum_duckdb      │  (Dọn dẹp database DuckDB, giải phóng dung lượng)
-└───────┬───────────────┘
-        │
-        ▼
-┌────────────────┐
-│      end       │
-└────────────────┘
+       ┌───────────┐
+       │   start   │
+       └─────┬─────┘
+             ▼
+ ┌───────────────────────┐
+ │   crawl_all_sources   │
+ └───────────┬───────────┘
+             ▼
+ ┌───────────────────────┐
+ │    run_dbt_staging    │
+ └─────┬───────────┬─────┘
+       │           ├─────────────────────────┐
+       ▼           ▼                         ▼
+ ┌───────────┐ ┌──────────┐         ┌─────────────────┐
+ │run_dbt_gol│ │sync_silv │         │archive_bronze_da│
+ └─────┬─────┘ └─────┬────┘         └────────┬────────┘
+       │             ▼                       │
+       │       ┌──────────┐                  │
+       │       │sync_postg│                  │
+       │       └─────┬────┘                  │
+       │             ▼                       │
+       │       ┌──────────┐                  │
+       │       │export_gol│                  │
+       │       └─────┬────┘                  │
+       ▼             ▼                       │
+ ┌─────┴─────────────┴────┐                  │
+ │  vacuum_delta_tables   │                  │
+ └───────────┬────────────┘                  │
+             ▼                               ▼
+       ┌───────────┐                   ┌───────────┐
+       │    end    │                   │    end    │
+       └───────────┘                   └───────────┘
 ```

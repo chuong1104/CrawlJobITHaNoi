@@ -74,7 +74,7 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS dwh.mv_kpi_realtime AS
 SELECT
     NOW()                                       AS refreshed_at,
     -- Volume (sem: total_active_jobs, total_hiring_companies)
-    COUNT(DISTINCT f.silver_job_id)             AS total_active_jobs,
+    COUNT(f.silver_job_id)                      AS total_active_jobs,
     COUNT(DISTINCT f.company_key)               AS total_hiring_companies,
     -- Salary (sem: market_avg_salary, salary_disclosure_rate)
     ROUND(AVG(f.salary_midpoint_vnd))           AS market_avg_salary_vnd,
@@ -121,7 +121,7 @@ WITH skill_salary AS (
         sk.skill_name                       AS skill_code,
         sk.skill_name                       AS skill_name,
         sk.skill_category,
-        COUNT(DISTINCT f.silver_job_id)      AS job_count,
+        COUNT(f.silver_job_id)               AS job_count,
         AVG(f.salary_midpoint_vnd)          AS avg_salary,
         PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY f.salary_midpoint_vnd)
                                             AS median_salary,
@@ -162,7 +162,7 @@ SELECT
     l.location_name                         AS location_name,
     l.region,
     FALSE                                   AS is_remote,
-    COUNT(DISTINCT f.silver_job_id)          AS total_jobs,
+    COUNT(f.silver_job_id)                   AS total_jobs,
     ROUND(AVG(f.salary_midpoint_vnd))       AS avg_salary,
     COUNT(DISTINCT f.company_key)           AS total_companies,
     COUNT(CASE WHEN f.is_fresher THEN 1 END)  AS fresher_jobs

@@ -285,11 +285,10 @@ Luồng xử lý dữ liệu được thiết kế chạy tự động định k
 
 ### 5.2 Lựa Chọn PostgreSQL Làm Kho Dữ Liệu và Phân Vùng schemas
 Trong phạm vi dự án này, hệ thống sử dụng PostgreSQL làm hệ quản trị cơ sở dữ liệu chung cho cả ba lớp nhờ tính linh hoạt, khả năng hỗ trợ lập chỉ mục tìm kiếm văn bản đầy đủ (Full-Text Search) mạnh mẽ, và khả năng kết nối trực tiếp mượt mà với PowerBI và các API. Các lớp dữ liệu được phân chia vật lý thông qua các schema riêng biệt trong cùng một database:
-* Schema `raw`: Lưu trữ siêu dữ liệu quét và lịch sử trạng thái chạy của crawler.
 * Schema `staging`: Vùng đệm để chuyển đổi cấu trúc dữ liệu thô sang cấu trúc chung.
-* Schema `silver` (hoặc `operational`): Chứa cơ sở dữ liệu nghiệp vụ chuẩn hóa 3NF có quản lý vòng đời và lịch sử thay đổi.
+* Schema `silver`: Chứa cơ sở dữ liệu nghiệp vụ chuẩn hóa 3NF có quản lý vòng đời và lịch sử thay đổi.
 * Schema `dwh`: Chứa kho dữ liệu mô hình hình sao phục vụ phân tích đa chiều.
-* Schema `mart`: Chứa các bảng dữ liệu tinh gọn phục vụ trực tiếp cho các consumer cuối.
+* Schema `mart_api`: Chứa các bảng dữ liệu tinh gọn/views phục vụ trực tiếp cho các consumer cuối (FastAPI).
 
 ---
 
@@ -305,9 +304,7 @@ Mỗi dòng trong bảng Fact đại diện cho trạng thái hiện hành hoặ
 * **Khóa ngày (date_key):** Khóa ngoại liên kết bảng chiều thời gian.
 * **Khóa công ty (company_key):** Khóa ngoại liên kết bảng chiều công ty (hỗ trợ lưu lịch sử công ty theo SCD Type 2).
 * **Khóa nguồn tuyển dụng (source_key):** Khóa ngoại liên kết bảng chiều nguồn tin.
-* **Khóa cấp bậc công việc (job_level_key):** Khóa ngoại liên kết bảng chiều cấp bậc (Intern, Fresher, Junior...).
-* **Khóa loại hình làm việc (job_type_key):** Khóa ngoại liên kết bảng chiều loại hình (Full-time, Part-time...).
-* **Khóa hình thức làm việc (work_mode_key):** Khóa ngoại liên kết bảng chiều hình thức (Onsite, Hybrid, Remote).
+* **Khóa thuộc tính công việc (attribute_key):** Khóa ngoại liên kết bảng chiều thuộc tính công việc (phân loại cấp bậc, loại hình, hình thức làm việc).
 * **Các trường đo lường số lượng (Measures):**
   * Mức lương tối thiểu quy đổi (salary_min).
   * Mức lương tối đa quy đổi (salary_max).
@@ -328,9 +325,7 @@ Mỗi dòng trong bảng Fact đại diện cho trạng thái hiện hành hoặ
 * **Chiều Nguồn Tuyển Dụng (dim_source):** Lưu trữ danh mục các nguồn tuyển dụng (TopCV, ITviec...) để phân tích chất lượng và số lượng tin của từng nguồn.
 * **Chiều Địa Điểm (dim_location):** Danh mục các tỉnh thành, quận huyện được chuẩn hóa để phân tích bản đồ địa lý việc làm.
 * **Chiều Kỹ Năng (dim_skill):** Danh mục các kỹ năng kỹ thuật được phân nhóm theo các nhóm công nghệ lớn (như nhóm Lập trình, Cơ sở dữ liệu, Điện toán đám mây, Công cụ điều phối).
-* **Chiều Cấp Bậc (dim_job_level):** Danh mục cấp bậc chuẩn hóa (Intern, Fresher, Junior, Senior, Lead...).
-* **Chiều Loại Hình (dim_type):** Phân loại loại hình hợp đồng làm việc.
-* **Chiều Hình Thức Làm Việc (dim_work_mode):** Phân loại các hình thức làm việc thực tế.
+* **Chiều Thuộc Tính Công Việc (dim_job_attributes):** Phân loại cấp bậc chuẩn hóa (Intern, Fresher, Junior, Senior, Lead...), loại hình hợp đồng làm việc (Full-time, Part-time...), và hình thức làm việc thực tế (Onsite, Hybrid, Remote).
 
 ---
 

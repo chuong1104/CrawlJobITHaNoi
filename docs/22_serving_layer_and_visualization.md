@@ -8,7 +8,7 @@ Tài liệu này trình bày chi tiết kiến trúc, công nghệ và các bư�
 
 Việc phục vụ dữ liệu được thiết kế theo hướng **Decoupled (Tách biệt hoàn toàn)** để tối ưu hiệu năng và tận dụng thế mạnh của từng công cụ:
 
-1. **Analytical Queries (BI):** Power BI sẽ kết nối trực tiếp vào file `dwh.duckdb` cục bộ thông qua ODBC Driver. Cấu trúc lưu trữ dạng cột (Columnar) của DuckDB hỗ trợ truy vấn các mô hình Star Schema (Aggregate millions of rows) trong tích tắc mà không cần một server cơ sở dữ liệu riêng biệt.
+1. **Analytical Queries (BI):** Power BI sẽ kết nối trực tiếp vào file `jobitvn.duckdb` cục bộ thông qua ODBC Driver. Cấu trúc lưu trữ dạng cột (Columnar) của DuckDB hỗ trợ truy vấn các mô hình Star Schema (Aggregate millions of rows) trong tích tắc mà không cần một server cơ sở dữ liệu riêng biệt.
 2. **Transactional/Search Queries (Web API):** Web backend (FastAPI) sẽ đọc dữ liệu từ **PostgreSQL**. Dữ liệu đã được đồng bộ lên PostgreSQL dưới dạng Materialized View `mart_api.latest_jobs_flat`. Bảng này đã được Denormalize (khử chuẩn hóa, không cần JOIN), đính kèm GIN Index để Full-text search siêu tốc dưới 50ms.
 
 ---
@@ -44,7 +44,7 @@ Với kiến trúc mới, Power BI kết nối thẳng vào **DuckDB** thông qu
 
 ### 3.1. Cài đặt ODBC
 1. Cài đặt DuckDB ODBC Driver cho Windows.
-2. Khai báo chuỗi kết nối: `Driver=DuckDB Driver;Database=D:\JobITVN\job_scraper_de_project\data\dwh.duckdb;` trong tùy chọn ODBC của Power BI.
+2. Khai báo chuỗi kết nối: `Driver=DuckDB Driver;Database=D:\JobITVN\job_scraper_de_project\data\jobitvn.duckdb;` trong tùy chọn ODBC của Power BI.
 
 ### 3.2. Mô hình dữ liệu (Star Schema)
 Khi tải dữ liệu vào Power BI, sử dụng trực tiếp các bảng/view do `dbt` tạo ra trong DuckDB:

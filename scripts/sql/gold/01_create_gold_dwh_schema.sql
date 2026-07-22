@@ -203,7 +203,9 @@ JOIN silver.jobs jb ON j.job_id = jb.job_id
 JOIN dwh.dim_company c ON f.company_key = c.company_key
 JOIN dwh.dim_source so ON f.source_key = so.source_key
 JOIN dwh.dim_job_attributes a ON f.attribute_key = a.attribute_key
-WHERE f.is_active = TRUE AND j.is_current = TRUE;
+LEFT JOIN silver.job_duplicate_groups dg ON jb.duplicate_group_id = dg.group_id
+WHERE f.is_active = TRUE AND j.is_current = TRUE
+  AND (jb.duplicate_group_id IS NULL OR jb.job_id = dg.canonical_job_id);
 
 -- Indexes cho Mart API để Search tốc độ ánh sáng
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mart_api_jobs_id ON mart_api.latest_jobs_flat (id);

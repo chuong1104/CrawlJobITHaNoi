@@ -29,6 +29,12 @@ x-airflow-common: &airflow-common
     AIRFLOW__SCHEDULER__PARSING_PROCESSES: 1
     AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: 60
     AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: 60
+    AIRFLOW__CORE__PARALLELISM: 4
+    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: 4
+    AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: 1
+    AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_SIZE: 3
+    AIRFLOW__DATABASE__SQL_ALCHEMY_MAX_OVERFLOW: 1
+    AIRFLOW__WEBSERVER__WORKER_CLASS: gevent
   volumes:
     - ./dags:/opt/airflow/dags
     - ./logs:/opt/airflow/logs
@@ -53,7 +59,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts/sql/silver:/docker-entrypoint-initdb.d
+      - ./scripts/sql:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
@@ -122,8 +128,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '4.0'
-          memory: 6G
+          cpus: '2.0'
+          memory: 2G
         reservations:
           memory: 1G
     restart: unless-stopped

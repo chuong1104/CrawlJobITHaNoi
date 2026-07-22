@@ -25,7 +25,7 @@ parsed AS (
         CAST(salary AS VARCHAR)                               AS salary_raw,
         {{ parse_salary('salary') }},
         CAST(experience_level AS VARCHAR)                     AS experience_raw,
-        {{ parse_experience('experience_level', 'job_description') }},
+        {{ parse_experience('experience_level', "COALESCE(requirements, '') || ' ' || COALESCE(job_description, '')") }},
         NULL::VARCHAR[]                      AS skills_raw,
         CAST(job_deadline AS VARCHAR)                         AS deadline_raw,
         NULL::DATE                           AS posted_date_raw,

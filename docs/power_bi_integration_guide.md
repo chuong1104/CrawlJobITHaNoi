@@ -35,19 +35,17 @@ Mô hình hình sao là chuẩn mực thiết kế giúp tối ưu hiệu năng 
 ### 2.1 Chọn các bảng trong cửa sổ Navigator
 Trong danh sách bảng hiển thị dưới schema **`dwh`**, tích chọn các bảng sau rồi nhấn **Load**:
 - **Bảng Fact (Bảng chính):**
-  - `dwh.fct_job_posting` (Chứa các thước đo lương, kinh nghiệm, cờ trạng thái hoạt động; và các cột phân loại thẳng như `job_level`, `job_type`, `work_mode`).
+  - `dwh.fct_job_posting` (Chứa các thước đo lương, kinh nghiệm, cờ trạng thái hoạt động; và trường khóa `attribute_key`).
 - **Các bảng Dimension (Bảng chiều lọc):**
   - `dwh.dim_company` (Tên công ty, quy mô, ngành nghề).
   - `dwh.dim_date` (Thông tin thời gian: ngày, tháng, năm, quý).
   - `dwh.dim_source` (Các trang cào dữ liệu: TopCV, JobsGo, LinkedIn...).
+  - `dwh.dim_job_attributes` (Cấp bậc công việc `job_level`, loại hình làm việc `job_type`, hình thức làm việc `work_mode`).
 - **Các bảng Bridge (Bảng cầu nối cho quan hệ nhiều-nhiều):**
   - `dwh.bridge_job_skill` (Cầu nối giữa tin tuyển dụng và kỹ năng).
   - `dwh.dim_skill` (Danh mục tên kỹ năng: Python, Java, SQL...).
   - `dwh.bridge_job_location` (Cầu nối giữa tin tuyển dụng và địa điểm).
   - `dwh.dim_location` (Tên tỉnh thành: Hà Nội, TP.HCM, Đà Nẵng).
-
-> [!NOTE]
-> Bảng `dim_job_attributes` **không tồn tại** trong Data Warehouse. Các thông tin cấp bậc (`job_level`), loại hình làm việc (`job_type`) và hình thức làm việc (`work_mode`) đã được lưu thẳng vào `fct_job_posting`. **Không import bảng này vào PowerBI.**
 
 ### 2.2 Thiết lập mối quan hệ trong Model View
 Di chuyển sang tab **Model View** (biểu tượng sơ đồ kết nối ở thanh công cụ bên trái ngoài cùng) và liên kết các khóa ngoại như sau bằng cách kéo thả:
@@ -58,9 +56,8 @@ Di chuyển sang tab **Model View** (biểu tượng sơ đồ kết nối ở t
    - *Relationship:* 1-to-Many.
 3. **Liên kết Nguồn tuyển dụng:** Kéo trường `dim_source[source_key]` thả vào `fct_job_posting[source_key]`.
    - *Relationship:* 1-to-Many.
-
-> [!IMPORTANT]
-> **Không cần liên kết `dim_job_attributes`** — bảng này không tồn tại trong database. Các cột phân loại `job_level`, `job_type`, `work_mode` đã có sẵn trong `fct_job_posting` và dùng trực tiếp làm bộ lọc/trục biểu đồ mà không cần bảng dimension riêng.
+4. **Liên kết Thuộc tính công việc:** Kéo trường `dim_job_attributes[attribute_key]` thả vào `fct_job_posting[attribute_key]`.
+   - *Relationship:* 1-to-Many.
 5. **Liên kết Kỹ năng (Quan hệ Nhiều - Nhiều):**
    - Kéo `fct_job_posting[job_posting_fact_id]` nối tới `bridge_job_skill[job_posting_fact_id]` (1-to-Many).
    - Kéo `dim_skill[skill_key]` nối tới `bridge_job_skill[skill_key]` (1-to-Many).
@@ -155,8 +152,8 @@ Chuyển sang tab **Report View** (Thanh công cụ bên trái trên cùng) đ�
 ### 4.5 Bản Đồ Phân Phối Lương Trung Bình Theo Ngành/Cấp Bậc (Matrix)
 1. Chọn biểu tượng **Matrix** (Bảng ma trận).
 2. Kéo trường `dim_company[industry]` vào phần **Rows** (Dòng).
-3. Kéo trường `fct_job_posting[job_level]` hoặc `fct_job_posting[job_type]` vào phần **Columns** (Cột).
-   - Các cột phân loại này nằm **thẳng trong `fct_job_posting`**, không cần qua bảng dim riêng.
+3. Kéo trường `dim_job_attributes[job_level]` hoặc `dim_job_attributes[job_type]` vào phần **Columns** (Cột).
+   - Các cột phân loại này nằm trong bảng `dim_job_attributes`.
 4. Kéo measure `[Avg Salary (M.VND)]` vào phần **Values**.
 5. Định dạng bảng với tính năng **Conditional Formatting** (Tô màu nền theo dải màu từ thấp đến cao) để làm nổi bật những ô có mức lương cao đột biến.
 

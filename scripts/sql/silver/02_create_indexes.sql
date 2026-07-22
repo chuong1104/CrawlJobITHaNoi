@@ -31,6 +31,18 @@ CREATE INDEX IF NOT EXISTS idx_jobs_active
 CREATE INDEX IF NOT EXISTS idx_jobs_company_id
     ON silver.jobs (company_id);
 
+-- Index lọc theo trạng thái và active status
+CREATE INDEX IF NOT EXISTS idx_jobs_status_active
+    ON silver.jobs (job_status, is_active);
+
+-- Index lọc theo latest content hash
+CREATE INDEX IF NOT EXISTS idx_jobs_latest_content
+    ON silver.jobs (latest_content_hash);
+
+-- Index lọc theo duplicate group
+CREATE INDEX IF NOT EXISTS idx_jobs_duplicate_group
+    ON silver.jobs (duplicate_group_id);
+
 -- ---------------------------------------------------------------------------
 -- 2. Index cho bảng job_snapshots (SCD Type 2)
 -- ---------------------------------------------------------------------------
@@ -43,6 +55,17 @@ CREATE INDEX IF NOT EXISTS idx_job_snapshots_current
 -- Index để check CDC pseudo (content hash)
 CREATE INDEX IF NOT EXISTS idx_job_snapshots_content_hash
     ON silver.job_snapshots (content_hash);
+
+-- Index lọc theo valid_to (chỉ lấy các bản ghi đang hiệu lực)
+CREATE INDEX IF NOT EXISTS idx_snapshots_valid_to
+    ON silver.job_snapshots (valid_to)
+    WHERE valid_to IS NULL;
+
+-- Partial index siêu tốc độ lọc theo deadline của các active snapshots
+-- Tối ưu hóa cho tiến trình sp_auto_expire_deadline() hàng ngày
+CREATE INDEX IF NOT EXISTS idx_snapshots_current_deadline
+    ON silver.job_snapshots (deadline_date)
+    WHERE is_current = TRUE;
 
 -- ---------------------------------------------------------------------------
 -- 3. Index cho các bảng N:N (Bridge Tables)
@@ -60,7 +83,7 @@ CREATE INDEX IF NOT EXISTS idx_snapshot_locations_location_id
 -- 4. Index cho Audit Log (job_events)
 -- ---------------------------------------------------------------------------
 
--- Index để xem lịch sử sự kiện của một job
+-- Index để xem lịch sử sự kiện của một job (composite index tối ưu sắp xếp)
 CREATE INDEX IF NOT EXISTS idx_job_events_job_id
     ON silver.job_events (job_id, created_at DESC);
 

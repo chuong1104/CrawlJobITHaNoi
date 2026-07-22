@@ -2,863 +2,117 @@
 
 ## 1. Mục tiêu
 
-Hệ thống cần tự động:
+Hệ thống cần tự động điều phối toàn bộ các công đoạn của vòng đời dữ liệu một cách trơn tru, bao gồm:
+* Thu thập dữ liệu việc làm từ nhiều nguồn song song.
+* Chuyển đổi tầng Staging/Intermediate thông qua dbt DuckDB.
+* Đồng bộ và chuẩn hóa vào cơ sở dữ liệu Silver PostgreSQL (3NF) kèm xử lý SCD Type 2 & Trigram Aliasing.
+* Xây dựng kho dữ liệu Gold DWH và refresh các materialized views phục vụ Web API.
+* Export dữ liệu Marts ra S3 Delta tables phục vụ ML và Power BI.
+* Bảo trì hệ thống (VACUUM Delta Tables và Archive dữ liệu JSON thô cũ).
 
-* Thu thập dữ liệu việc làm từ nhiều website tuyển dụng.
-* Làm sạch và chuẩn hóa dữ liệu.
-* Đồng bộ dữ liệu vào cơ sở dữ liệu 3NF.
-* Thực hiện CDC, SCD và Incremental Load.
-* Nạp dữ liệu vào Data Warehouse.
-* Xây dựng Data Mart.
-* Cập nhật Search Engine.
-* Cập nhật Recommendation Engine.
-* Chạy Data Quality Check.
-* Gửi cảnh báo khi pipeline gặp lỗi.
-
-Toàn bộ các tác vụ trên được điều phối bởi Apache Airflow.
+Toàn bộ luồng được Apache Airflow điều phối tự động qua một DAG chính chạy hàng ngày.
 
 ---
 
-# 2. Vai trò của Airflow trong hệ thống
+## 2. Thiết kế và Lập lịch DAG
 
-Airflow không thực hiện ETL.
+Kiến trúc điều phối sử dụng một DAG duy nhất: **`daily_job_pipeline`** (định nghĩa tại [daily_pipeline.py](file:///d:/JobITVN/job_scraper_de_project/dags/daily_pipeline.py)).
 
-Airflow chỉ chịu trách nhiệm:
-
-* Scheduling
-* Orchestration
-* Monitoring
-* Retry
-* Dependency Management
-* Alerting
-
-Ví dụ:
-
-```text
-Airflow
-   |
-   +--> crawl_topcv.py
-   +--> crawl_itviec.py
-   +--> normalize_jobs.py
-   +--> load_silver.py
-   +--> build_dwh.py
-```
-
-Các script ETL nằm trong source code.
-
-Airflow chỉ gọi chúng theo đúng thứ tự.
+### Lập lịch (Schedule)
+* **Thời gian chạy:** 6:00 sáng hàng ngày (Giờ Việt Nam - `0 6 * * *`).
+* **Catchup:** `False` (không chạy bù các ngày cũ).
+* **Owner:** `data-platform`.
 
 ---
 
-# 3. Nguyên tắc thiết kế DAG
+## 3. Kiến trúc Luồng Công Việc (Task Dependencies)
 
-Thiết kế DAG theo nguyên tắc:
-
-```text
-Một DAG
-=
-Một business workflow hoàn chỉnh
-```
-
-Không nên:
+Luồng chạy của DAG được thiết kế tối ưu hóa song song bằng cách chia nhánh ngay sau khi kết thúc bước biến đổi Staging:
 
 ```text
-crawl DAG
-etl DAG
-warehouse DAG
-mart DAG
-```
-
-vì việc debug khó khăn.
-
-Nên:
-
-```text
-daily_job_pipeline DAG
-```
-
-bao gồm toàn bộ quy trình.
-
----
-
-# 4. Kiến trúc DAG tổng thể
-
-```text
-daily_job_pipeline
-
-├── start
-│
-├── crawl_sources
-│   ├── topcv
-│   ├── itviec
-│   ├── topdev
-│   ├── jobsgo
-│   ├── ybox
-│   ├── glints
-│   └── ...
-│
-├── validate_raw_data
-│
-├── raw_to_staging
-│
-├── staging_to_silver
-│
-├── detect_duplicates
-│
-├── detect_job_changes
-│
-├── apply_scd_type2
-│
-├── expire_old_jobs
-│
-├── load_dimensions
-│
-├── load_fact_jobs
-│
-├── build_search_mart
-│
-├── build_recommendation_mart
-│
-├── build_bi_marts
-│
-├── run_data_quality
-│
-├── generate_metrics
-│
-├── notify_success
-│
-└── end
+       ┌───────────┐
+       │   start   │
+       └─────┬─────┘
+             ▼
+ ┌───────────────────────┐
+ │   crawl_all_sources   │  (Chạy run_scrapers.py, đẩy metrics lên XCom)
+ └───────────┬───────────┘
+             ▼
+ ┌───────────────────────┐
+ │    run_dbt_staging    │  (dbt: Staging & Intermediate DuckDB)
+ └─────┬───────────┬─────┘
+       │           ├─────────────────────────┐
+       ▼           ▼                         ▼
+ ┌───────────┐ ┌──────────┐         ┌─────────────────┐
+ │run_dbt_gol│ │sync_silv │         │archive_bronze_da│ (Lưu trữ nén JSON cũ)
+ └─────┬─────┘ └─────┬────┘         └────────┬────────┘
+       │             ▼                       │
+       │       ┌──────────┐                  │
+       │       │sync_postg│                  │
+       │       └─────┬────┘                  │
+       │             ▼                       │
+       │       ┌──────────┐                  │
+       │       │export_gol│                  │
+       │       └─────┬────┘                  │
+       ▼             ▼                       │
+ ┌─────┴─────────────┴────┐                  │
+ │  vacuum_delta_tables   │                  │ (Dọn dẹp file Delta cũ > 7 ngày)
+ └───────────┬────────────┘                  │
+             ▼                               ▼
+       ┌───────────┐                   ┌───────────┐
+       │    end    │                   │    end    │
+       └───────────┘                   └───────────┘
 ```
 
 ---
 
-# 5. Airflow Deployment Architecture
+## 4. Chi tiết các Tác vụ (Tasks) trong DAG
 
-```text
-Docker Compose
+### 4.1. `crawl_all_sources` (PythonOperator)
+* **Chức năng:** Thực thi script [run_scrapers.py](file:///d:/JobITVN/job_scraper_de_project/scripts/run_scrapers.py) qua `subprocess.Popen` để chạy song song các scrapers (`--workers 3`).
+* **Bảo vệ an toàn:** Tự động kiểm tra file session cookie LinkedIn. Nếu chưa có session, tự động loại trừ LinkedIn (`--exclude linkedin`) để tránh bị block.
+* **Đo lường (Metrics & XCom):** Đọc trực tiếp luồng stdout để phân tích số lượng bản ghi crawl thành công/thất bại của từng nguồn, sau đó đẩy thông tin (KPIs) lên XCom dưới dạng `scraper_metrics`.
+* **Giới hạn thời gian (Timeout):** 5 giờ 15 phút (tránh treo vô hạn).
 
-├── airflow-webserver
-├── airflow-scheduler
-├── airflow-worker
-├── airflow-triggerer
-├── postgres-airflow
-├── redis
-└── flower
-```
+### 4.2. `run_dbt_staging` (BashOperator)
+* **Chức năng:** Chạy lệnh `dbt run --select staging intermediate` để làm sạch, rename, cast type dữ liệu từ Bronze Delta Lake S3 vào DuckDB local.
 
-Project Infrastructure:
+### 4.3. `sync_silver_layer` (PythonOperator)
+* **Chức năng:** Gọi Python Sync Engine (`SilverSyncEngine` và `JobDedupEngine`).
+  1. Đọc dữ liệu từ DuckDB nạp vào PostgreSQL Silver schema (3NF).
+  2. Thực hiện CDC Watermark checking (dựa trên `silver.cdc_watermarks`).
+  3. Xử lý logic SCD Type 2 trên các tin thay đổi nội dung (`job_snapshots`).
+  4. Thực hiện thuật toán Dedup trùng lặp cross-source (`JobDedupEngine`).
+* **Thời gian chờ tối đa:** 30 phút.
 
-```text
-Docker
+### 4.4. `run_dbt_gold` (BashOperator)
+* **Chức năng:** Chạy lệnh `dbt run --select marts --target duckdb_dev` để xây dựng mô hình Star Schema và các BI Data Marts trên DuckDB phục vụ Power BI.
 
-├── Airflow
-├── PostgreSQL (Airflow metadata)
-├── Floci S3 (Data Lake: Bronze, Silver, Gold)
-├── FastAPI
-├── Search Service
-└── Recommendation Service
-```
+### 4.5. `sync_postgres_gold` (PythonOperator)
+* **Chức năng:** Gọi các Stored Procedures trên PostgreSQL để đồng bộ dữ liệu từ tầng Silver sang Gold DWH và refresh các views phục vụ Web:
+  * `CALL dwh.sp_sync_dim_source();`
+  * `CALL dwh.sp_sync_dim_company();`
+  * `CALL dwh.sp_sync_fact_job_posting();`
+  * `CALL dwh.sp_sync_skills_and_locations();`
+  * `CALL dwh.sp_refresh_mart_api();` (refresh view `mart_api.latest_jobs_flat`)
+  * `CALL dwh.sp_refresh_all_materialized_views();` (refresh các materialized views concurrently).
 
----
+### 4.6. `export_gold_marts` (PythonOperator)
+* **Chức năng:** Gọi `GoldExporter` kết nối PostgreSQL đọc dữ liệu Gold Marts và ghi đè Delta tables lên S3 (`s3://jobit-gold/gold/`) phục vụ ML.
 
-# 6. DAG Schedule
+### 4.7. `vacuum_delta_tables` (PythonOperator)
+* **Chức năng:** Bảo trì các bảng Delta S3, gọi lệnh `VACUUM` để xóa bỏ lịch sử log và file Parquet cũ quá 7 ngày (`VACUUM_RETENTION_HOURS=168`).
+* **Quy tắc kích hoạt (Trigger Rule):** `all_done` (vẫn chạy dọn dẹp ngay cả khi các bước export trước đó gặp lỗi).
 
-## Crawl
-
-```text
-Every day
-06:00
-```
-
-Ví dụ:
-
-```python
-schedule="0 6 * * *"
-```
+### 4.8. `archive_bronze_data` (PythonOperator)
+* **Chức năng:** Tối ưu dung lượng đĩa cứng local. Gọi module `bronze_archiver` gom nén toàn bộ các file JSON thô cũ quá 30 ngày thành Parquet nén ZSTD trên S3.
+* **Quy tắc kích hoạt (Trigger Rule):** `all_done`.
 
 ---
 
-## Data Warehouse Refresh
-
-```text
-07:00
-```
-
-Sau khi crawl hoàn tất.
-
----
-
-## Search Index Refresh
-
-```text
-07:30
-```
-
----
-
-## Recommendation Refresh
-
-```text
-08:00
-```
-
----
-
-# 7. DAG 1 - Daily Job Pipeline
-
-Đây là DAG quan trọng nhất.
-
-## Luồng xử lý
-
-```text
-Crawl
- ↓
-Raw Validation
- ↓
-Staging
- ↓
-Silver
- ↓
-Dedup
- ↓
-SCD
- ↓
-Warehouse
- ↓
-Data Mart
- ↓
-Quality Check
-```
-
----
-
-## Task Dependency
-
-```text
-start
-
-↓
-
-crawl_all_sources
-
-↓
-
-validate_raw_data
-
-↓
-
-raw_to_staging
-
-↓
-
-staging_to_silver
-
-↓
-
-detect_duplicates
-
-↓
-
-detect_changes
-
-↓
-
-apply_scd
-
-↓
-
-expire_jobs
-
-↓
-
-load_dimensions
-
-↓
-
-load_fact_jobs
-
-↓
-
-build_data_marts
-
-↓
-
-quality_checks
-
-↓
-
-end
-```
-
----
-
-# 8. Crawl Task Group
-
-Airflow Task Group:
-
-```text
-crawl_sources
-
-├── crawl_topcv
-├── crawl_itviec
-├── crawl_topdev
-├── crawl_jobsgo
-├── crawl_vietnamworks
-├── crawl_glints
-├── crawl_ybox
-└── crawl_careerlink
-```
-
-Các task chạy song song.
-
-```python
-TaskGroup
-```
-
-Giúp giảm thời gian crawl.
-
----
-
-# 9. Retry Strategy
-
-Website tuyển dụng thường:
-
-```text
-429 Too Many Requests
-403 Forbidden
-Timeout
-Cloudflare
-```
-
-Retry:
-
-```python
-retries=3
-retry_delay=timedelta(minutes=5)
-```
-
----
-
-Ví dụ:
-
-```python
-default_args = {
-    "owner": "data-platform",
-    "retries": 3,
-    "retry_delay": timedelta(minutes=5)
-}
-```
-
----
-
-# 10. Timeout Strategy
-
-Một crawler bị treo không được làm kẹt DAG.
-
-Ví dụ:
-
-```python
-execution_timeout=timedelta(minutes=30)
-```
-
-Nếu quá thời gian:
-
-```text
-FAILED
-```
-
-Airflow tự retry.
-
----
-
-# 11. Incremental Crawling
-
-Không crawl toàn bộ website mỗi ngày.
-
-Chỉ crawl:
-
-```text
-new jobs
-updated jobs
-recent jobs
-```
-
-Airflow truyền:
-
-```python
-crawl_date
-```
-
-vào crawler.
-
-Ví dụ:
-
-```text
-today - 3 days
-```
-
----
-
-# 12. CDC Detection
-
-Task:
-
-```text
-detect_changes
-```
-
-Mục tiêu:
-
-```text
-Job Title Changed
-Salary Changed
-Skill Changed
-Requirement Changed
-```
-
-So sánh:
-
-```text
-latest_snapshot
-vs
-new_snapshot
-```
-
-bằng:
-
-```text
-content_hash
-```
-
----
-
-## Ví dụ
-
-```text
-Hash cũ
-8f3a...
-
-Hash mới
-71ac...
-```
-
-=> tạo snapshot mới.
-
----
-
-# 13. SCD Type 2
-
-Task:
-
-```text
-apply_scd_type2
-```
-
-Thực hiện:
-
-```text
-snapshot cũ
-
-is_current = false
-valid_to = now()
-```
-
-Tạo:
-
-```text
-snapshot mới
-
-is_current = true
-valid_from = now()
-```
-
----
-
-# 14. Job Expiration Logic
-
-Task:
-
-```text
-expire_old_jobs
-```
-
-Nếu:
-
-```text
-crawl thành công
-nhưng không tìm thấy job
-```
-
-thì:
-
-```text
-not_found_count += 1
-```
-
----
-
-Ví dụ:
-
-```text
-3 lần liên tiếp không thấy
-```
-
-=> job chuyển:
-
-```text
-EXPIRED
-```
-
----
-
-# 15. Load Data Warehouse
-
-Task:
-
-```text
-load_dimensions
-```
-
-Bao gồm:
-
-```text
-dim_company
-dim_skill
-dim_location
-dim_source
-dim_date
-```
-
----
-
-Tiếp theo:
-
-```text
-load_fact_jobs
-```
-
-Tạo:
-
-```text
-fact_job_posting
-```
-
----
-
-# 16. Build Data Mart
-
-Task:
-
-```text
-build_bi_marts
-```
-
-Tạo:
-
-```text
-mart.bi_job_overview
-mart.bi_skill_demand
-mart.bi_salary_analysis
-```
-
----
-
-Task:
-
-```text
-build_search_mart
-```
-
-Tạo:
-
-```text
-mart.search_job_documents
-```
-
----
-
-Task:
-
-```text
-build_recommendation_mart
-```
-
-Tạo:
-
-```text
-mart.recommendation_job_features
-```
-
----
-
-# 17. Data Quality Check
-
-Task:
-
-```text
-run_data_quality
-```
-
-Kiểm tra:
-
-```text
-NULL title
-NULL company
-Duplicate URL
-Duplicate Identity Hash
-Salary Outlier
-Invalid Experience
-```
-
----
-
-Ví dụ:
-
-```sql
-SELECT COUNT(*)
-FROM jobs
-WHERE canonical_url IS NULL;
-```
-
----
-
-Nếu vượt ngưỡng:
-
-```text
-FAILED
-```
-
-DAG dừng.
-
----
-
-# 18. Monitoring Metrics
-
-Task:
-
-```text
-generate_metrics
-```
-
-Sinh metrics:
-
-```text
-Jobs Crawled
-Jobs Inserted
-Jobs Updated
-Jobs Expired
-Duplicate Jobs
-Failed Pages
-Runtime
-```
-
-Lưu vào:
-
-```text
-pipeline_metrics
-```
-
----
-
-# 19. Alerting
-
-Airflow gửi cảnh báo:
-
-```text
-Email
-Slack
-Discord
-Telegram
-```
-
-Ví dụ:
-
-```text
-DAG Failed
-Crawler Failed
-Data Quality Failed
-Warehouse Load Failed
-```
-
----
-
-# 20. DAG Folder Structure
-
-```text
-airflow/
-
-├── dags/
-│   ├── daily_job_pipeline.py
-│   ├── weekly_maintenance.py
-│   └── monthly_cleanup.py
-│
-├── plugins/
-│
-├── logs/
-│
-└── config/
-```
-
----
-
-# 21. Maintenance DAG
-
-## Weekly Maintenance
-
-```text
-weekly_maintenance
-```
-
-Nhiệm vụ:
-
-```text
-VACUUM
-ANALYZE
-Reindex
-Cleanup Temp Tables
-```
-
----
-
-## Monthly Cleanup
-
-```text
-monthly_cleanup
-```
-
-Nhiệm vụ:
-
-```text
-Archive Logs
-Archive Raw Files
-Delete Old Crawl Artifacts
-```
-
----
-
-# 22. Docker Execution Flow
-
-```text
-Airflow Scheduler
-
-↓
-
-Trigger DAG
-
-↓
-
-Crawler Containers
-
-↓
-
-Raw Data
-
-↓
-
-PostgreSQL
-
-↓
-
-ETL
-
-↓
-
-Warehouse
-
-↓
-
-Data Mart
-
-↓
-
-Search API
-
-↓
-
-Web App
-
-↓
-
-PowerBI
-```
-
----
-
-# 23. Production-Like Architecture
-
-```text
-                    Airflow
-                       |
-      ----------------------------------
-      |                |               |
-      v                v               v
-
-   Crawlers       ETL Jobs       DQ Checks
-
-      |                |               |
-      ----------------------------------
-                       |
-                       v
-
-               PostgreSQL
-
-        raw → staging → silver
-
-                       |
-                       v
-
-               Data Warehouse
-
-                       |
-                       v
-
-                  Data Mart
-
-         --------------------------
-         |            |           |
-         v            v           v
-
-      PowerBI      Search     Web App
-```
-
----
-
-# 24. Các DAG cuối cùng của dự án
-
-```text
-daily_job_pipeline
-weekly_maintenance
-monthly_cleanup
-search_reindex
-recommendation_refresh
-```
-
-Trong đó:
-
-```text
-daily_job_pipeline
-```
-
-là DAG trung tâm và xử lý gần như toàn bộ luồng dữ liệu của hệ thống.
-
----
-
-# 25. Kết luận
-
-Apache Airflow đóng vai trò orchestration layer của toàn bộ nền tảng dữ liệu việc làm.
-
-Airflow không chứa logic ETL phức tạp mà chỉ điều phối:
-
-* Crawling
-* Data Validation
-* CDC
-* SCD Type 2
-* Incremental Load
-* Data Warehouse Loading
-* Data Mart Building
-* Search Index Refresh
-* Recommendation Refresh
-* Monitoring
-* Alerting
-
-Thiết kế này đủ gần với một hệ thống Data Platform thực tế và phù hợp để triển khai hoàn toàn bằng Docker trên máy cá nhân hoặc môi trường giả lập AWS thông qua Floci.
+## 5. Chiến lược Retry & An toàn
+
+1. **Retry tự động:** Cấu hình mặc định của DAG có `retries = 1` và `retry_delay = 5 phút` đối với tất cả các tasks để tự động khắc phục các lỗi chập mạng tạm thời.
+2. **Cách ly tài nguyên (Limits & Isolation):**
+   * Container Airflow được giới hạn deploy tối đa `4.0 cpus` và `6G RAM` để không gây nghẽn máy host.
+   * Cấu hình Airflow WebServer worker (`AIRFLOW__WEBSERVER__WORKERS: 1`) và Scheduler parsing processes giúp Airflow chạy cực kỳ nhẹ lúc nhàn rỗi (CPU gần 0%, RAM tiêu tốn ít).

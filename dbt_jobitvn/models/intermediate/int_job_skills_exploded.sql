@@ -24,17 +24,28 @@ WITH deduped_jobs AS (
     WHERE requirements_text IS NOT NULL OR description IS NOT NULL
 ),
 
--- Load skill mapping từ seed
+-- Load skill mapping từ seed và chuẩn bị regex pattern tương ứng với từng keyword
 skill_map AS (
     SELECT DISTINCT
         LOWER(raw_skill)        AS raw_skill_lower,
         normalized_skill,
         skill_category,
-        skill_subcategory
+        skill_subcategory,
+        -- Thiết lập Regex pattern thông minh để hỗ trợ các từ khóa đặc biệt (C++, C#, .NET, v.v.)
+        CASE 
+            -- Nếu bắt đầu và kết thúc đều bằng ký tự word: \bkeyword\b
+            WHEN LOWER(raw_skill) ~ '^[a-zA-Z0-9_].*[a-zA-Z0-9_]$' THEN '\b' || regexp_escape(LOWER(raw_skill)) || '\b'
+            -- Nếu chỉ bắt đầu bằng ký tự word: \bkeyword
+            WHEN LOWER(raw_skill) ~ '^[a-zA-Z0-9_]' THEN '\b' || regexp_escape(LOWER(raw_skill))
+            -- Nếu chỉ kết thúc bằng ký tự word: keyword\b
+            WHEN LOWER(raw_skill) ~ '[a-zA-Z0-9_]$' THEN regexp_escape(LOWER(raw_skill)) || '\b'
+            -- Trường hợp khác: dùng regex escape thông thường
+            ELSE regexp_escape(LOWER(raw_skill))
+        END AS regex_pattern
     FROM {{ ref('dim_skill_mapping') }}
 ),
 
--- Cross join + filter: kiểm tra từng keyword có trong text không
+-- Inner Join thông qua regexp_matches: loại bỏ hoàn toàn CROSS JOIN chậm chạp
 matched AS (
     SELECT
         j.source_code,
@@ -44,17 +55,7 @@ matched AS (
         s.skill_subcategory,
         s.raw_skill_lower       AS matched_keyword
     FROM deduped_jobs j
-    CROSS JOIN skill_map s
-    -- Dùng LIKE với word boundary đơn giản (space, punctuation, start/end)
-    WHERE j.combined_text LIKE ('% ' || s.raw_skill_lower || ' %')
-       OR j.combined_text LIKE (s.raw_skill_lower || ' %')
-       OR j.combined_text LIKE ('% ' || s.raw_skill_lower)
-       OR j.combined_text = s.raw_skill_lower
-       OR j.combined_text LIKE ('% ' || s.raw_skill_lower || ',%')
-       OR j.combined_text LIKE ('% ' || s.raw_skill_lower || '.')
-       OR j.combined_text LIKE ('% ' || s.raw_skill_lower || ':')
-       OR j.combined_text LIKE ('% ' || s.raw_skill_lower || '/')
-       OR j.combined_text LIKE ('% ' || s.raw_skill_lower || '\n%')
+    INNER JOIN skill_map s ON regexp_matches(j.combined_text, s.regex_pattern)
 ),
 
 -- Dedupe: mỗi job chỉ có 1 dòng / 1 normalized_skill (tránh trùng do nhiều keyword map cùng skill)

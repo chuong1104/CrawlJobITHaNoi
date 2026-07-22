@@ -1,4 +1,4 @@
-﻿import os
+import os
 from datetime import datetime
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
@@ -312,7 +312,7 @@ class JobokoScraper(BaseScraper):
 		pages: int | None = None,
 		existing_urls: set[str] | None = None,
 	) -> list[str]:
-		raw_urls = self._collect_urls(pages)
+		raw_urls = self._collect_urls(pages, existing_urls=existing_urls)
 		return self._deduplicate_urls(raw_urls, existing_urls)
 
 

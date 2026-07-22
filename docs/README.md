@@ -45,9 +45,9 @@ thường gặp nhiều khó khăn trong việc tìm kiếm cơ hội:
 * Không yêu cầu kinh nghiệm
 * Việc làm thêm liên quan đến CNTT
 
-Thông tin tuyển dụng hiện đang phân tán trên nhiều nền tảng: ITviec, TopCV, VietnamWorks, CareerViet, TopDev, Glints, JobsGO, Vieclam24h, JobOKO, CareerLink, YBOX, Indeed, Job123. Người tìm việc phải truy cập từng nền tảng riêng lẻ.
+Thông tin tuyển dụng hiện đang phân tán trên nhiều nền tảng (ITviec, TopCV, VietnamWorks, CareerViet, JobsGO, JobOKO, LinkedIn, Job123). Người tìm việc phải truy cập từng nền tảng riêng lẻ.
 
-Dự án xây dựng một nền tảng dữ liệu tập trung giúp:
+Dự án xây dựng một nền tảng dữ liệu tập trung giúp cào và tổng hợp từ 8 nguồn chính trên.
 * Tổng hợp dữ liệu tuyển dụng
 * Loại bỏ dữ liệu trùng lặp (Entity & Company Alias resolution)
 * Theo dõi vòng đời việc làm

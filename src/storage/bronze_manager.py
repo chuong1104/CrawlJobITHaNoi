@@ -1,3 +1,4 @@
+from datetime import timedelta
 import json
 import logging
 import hashlib
@@ -153,6 +154,56 @@ class BronzeManager:
                 upload_success = False
 
         return upload_success
+
+    def get_recent_job_urls(self, source: str, days: int = 14) -> set[str]:
+        """
+        Lấy danh sách các job_url đã được cào trong N ngày gần nhất từ Delta Lake Bronze
+        hoặc từ các file JSONL local làm fallback.
+        Dùng cho Early Stopping và Phase 2 Dedup.
+        """
+        urls: set[str] = set()
+        
+        # 1. Thử đọc từ Delta Lake local cache
+        try:
+            from src.config import DATA_BRONZE_DIR
+            local_delta_path = DATA_BRONZE_DIR / source / "_delta"
+            if local_delta_path.exists():
+                import deltalake
+                dt = deltalake.DeltaTable(str(local_delta_path))
+                # Lọc theo batch_date gần đây
+                cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+                df = dt.to_pandas(filters=[("_batch_date", ">=", cutoff_date)])
+                if not df.empty and "job_url" in df.columns:
+                    urls.update(df["job_url"].dropna().unique())
+                    logger.info(f"[{source}] Loaded {len(urls)} recent job_urls from Delta Lake (>= {cutoff_date})")
+                    return urls
+        except Exception as e:
+            logger.debug(f"[{source}] Delta Lake read for recent URLs skipped: {e}")
+
+        # 2. Fallback: Đọc trực tiếp từ file JSONL local
+        try:
+            from src.config import DATA_BRONZE_DIR
+            source_dir = DATA_BRONZE_DIR / source
+            if source_dir.exists():
+                cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+                for folder in source_dir.iterdir():
+                    if folder.is_dir() and folder.name >= cutoff_date and not folder.name.startswith("_"):
+                        for jsonl_file in folder.glob("*_valid.jsonl"):
+                            with jsonl_file.open("r", encoding="utf-8") as f:
+                                for line in f:
+                                    if line.strip():
+                                        try:
+                                            row = json.loads(line)
+                                            if row.get("job_url"):
+                                                urls.add(row["job_url"])
+                                        except Exception:
+                                            pass
+                if urls:
+                    logger.info(f"[{source}] Loaded {len(urls)} recent job_urls from local JSONL files")
+        except Exception as e:
+            logger.warning(f"[{source}] Error reading local JSONL for recent URLs: {e}")
+
+        return urls
 
     # ------------------------------------------------------------------
     # Helpers

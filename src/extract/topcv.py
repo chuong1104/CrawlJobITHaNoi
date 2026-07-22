@@ -1,4 +1,4 @@
-﻿
+
 import os
 from datetime import datetime
 from urllib.parse import urljoin
@@ -265,6 +265,9 @@ class TopCVScraper(BaseScraper):
                 elif noise in title.lower() and title.lower().endswith(noise):
                     idx = title.lower().rfind(noise)
                     title = title[:idx].strip()
+            
+            if title and "toppy ai" in title.lower():
+                title = None
 
         if not title:
             # Fallback for brand pages or other layouts
@@ -280,7 +283,7 @@ class TopCVScraper(BaseScraper):
                     if t_get.lower() in [
                         "địa điểm làm việc", "mô tả công việc", "yêu cầu ứng viên", 
                         "quyền lợi được hưởng", "giới thiệu", "thông tin công ty"
-                    ]:
+                    ] or "toppy ai" in t_get.lower():
                         continue
                     parts = el.css("::text").getall()
                     t = " ".join(p.strip() for p in parts if p.strip())

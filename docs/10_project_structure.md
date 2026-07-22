@@ -61,7 +61,6 @@ job_scraper_de_project/
 │   ├── extract/               # Python Scrapers (Playwright/Scrapling)
 │   │   ├── base_scraper.py    # Abstract base class cho mọi scraper
 │   │   ├── utils/             # Tiện ích nội bộ (regex_extractor...)
-│   │   ├── careerlink.py
 │   │   ├── careerviet.py
 │   │   ├── itviec.py
 │   │   ├── job_123.py

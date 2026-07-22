@@ -1,4 +1,4 @@
-﻿import os
+import os
 import random
 import time
 from datetime import datetime
@@ -26,6 +26,7 @@ class LinkedInScraperV2(BaseScraper):
         self.username = os.getenv("LINKEDIN_USERNAME") or os.getenv("LINKEDIN_EMAIL")
         self.password = os.getenv("LINKEDIN_PASSWORD") or os.getenv("LINKEDIN_PASS")
         self.session_file = Path("data/auth/linkedin_session.json")
+        self._company_cache: dict[str, tuple[Optional[str], Optional[str]]] = {}
 
     def _load_cookies(self) -> Optional[list[dict]]:
         """
@@ -468,7 +469,13 @@ class LinkedInScraperV2(BaseScraper):
     # ------------------------------------------------------------------
     # Collect URLs (Phase 1)
     # ------------------------------------------------------------------
-    def _collect_urls(self, pages: Optional[int] = None, keywords: Optional[List[str]] = None) -> list[str]:
+    def _collect_urls(
+        self,
+        pages: Optional[int] = None,
+        keywords: Optional[List[str]] = None,
+        existing_urls: Optional[set[str]] = None,
+        **kwargs,
+    ) -> list[str]:
         """Thu thập URL dựa trên keyword."""
         from patchright.sync_api import sync_playwright
 
@@ -484,89 +491,84 @@ class LinkedInScraperV2(BaseScraper):
                 headless=True,
                 args=["--no-sandbox", "--disable-dev-shm-usage"]
             )
-            context = browser.new_context(
-                viewport={"width": 1280, "height": 900},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-            )
+            try:
+                context = browser.new_context(
+                    viewport={"width": 1280, "height": 900},
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                )
 
-            def block_media(route):
-                if route.request.resource_type in ("image", "media", "font", "stylesheet"):
-                    route.abort()
-                else:
-                    route.continue_()
+                page = context.new_page()
+                page.route("**/*", self._block_media)
 
-            page = context.new_page()
-            page.route("**/*", block_media)
+                if self.username and self.password:
+                    self._perform_login(page, context)
 
-            if self.username and self.password:
-                self._perform_login(page, context)
+                for kw in search_keywords:
+                    kw_label = kw if kw else "Mặc định"
+                    self.logger.info(f"=== Bắt đầu tìm kiếm Keyword: {kw_label} ===")
 
-            for kw in search_keywords:
-                kw_label = kw if kw else "Mặc định"
-                self.logger.info(f"=== Bắt đầu tìm kiếm Keyword: {kw_label} ===")
+                    page_num = 1
+                    while True:
+                        page_label = f"{page_num}/{max_pages}" if max_pages is not None else f"{page_num}/AUTO"
+                        page_url = self.get_list_page_url(page_num, keyword=kw)
 
-                page_num = 1
-                while True:
-                    page_label = f"{page_num}/{max_pages}" if max_pages is not None else f"{page_num}/AUTO"
-                    page_url = self.get_list_page_url(page_num, keyword=kw)
+                        self.logger.info(f"[Phase 1] [{kw_label}] Page {page_label} -> {page_url}")
 
-                    self.logger.info(f"[Phase 1] [{kw_label}] Page {page_label} -> {page_url}")
+                        try:
+                            page.goto(page_url, wait_until="domcontentloaded", timeout=45000)
+                        except Exception as e:
+                            self.logger.error(f"Lỗi tải trang: {e}")
+                            page.screenshot(path=f"error_load_page_{page_num}.png")
+                            break
 
-                    try:
-                        page.goto(page_url, wait_until="domcontentloaded", timeout=45000)
-                    except Exception as e:
-                        self.logger.error(f"Lỗi tải trang: {e}")
-                        page.screenshot(path=f"error_load_page_{page_num}.png")
-                        break
+                        current_url = page.url.lower()
+                        if any(x in current_url for x in ['challenge', 'checkpoint', 'security-verification', 'authwall']):
+                            self.logger.error("Bị chặn bởi màn hình checkpoint bảo mật của LinkedIn!")
+                            page.screenshot(path="checkpoint_error.png")
+                            break
 
-                    current_url = page.url.lower()
-                    if any(x in current_url for x in ['challenge', 'checkpoint', 'security-verification', 'authwall']):
-                        self.logger.error("Bị chặn bởi màn hình checkpoint bảo mật của LinkedIn!")
-                        page.screenshot(path="checkpoint_error.png")
-                        break
+                        try:
+                            page.wait_for_selector(
+                                "a.job-card-container__link, a.job-card-list__title--link, a.base-card__full-link",
+                                timeout=25000
+                            )
+                        except Exception as wait_err:
+                            self.logger.warning(f"Timeout chờ job cards trang {page_num}: {wait_err}")
+                            page.screenshot(path=f"timeout_page_{page_num}.png")
+                            break
 
-                    try:
-                        page.wait_for_selector(
-                            "a.job-card-container__link, a.job-card-list__title--link, a.base-card__full-link",
-                            timeout=25000
+                        scrolled_urls = self._scroll_job_list(page)
+
+                        new_urls_count = 0
+                        for u in scrolled_urls:
+                            if u not in seen_urls:
+                                seen_urls.add(u)
+                                new_urls_count += 1
+                                all_urls.append(u)
+
+                        self.logger.info(
+                            f"[Phase 1] [{kw_label}] Page {page_num}: Thu thập {len(scrolled_urls)} URLs "
+                            f"(mới: {new_urls_count}, tổng: {len(all_urls)})"
                         )
-                    except Exception as wait_err:
-                        self.logger.warning(f"Timeout chờ job cards trang {page_num}: {wait_err}")
-                        page.screenshot(path=f"timeout_page_{page_num}.png")
-                        break
 
-                    scrolled_urls = self._scroll_job_list(page)
+                        if len(scrolled_urls) == 0 or new_urls_count == 0:
+                            self.logger.info(f"[Phase 1] [{kw_label}] Không tìm thấy URL job mới nào. Dừng keyword này.")
+                            break
 
-                    new_urls_count = 0
-                    for u in scrolled_urls:
-                        if u not in seen_urls:
-                            seen_urls.add(u)
-                            new_urls_count += 1
-                            all_urls.append(u)
+                        if max_pages is not None and page_num >= max_pages:
+                            self.logger.info(f"[Phase 1] [{kw_label}] Đạt giới hạn số trang {max_pages}. Dừng keyword này.")
+                            break
 
-                    self.logger.info(
-                        f"[Phase 1] [{kw_label}] Page {page_num}: Thu thập {len(scrolled_urls)} URLs "
-                        f"(mới: {new_urls_count}, tổng: {len(all_urls)})"
-                    )
+                        has_next = self._check_next_page_exists(page)
+                        if not has_next:
+                            self.logger.info(f"[Phase 1] [{kw_label}] Không có nút trang tiếp theo khả dụng. Dừng keyword này.")
+                            break
 
-                    if len(scrolled_urls) == 0 or new_urls_count == 0:
-                        self.logger.info(f"[Phase 1] [{kw_label}] Không tìm thấy URL job mới nào. Dừng keyword này.")
-                        break
-
-                    if max_pages is not None and page_num >= max_pages:
-                        self.logger.info(f"[Phase 1] [{kw_label}] Đạt giới hạn số trang {max_pages}. Dừng keyword này.")
-                        break
-
-                    has_next = self._check_next_page_exists(page)
-                    if not has_next:
-                        self.logger.info(f"[Phase 1] [{kw_label}] Không có nút trang tiếp theo khả dụng. Dừng keyword này.")
-                        break
-
-                    page_num += 1
-                    delay = random.uniform(2.5, 4.5)
-                    time.sleep(delay)
-
-            browser.close()
+                        page_num += 1
+                        delay = random.uniform(1.0, 2.0)
+                        time.sleep(delay)
+            finally:
+                browser.close()
 
         return all_urls
 
@@ -668,16 +670,24 @@ class LinkedInScraperV2(BaseScraper):
         """
         Điều hướng sang trang /about/ của công ty để lấy mô tả và website.
         Trả về (company_info_text, company_website).
+        Hỗ trợ caching và loại bỏ query params thừa.
         """
-        about_url = re.sub(r'/life/?$', '/about/', company_url)
-        about_url = re.sub(r'/(?:posts|jobs|people)?/?$', '/about/', about_url)
-        if not about_url.endswith('/about/'):
-            about_url = about_url.rstrip('/') + '/about/'
+        parsed = urllib.parse.urlparse(company_url)
+        base_path = parsed.path.rstrip('/')
+        base_path = re.sub(r'/(?:about|life|posts|jobs|people)$', '', base_path)
+        about_path = base_path + '/about/' if not base_path.endswith('/about') else base_path + '/'
+        about_url = urllib.parse.urlunparse((parsed.scheme or "https", parsed.netloc or "www.linkedin.com", about_path, "", "", ""))
+
+        if about_url in self._company_cache:
+            self.logger.info(f"Dùng cache thông tin công ty: {about_url}")
+            return self._company_cache[about_url]
 
         page = context.new_page()
+        company_info = None
+        website = None
         try:
-            page.goto(about_url, wait_until="domcontentloaded", timeout=30000)
-            time.sleep(1.5)
+            page.goto(about_url, wait_until="domcontentloaded", timeout=12000)
+            time.sleep(1.0)
 
             # Bấm "Hiển thị tất cả chi tiết" nếu có
             try:
@@ -688,15 +698,12 @@ class LinkedInScraperV2(BaseScraper):
                 )
                 if see_all_btn:
                     see_all_btn.click()
-                    time.sleep(1.0)
+                    time.sleep(0.5)
             except Exception:
                 pass
 
             html = page.content()
             soup = BeautifulSoup(html, "html.parser")
-
-            company_info = None
-            website = None
 
             # Lấy mô tả công ty
             desc_selectors = [
@@ -731,16 +738,17 @@ class LinkedInScraperV2(BaseScraper):
                         website = href
                         break
 
-            return company_info, website
-
         except Exception as e:
             self.logger.warning(f"Không lấy được thông tin công ty từ {about_url}: {e}")
-            return None, None
         finally:
             try:
                 page.close()
             except Exception:
                 pass
+
+        res = (company_info, website)
+        self._company_cache[about_url] = res
+        return res
 
     # ------------------------------------------------------------------
     # Parse detail HTML (BeautifulSoup)
@@ -995,20 +1003,25 @@ class LinkedInScraperV2(BaseScraper):
         """Trích xuất yêu cầu kinh nghiệm từ mô tả công việc."""
         patterns = [
             # Vietnamese
-            r'(?:từ\s+|tối\s+thiểu\s+|ít\s+nhất\s+)?(\d+\s*[-–~]\s*\d+|\d+\+?)\s*năm(?:\s+kinh\s+nghiệm| \s+làm\s+việc)?',
+            r'(?:từ\s+|tối\s+thiểu\s+|ít\s+nhất\s+)?(\d+\s*[-–~]\s*\d+|\d+\+?)\s*năm(?:\s+kinh\s+nghiệm|\s+làm\s+việc)?',
             r'kinh\s+nghiệm\s*:?\s*(?:từ\s+|tối\s+thiểu\s+|ít\s+nhất\s+)?(\d+\s*[-–~]\s*\d+|\d+\+?)\s*năm?',
             r'(?:có|yêu\s+cầu)?\s*(?:ít\s+nhất|tối\s+thiểu)?\s*(\d+\s*[-–~]\s*\d+|\d+\+?)\s*năm\s+(?:kinh\s+nghiệm|làm\s+việc)',
             # English
             r'(\d+\s*[-–~]\s*\d+|\d+\+?)\s*years?(?:\s+of)?\s+(?:working\s+|relevant\s+)?experience',
-            r'(?:minimum|at\s+least|min\.?)\s+(\d+)\s*\+?\s*years?(?:\s+of)?\s+(?:working\s+|relevant\s+)?experience',
+            r'(?:minimum|at\s+least|min\.?)\s+(\d+\s*[-–~]\s*\d+|\d+\+?)\s*years?(?:\s+of)?\s+(?:working\s+|relevant\s+)?experience',
             r'experience\s*:?\s*(?:minimum\s+)?(\d+\s*[-–~]\s*\d+|\d+\+?)\s*years?',
             r'(\d+)\+?\s*years?(?:\s+of)?\s+(?:relevant\s+)?experience',
         ]
         for pat in patterns:
             m = re.search(pat, text, re.IGNORECASE)
             if m:
-                snippet = m.group(0).strip()
+                snippet = m.group(1).strip() if len(m.groups()) > 0 and m.group(1) else m.group(0).strip()
                 snippet = re.sub(r'\s+', ' ', snippet)
+                if re.match(r'^\d+\s*[-–~]\s*\d+$', snippet):
+                    parts = re.split(r'[-–~]', snippet)
+                    return f"{parts[0].strip()} - {parts[1].strip()} năm"
+                elif re.match(r'^\d+\+?$', snippet):
+                    return f"{snippet} năm"
                 return snippet
         return None
 
@@ -1320,6 +1333,7 @@ class LinkedInScraperV2(BaseScraper):
                     "Chrome/122.0.0.0 Safari/537.36"
                 )
             )
+            context.route("**/*", self._block_media)
 
             # Load session cookies
             cookies = self._load_cookies()
@@ -1380,7 +1394,7 @@ class LinkedInScraperV2(BaseScraper):
 
                 # Delay giữa các request để tránh rate limit
                 if i < len(urls):
-                    delay = random.uniform(2.0, 4.0)
+                    delay = random.uniform(1.5, 3.0)
                     time.sleep(delay)
 
             browser.close()

@@ -56,7 +56,7 @@ Mục tiêu kiến trúc:
     ┌────────────────────┐          ┌────────────────────┐
     │     OLTP & API     │          │    OLAP & BI       │
     │   (PostgreSQL)     │          │    (DuckDB)        │
-    │  [Silver / Gold]   │          │  [dwh.duckdb]      │
+    │  [Silver / Gold]   │          │  [jobitvn.duckdb]  │
     └──────────┬─────────┘          └──────────┬─────────┘
                │                               │
                ▼                               ▼
@@ -118,7 +118,7 @@ Website ──> Scraper (Playwright/Scrapy) ──> Local JSONL (Cache) ──> 
 Mặc dù Data Lake chính nằm trên S3 (Floci), để tối ưu độ trễ I/O trong quá trình chuyển đổi, `dbt` được cấu hình đọc trực tiếp các file JSONL cache ở local (`read_json_auto`).
 
 ## 5.2 Tầng Compute: DuckDB
-DuckDB dùng extension `json` để đọc hàng ngàn file JSONL vào RAM, thực hiện parse bằng regex (ví dụ: bóc tách số năm kinh nghiệm, mức lương) cực nhanh. DuckDB cũng tạo file database `dwh.duckdb` chứa các bảng Staging và Warehouse.
+DuckDB dùng extension `json` để đọc hàng ngàn file JSONL vào RAM, thực hiện parse bằng regex (ví dụ: bóc tách số năm kinh nghiệm, mức lương) cực nhanh. DuckDB cũng tạo file database `jobitvn.duckdb` chứa các bảng Staging và Warehouse.
 
 ## 5.3 Tầng Transformation: dbt
 *   **Staging Models:** Làm sạch dữ liệu, chuẩn hóa tên cột, parse thông tin JSON text.
@@ -142,10 +142,41 @@ DuckDB dùng extension `json` để đọc hàng ngàn file JSONL vào RAM, th�
 
 # 7. Airflow Orchestration
 
-Airflow điều phối luồng chạy hàng ngày (Daily DAG):
+Airflow điều phối luồng chạy hàng ngày (Daily DAG) với các nhánh chạy song song để tối ưu hóa thời gian:
 
 ```text
-crawl ──► dbt_run_staging ──► sync_silver ──► sync_postgres_gold ──► vacuum_duckdb (và dọn Delta S3)
+       ┌───────────┐
+       │   start   │
+       └─────┬─────┘
+             ▼
+ ┌───────────────────────┐
+ │   crawl_all_sources   │
+ └───────────┬───────────┘
+             ▼
+ ┌───────────────────────┐
+ │    run_dbt_staging    │
+ └─────┬───────────┬─────┘
+       │           ├─────────────────────────┐
+       ▼           ▼                         ▼
+ ┌───────────┐ ┌──────────┐         ┌─────────────────┐
+ │dbt_gold   │ │sync_silv │         │archive_bronze   │
+ └─────┬─────┘ └─────┬────┘         └────────┬────────┘
+       │             ▼                       │
+       │       ┌──────────┐                  │
+       │       │sync_gold │                  │
+       │       └─────┬────┘                  │
+       │             ▼                       │
+       │       ┌──────────┐                  │
+       │       │export_mar│                  │
+       │       └─────┬────┘                  │
+       ▼             ▼                       │
+ ┌─────┴─────────────┴────┐                  │
+ │  vacuum_delta_tables   │                  │
+ └───────────┬────────────┘                  │
+             ▼                               ▼
+       ┌───────────┐                   ┌───────────┐
+       │    end    │                   │    end    │
+       └───────────┘                   └───────────┘
 ```
 
 ---
