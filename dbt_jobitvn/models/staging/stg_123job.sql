@@ -3,9 +3,7 @@
 ) }}
 
 WITH source_data AS (
-    SELECT * 
-    FROM read_json_auto('/opt/airflow/data/bronze/123job/**/*_valid.jsonl', format='newline_delimited', ignore_errors=true)
-    WHERE job_id IS NOT NULL
+    {{ read_bronze_source('123job') }}
 ),
 parsed AS (
     SELECT

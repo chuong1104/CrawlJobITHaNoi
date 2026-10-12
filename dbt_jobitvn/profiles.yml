@@ -11,9 +11,10 @@ dbt_jobitvn:
         - aws
         - delta    # Đọc Delta Lake tables trực tiếp từ S3 bằng delta_scan()
       settings:
-        s3_endpoint: "{{ env_var('AWS_ENDPOINT_URL', 'localhost:4566') | replace('http://', '') }}"
+        s3_endpoint: "{{ env_var('AWS_ENDPOINT_URL', 'localhost:4566') | replace('http://', '') | replace('https://', '') }}"
         s3_access_key_id: "{{ env_var('AWS_ACCESS_KEY_ID', 'test') }}"
         s3_secret_access_key: "{{ env_var('AWS_SECRET_ACCESS_KEY', 'test') }}"
+        s3_region: "{{ env_var('AWS_DEFAULT_REGION', 'us-east-1') }}"
         s3_use_ssl: "false"
         s3_url_style: "path"
 

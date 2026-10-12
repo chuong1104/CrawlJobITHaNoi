@@ -17,6 +17,7 @@ import json
 import subprocess
 import time
 import os
+import re
 from datetime import datetime, timedelta
 
 from airflow import DAG
@@ -89,22 +90,21 @@ def _crawl_and_push_metrics(**kwargs) -> dict:
     failed_count  = 0
     total_records = 0
     scraper_rows: list[dict] = []
+    ansi_regex = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 
     for line in stdout.splitlines():
-        if " ok" in line or " fail" in line:
-            parts = line.split()
-            try:
-                name    = next((p for p in parts if p.isalpha() and len(p) > 2), "")
-                status  = "ok" if " ok" in line else "fail"
-                records = int(next((p for p in parts if p.isdigit()), 0))
-                scraper_rows.append({"name": name, "status": status, "records": records})
-                if status == "ok":
-                    success_count += 1
-                    total_records += records
-                else:
-                    failed_count += 1
-            except (ValueError, StopIteration):
-                pass
+        clean_line = ansi_regex.sub("", line).strip()
+        parts = clean_line.split()
+        if len(parts) >= 2 and parts[1] in ("ok", "fail"):
+            name = parts[0]
+            status = parts[1]
+            records = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+            scraper_rows.append({"name": name, "status": status, "records": records})
+            if status == "ok":
+                success_count += 1
+                total_records += records
+            else:
+                failed_count += 1
 
     metrics = {
         "run_date":       datetime.utcnow().isoformat(),
@@ -152,16 +152,85 @@ with DAG(
         doc_md="Chạy toàn bộ scrapers song song và push metrics lên XCom",
     )
 
-    # ── Task 2: dbt (Staging) ────────────────
-    run_dbt_staging = BashOperator(
+    # ── Task 2: dbt (Staging) with Smart Fallback ───────────
+    def _run_dbt_staging(**kwargs):
+        """
+        Chạy dbt staging & intermediate với cơ chế Fallback thông minh:
+        - Ưu tiên 1: Đọc Parquet trực tiếp từ S3 Floci (s3_parquet)
+        - Fallback: Nếu S3 chưa có Parquet hoặc lỗi kết nối -> tự động chuyển sang đọc JSONL local (local_jsonl)
+        """
+        import sys
+        sys.path.insert(0, "/opt/airflow")
+        import subprocess
+        from src.storage.s3_client import S3ClientWrapper
+
+        s3_wrapper = S3ClientWrapper()
+        mode = "local_jsonl"
+        try:
+            objs = s3_wrapper.list_objects("jobit-bronze", prefix="bronze/")
+            parquet_files = [f for f in objs if f.endswith(".parquet")]
+            if len(parquet_files) > 0:
+                mode = "s3_parquet"
+                print(f"[dbt Staging] ✓ Phát hiện {len(parquet_files)} file Parquet trên S3 Floci -> Sử dụng S3 Parquet Engine!")
+            else:
+                print("[dbt Staging] ⚠ Chưa tìm thấy file Parquet trên S3 Floci -> Tự động Fallback sang JSONL local.")
+        except Exception as e:
+            print(f"[dbt Staging] ⚠ Lỗi kiểm tra S3 Floci: {e} -> Tự động Fallback sang JSONL local.")
+
+        cmd = [
+            "dbt", "run",
+            "--select", "staging", "intermediate",
+            "--profiles-dir", "/opt/airflow/dbt_jobitvn",
+            "--project-dir", "/opt/airflow/dbt_jobitvn",
+            "--vars", f'{{"bronze_source_mode": "{mode}"}}'
+        ]
+
+        # Stream logs trực tiếp lên Airflow UI
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        for line in process.stdout:
+            print(line, end="")
+        returncode = process.wait()
+
+        if returncode != 0:
+            # Nếu chạy s3_parquet bị lỗi và chưa thử local, tự động thử lại với local_jsonl
+            if mode == "s3_parquet":
+                print("\n[dbt Staging] ⚠ Chạy dbt với S3 Parquet thất bại. Đang kích hoạt Fallback tự động sang JSONL local...")
+                fallback_cmd = [
+                    "dbt", "run",
+                    "--select", "staging", "intermediate",
+                    "--profiles-dir", "/opt/airflow/dbt_jobitvn",
+                    "--project-dir", "/opt/airflow/dbt_jobitvn",
+                    "--vars", '{"bronze_source_mode": "local_jsonl"}'
+                ]
+                fb_process = subprocess.Popen(
+                    fallback_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                )
+                for line in fb_process.stdout:
+                    print(line, end="")
+                fb_code = fb_process.wait()
+                if fb_code != 0:
+                    raise RuntimeError(f"dbt run thất bại cả ở chế độ S3 Parquet lẫn Fallback JSONL local (exit {fb_code})")
+                return {"mode": "local_jsonl_fallback", "status": "success"}
+            else:
+                raise RuntimeError(f"dbt run thất bại với exit code {returncode}")
+
+        return {"mode": mode, "status": "success"}
+
+    run_dbt_staging = PythonOperator(
         task_id="run_dbt_staging",
-        bash_command=(
-            "dbt run "
-            "--select staging intermediate "
-            "--profiles-dir /opt/airflow/dbt_jobitvn "
-            "--project-dir /opt/airflow/dbt_jobitvn"
-        ),
-        doc_md="Chạy dbt models cho tầng Staging và Intermediate (DuckDB).",
+        python_callable=_run_dbt_staging,
+        execution_timeout=timedelta(minutes=30),
+        doc_md="Chạy dbt staging & intermediate (Ưu tiên S3 Parquet, tự động fallback JSONL local).",
     )
 
     # ── Task 3: Sync Silver Layer ───────────────────────

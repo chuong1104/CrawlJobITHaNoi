@@ -7,6 +7,7 @@ x-logging: &default-logging
 
 x-airflow-common: &airflow-common
   build: .
+  image: jobitvn-platform:latest
   <<: *default-logging
   env_file:
     - .env
@@ -50,7 +51,7 @@ services:
   postgres:
     image: postgres:17
     <<: *default-logging
-    command: postgres -c shared_buffers=512MB -c work_mem=32MB -c maintenance_work_mem=128MB -c effective_cache_size=1GB -c random_page_cost=1.1
+    command: postgres -c shared_buffers=128MB -c work_mem=8MB -c maintenance_work_mem=64MB -c effective_cache_size=256MB -c random_page_cost=1.1
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -72,7 +73,10 @@ services:
     <<: *default-logging
     ports:
       - "4566:4566"
+    environment:
+      - FLOCI_RUN_AS_ROOT=true
     volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
       - ./data/floci:/app/data
     restart: unless-stopped
 
@@ -136,6 +140,7 @@ services:
 
   web-api:
     build: .
+    image: jobitvn-platform:latest
     entrypoint: []
     command: python -m src.api.main
     ports:

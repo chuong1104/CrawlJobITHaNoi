@@ -16,6 +16,7 @@ patchright>=0.0.1
 playwright-stealth>=1.0.6
 
 # --- Data Processing ---
+numpy>=2.0.0
 pandas>=2.2.0
 pydantic>=2.6.0
 duckdb>=1.1.0              # Min version có delta extension
