@@ -38,7 +38,7 @@ class S3ClientWrapper:
         except ClientError as e:
             error_code = e.response.get("Error", {}).get("Code")
             # If bucket doesn't exist (404), create it
-            if error_code == "404":
+            if error_code in ("404", "NoSuchBucket"):
                 try:
                     logger.info(f"Creating S3 Bucket: {bucket_name}")
                     if self.region_name == "us-east-1":
@@ -55,6 +55,9 @@ class S3ClientWrapper:
             else:
                 logger.error(f"Error checking bucket '{bucket_name}': {e}")
                 return False
+        except Exception as e:
+            logger.error(f"Unexpected connection error with S3 endpoint for bucket '{bucket_name}': {e}")
+            return False
 
     def upload_file(self, local_file_path: Path | str, bucket_name: str, object_name: str) -> bool:
         """Upload a local file to S3 bucket."""

@@ -5,10 +5,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, List
 import re
-import csv
+
 import json
 import urllib.parse
-
+import asyncio
 from bs4 import BeautifulSoup
 
 from src.extract.base_scraper import BaseScraper
@@ -585,11 +585,18 @@ class LinkedInScraperV2(BaseScraper):
             self.logger.info(f"[Phase 3] Fetching: {url}")
             page.goto(url, wait_until="domcontentloaded", timeout=45000)
 
+            # Mức độ 1: Fast-fail nếu gặp trang "Page not found" (Title chứa "Page not found" hoặc tiếng Ả Rập)
+            title_text = page.title()
+            if "not found" in title_text.lower() or "لم يتم العثور" in title_text:
+                self.logger.warning(f"Trang không tồn tại (Page Not Found): {url}")
+                page.close()
+                return None
+
             # Đợi tiêu đề job xuất hiện
             try:
                 page.wait_for_selector(
                     "h1, h2, .jobs-unified-top-card__job-title, .top-card-layout__title, .topcard__title",
-                    timeout=5000
+                    timeout=3000
                 )
             except Exception:
                 self.logger.warning(f"Timeout chờ tiêu đề job tại {url}")
@@ -686,8 +693,9 @@ class LinkedInScraperV2(BaseScraper):
         company_info = None
         website = None
         try:
-            page.goto(about_url, wait_until="domcontentloaded", timeout=12000)
-            time.sleep(1.0)
+            # Mức độ 1: Giảm timeout xuống 4s để tránh bị block quá lâu
+            page.goto(about_url, wait_until="domcontentloaded", timeout=4000)
+            time.sleep(0.5)
 
             # Bấm "Hiển thị tất cả chi tiết" nếu có
             try:
@@ -751,6 +759,249 @@ class LinkedInScraperV2(BaseScraper):
         return res
 
     # ------------------------------------------------------------------
+    # Async Fetchers (Phase 3 Optimization)
+    # ------------------------------------------------------------------
+    async def _async_fetch_company_info(self, company_url: str, context) -> tuple[Optional[str], Optional[str]]:
+        import asyncio
+        parsed = urllib.parse.urlparse(company_url)
+        base_path = parsed.path.rstrip('/')
+        base_path = re.sub(r'/(?:about|life|posts|jobs|people)$', '', base_path)
+        about_path = base_path + '/about/' if not base_path.endswith('/about') else base_path + '/'
+        about_url = urllib.parse.urlunparse((parsed.scheme or "https", parsed.netloc or "www.linkedin.com", about_path, "", "", ""))
+
+        if about_url in self._company_cache:
+            return self._company_cache[about_url]
+
+        page = await context.new_page()
+        company_info = None
+        website = None
+        try:
+            await page.goto(about_url, wait_until="domcontentloaded", timeout=4000)
+            await asyncio.sleep(0.5)
+
+            try:
+                see_all_btn = await page.query_selector(
+                    "a[aria-label*='chi tiết'], "
+                    "a[aria-label*='details'], "
+                    "a.org-module-card__footer-hoverable"
+                )
+                if see_all_btn:
+                    await see_all_btn.click()
+                    await asyncio.sleep(0.5)
+            except Exception:
+                pass
+
+            html = await page.content()
+            soup = BeautifulSoup(html, "html.parser")
+
+            desc_selectors = [
+                "p.break-words.white-space-pre-wrap",
+                "p[class*='break-words']",
+                ".org-about-us-organization-description",
+                ".org-about-module__description",
+                "[data-test-id='about-us__description']",
+            ]
+            for sel in desc_selectors:
+                el = soup.select_one(sel)
+                if el:
+                    company_info = el.get_text(separator="\n", strip=True)
+                    if company_info:
+                        break
+
+            website_selectors = [
+                "span.link-without-visited-state",
+                "a[href*='http'][data-tracking-control-name*='website']",
+                ".org-about-us-organization-description__website a",
+            ]
+            for sel in website_selectors:
+                el = soup.select_one(sel)
+                if el:
+                    text = el.get_text(strip=True)
+                    if text.startswith("http"):
+                        website = text
+                        break
+                    href = el.get("href", "")
+                    if href.startswith("http"):
+                        website = href
+                        break
+        except Exception as e:
+            pass
+        finally:
+            try:
+                await page.close()
+            except Exception:
+                pass
+
+        res = (company_info, website)
+        self._company_cache[about_url] = res
+        return res
+
+    async def _async_fetch_job_detail_with_playwright(self, url: str, context) -> Optional[dict]:
+        import asyncio
+        page = await context.new_page()
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+
+            title_text = await page.title()
+            if "not found" in title_text.lower() or "لم يتم العثور" in title_text:
+                self.logger.warning(f"Trang không tồn tại (Page Not Found): {url}")
+                await page.close()
+                return None
+
+            try:
+                await page.wait_for_selector(
+                    "h1, h2, .jobs-unified-top-card__job-title, .top-card-layout__title, .topcard__title",
+                    timeout=3000
+                )
+            except Exception:
+                pass
+
+            show_more_selectors = [
+                "button[aria-label*='more']",
+                "button.jobs-description__footer-button",
+                "button[data-tracking-control-name*='show-more']",
+                "button.inline-show-more-text__button",
+                "button.show-more-less-html__button",
+                "button.show-more-less-html__button--more",
+                "xpath=//button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'show more')]",
+                "xpath=//button[contains(., 'Xem thêm')]",
+                "xpath=//button[contains(., 'Hiển thị thêm')]",
+                "xpath=//button[contains(., 'more')]",
+            ]
+            for sel in show_more_selectors:
+                try:
+                    btn = await page.query_selector(sel)
+                    if btn and await btn.is_visible():
+                        await btn.click()
+                        await asyncio.sleep(0.8)
+                        break
+                except Exception:
+                    continue
+
+            await asyncio.sleep(1.0)
+
+            company_info = None
+            company_website = None
+            company_url = None
+
+            try:
+                co_link_el = await page.query_selector("a.app-aware-link[href*='/company/'], a[href*='/company/']")
+                if co_link_el:
+                    company_url = await co_link_el.get_attribute("href")
+                    if company_url:
+                        company_url = company_url.strip()
+                        if company_url.startswith("/"):
+                            company_url = "https://www.linkedin.com" + company_url
+            except Exception:
+                pass
+
+            # [Mức độ 3] Bỏ qua fetch company info để tăng tốc
+            # if company_url:
+            #     company_info, company_website = await self._async_fetch_company_info(company_url, context)
+
+            html = await page.content()
+            job = self.parse_job_detail(html, url)
+            if company_info:
+                job["company_info"] = company_info
+            if company_website:
+                job["company_website"] = company_website
+
+            return job
+        except Exception as e:
+            self.logger.error(f"Lỗi fetch chi tiết job {url}: {e}")
+            return None
+        finally:
+            try:
+                await page.close()
+            except Exception:
+                pass
+
+    async def _process_urls_async(self, urls: list[str], current_date_str: str, manager, state: dict) -> list[dict]:
+        from patchright.async_api import async_playwright
+        import asyncio
+        from src.utils import generate_job_id
+        
+        results = []
+        is_headless = os.getenv("SCRAPER_HEADLESS", "true").lower() == "true" or os.path.exists("/.dockerenv")
+        
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=is_headless,
+                args=["--no-sandbox", "--disable-dev-shm-usage"]
+            )
+            context = await browser.new_context(
+                viewport={"width": 1280, "height": 900},
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/122.0.0.0 Safari/537.36"
+                )
+            )
+            
+            await context.route("**/*", self._block_media)
+            
+            cookies = self._load_cookies()
+            if cookies:
+                try:
+                    await context.add_cookies(cookies)
+                except Exception as e:
+                    self.logger.warning(f"Không load được session cho detail phase: {e}")
+
+            sem = asyncio.Semaphore(5) # 5 concurrent tabs max
+            batch_records = []
+            batch_lock = asyncio.Lock()
+            
+            processed_count = 0
+            total = len(urls)
+
+            async def fetch_worker(url: str):
+                nonlocal processed_count
+                async with sem:
+                    try:
+                        self.logger.info(f"[Phase 3] Đang xử lý (song song): {url}")
+                        job = await self._async_fetch_job_detail_with_playwright(url, context)
+                        if job:
+                            full_text = f"{job.get('job_description', '')}\n{job.get('requirements', '')}\n{job.get('benefits', '')}".strip()
+                            if full_text:
+                                from src.extract.utils.regex_extractor import FallbackRegexExtractor
+                                extracted = FallbackRegexExtractor.parse_all(full_text)
+                                for key, val in extracted.items():
+                                    if not job.get(key) and val:
+                                        job[key] = val
+                            
+                            job.setdefault("source", self.source_name)
+                            job.setdefault("job_url", url)
+                            job.setdefault("scraped_at", datetime.now().isoformat())
+                            job.setdefault("job_id", generate_job_id(self.source_name, url))
+                            
+                            async with batch_lock:
+                                results.append(job)
+                                batch_records.append(job)
+                                processed_count += 1
+                                self.logger.info(f"[Phase 3] ✓ Parsed ({processed_count}/{total}): {job.get('title', 'N/A')} @ {job.get('company', 'N/A')}")
+                                
+                                if len(batch_records) >= self.batch_size or processed_count == total:
+                                    num_valid, num_rejected = manager.append_local_batch(
+                                        source=self.source_name,
+                                        date_str=current_date_str,
+                                        records=batch_records
+                                    )
+                                    state["total_validated"] += num_valid
+                                    state["total_rejected"] += num_rejected
+                                    batch_records.clear()
+                    except Exception as e:
+                        self.logger.error(f"[Phase 3] Lỗi xử lý {url}: {e}")
+                    
+                    await asyncio.sleep(random.uniform(1.0, 2.5))
+
+            tasks = [asyncio.create_task(fetch_worker(u)) for u in urls]
+            await asyncio.gather(*tasks)
+
+            await browser.close()
+            
+        return results
+
+    # ------------------------------------------------------------------
     # Parse detail HTML (BeautifulSoup)
     # ------------------------------------------------------------------
     def parse_job_detail(self, detail_html: str, url: str) -> dict:
@@ -775,6 +1026,9 @@ class LinkedInScraperV2(BaseScraper):
             if el:
                 title = el.get_text(strip=True)
                 if title:
+                    lower_title = title.lower()
+                    if "لم يتم العثور على الصفحة" in lower_title or "page not found" in lower_title or "page non trouvée" in lower_title:
+                        raise ValueError(f"Job bị xóa hoặc bị chặn (Page Not Found): {url}")
                     break
 
         # --- Tên công ty ---
@@ -1239,25 +1493,7 @@ class LinkedInScraperV2(BaseScraper):
     def extract_job_urls(self, list_page_html: str) -> list[str]:
         raise NotImplementedError("Không sử dụng trong V2.")
 
-    # ------------------------------------------------------------------
-    # Save links
-    # ------------------------------------------------------------------
-    def save_links(self, links: list[str], date_str: Optional[str] = None) -> Path:
-        date_str = date_str or get_date_str()
-        links_dir = ensure_dir(self.output_dir / "links")
-        csv_path = links_dir / f"{date_str}_linkedin_v2_links.csv"
 
-        try:
-            with csv_path.open("w", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
-                writer.writerow(["job_url"])
-                for link in links:
-                    writer.writerow([link])
-            self.logger.info(f"[Phase 1] Saved {len(links)} links to CSV -> {csv_path}")
-        except Exception as e:
-            self.logger.error(f"Failed to save CSV links: {e}")
-
-        return csv_path
 
     # ------------------------------------------------------------------
     # Main run (full pipeline: URL + detail scraping)
@@ -1299,7 +1535,6 @@ class LinkedInScraperV2(BaseScraper):
                 self.logger.info("[Phase 1] Không có URL mới để cào. Kết thúc.")
                 return []
 
-            self.save_links(urls, date_str)
 
             # Khởi tạo trạng thái mới cho state.json
             state = {
@@ -1315,89 +1550,29 @@ class LinkedInScraperV2(BaseScraper):
 
         current_date_str = state.get("date_str", date_str)
 
+        # Mức độ 1: Lọc bỏ URL rác (Job ID < 5 ký tự)
+        valid_urls = []
+        for u in urls:
+            m = re.search(r'/jobs/view/(\d+)', u)
+            if m and len(m.group(1)) < 5:
+                self.logger.warning(f"Bỏ qua URL rác có Job ID quá ngắn: {u}")
+                continue
+            valid_urls.append(u)
+        urls = valid_urls
+
         # Phase 3: Fetch + parse chi tiết từng job
         self.logger.info(f"[Phase 3] Bắt đầu fetch chi tiết {len(urls)} jobs...")
         results: list[dict] = []
 
-        with sync_playwright() as p:
-            is_headless = os.getenv("SCRAPER_HEADLESS", "true").lower() == "true" or os.path.exists("/.dockerenv")
-            browser = p.chromium.launch(
-                headless=is_headless,
-                args=["--no-sandbox", "--disable-dev-shm-usage"]
-            )
-            context = browser.new_context(
-                viewport={"width": 1280, "height": 900},
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/122.0.0.0 Safari/537.36"
-                )
-            )
-            context.route("**/*", self._block_media)
+        # Mức độ 2: Xử lý song song bằng asyncio.run
+        import asyncio
+        if urls:
+            results = asyncio.run(self._process_urls_async(urls, current_date_str, manager, state))
 
-            # Load session cookies
-            cookies = self._load_cookies()
-            if cookies:
-                try:
-                    context.add_cookies(cookies)
-                except Exception as e:
-                    self.logger.warning(f"Không load được session cho detail phase: {e}")
-
-            batch_records = []
-            for i, url in enumerate(urls, 1):
-                self.logger.info(f"[Phase 3] ({i}/{len(urls)}) {url}")
-                try:
-                    job = self._fetch_job_detail_with_playwright(url, context)
-                    if job:
-                        # --- Thêm Regex Fallback tự động ---
-                        full_text = f"{job.get('job_description', '')}\n{job.get('requirements', '')}\n{job.get('benefits', '')}".strip()
-                        if full_text:
-                            from src.extract.utils.regex_extractor import FallbackRegexExtractor
-                            extracted = FallbackRegexExtractor.parse_all(full_text)
-                            for key, val in extracted.items():
-                                if not job.get(key) and val:
-                                    job[key] = val
-                        # ------------------------------------
-                        job.setdefault("source", self.source_name)
-                        job.setdefault("job_url", url)
-                        job.setdefault("scraped_at", datetime.now().isoformat())
-                        job.setdefault("job_id", generate_job_id(self.source_name, url))
-                        results.append(job)
-                        batch_records.append(job)
-                        self.logger.info(f"[Phase 3] ✓ Parsed: {job.get('title', 'N/A')} @ {job.get('company', 'N/A')}")
-                except KeyboardInterrupt:
-                    self.logger.info("Bị ngắt bởi người dùng. Lưu kết quả hiện tại...")
-                    break
-                except Exception as e:
-                    self.logger.error(f"[Phase 3] Lỗi xử lý {url}: {e}")
-
-                # Save local batch
-                if len(batch_records) >= self.batch_size or i == len(urls):
-                    if batch_records:
-                        num_valid, num_rejected = manager.append_local_batch(
-                            source=self.source_name,
-                            date_str=current_date_str,
-                            records=batch_records
-                        )
-                        state["total_validated"] += num_valid
-                        state["total_rejected"] += num_rejected
-                        batch_records = []
-
-                    # Cập nhật state
-                    processed_urls = urls[len(state["completed_urls"]):i]
-                    for processed_url in processed_urls:
-                        if processed_url in state["pending_urls"]:
-                            state["pending_urls"].remove(processed_url)
-                        if processed_url not in state["completed_urls"]:
-                            state["completed_urls"].append(processed_url)
-                    self._save_state(state)
-
-                # Delay giữa các request để tránh rate limit
-                if i < len(urls):
-                    delay = random.uniform(1.5, 3.0)
-                    time.sleep(delay)
-
-            browser.close()
+        # Cập nhật state sau khi chạy song song
+        state["pending_urls"] = []
+        state["completed_urls"].extend(urls)
+        self._save_state(state)
 
         # Finalize and upload
         elapsed = (_dt.now() - start_time).total_seconds()

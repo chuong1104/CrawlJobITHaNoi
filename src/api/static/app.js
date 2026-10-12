@@ -1,286 +1,439 @@
-// src/api/static/app.js
-const API_URL = ''; // Relative path queries
+// src/api/static/app.js — v5
+const API_URL = "";
 
 let currentPage = 1;
-let totalPages = 1;
+let salaryChartInstance = null;
+let locationChartInstance = null;
+let skillsChartInstance = null;
 
-// Initialize on DOM load
+// ── Helpers ──────────────────────────────────────────────
+function fmt(num) {
+    if (num === null || num === undefined || num === "") return "0";
+    return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+}
+
+function srcClass(name) {
+    const map = {
+        topcv: "src-topcv",
+        jobsgo: "src-jobsgo",
+        linkedin: "src-linkedin",
+        itviec: "src-itviec",
+        vietnamworks: "src-vietnamworks",
+        careerviet: "src-careerviet",
+        joboko: "src-joboko",
+        "123job": "src-123job",
+    };
+    return map[(name || "").toLowerCase()] || "src-default";
+}
+
+// ── DOMContentLoaded ─────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
-    loadSummaryStats();
+    // Tab navigation
+    document.querySelectorAll(".nav-link:not(.external)").forEach(link => {
+        link.addEventListener("click", e => {
+            e.preventDefault();
+            const targetId = link.getAttribute("data-target");
+            document.querySelectorAll(".nav-link:not(.external)").forEach(n => n.classList.remove("active"));
+            link.classList.add("active");
+            document.querySelectorAll(".tab-content").forEach(c => {
+                c.classList.remove("active");
+                c.classList.add("hidden");
+            });
+            const tab = document.getElementById(targetId);
+            tab.classList.remove("hidden");
+            tab.classList.add("active");
+
+            if (targetId === "analytics-tab") loadAnalytics();
+        });
+    });
+
+    // Toggle advanced filters
+    const toggleBtn = document.getElementById("toggle-filter-btn");
+    const advFilters = document.getElementById("advanced-filters");
+    toggleBtn.addEventListener("click", () => {
+        advFilters.classList.toggle("hidden");
+        toggleBtn.classList.toggle("active");
+    });
+
+    // Search
+    document.getElementById("search-btn").addEventListener("click", () => { currentPage = 1; loadJobs(); });
+    document.getElementById("search-input").addEventListener("keypress", e => { if (e.key === "Enter") { currentPage = 1; loadJobs(); } });
+
+    // Filters
+    ["filter-location", "filter-salary", "filter-experience", "filter-source", "filter-sort"].forEach(id => {
+        document.getElementById(id).addEventListener("change", () => { currentPage = 1; loadJobs(); });
+    });
+
+    // Pagination
+    document.getElementById("prev-btn").addEventListener("click", () => { if (currentPage > 1) { currentPage--; loadJobs(); } });
+    document.getElementById("next-btn").addEventListener("click", () => { currentPage++; loadJobs(); });
+
+    // Initial data
+    loadKPIs();
     loadJobs();
-
-    // Event listeners
-    document.getElementById("search-btn").addEventListener("click", () => {
-        currentPage = 1;
-        loadJobs();
-    });
-    
-    document.getElementById("search-input").addEventListener("keypress", (e) => {
-        if (e.key === "Enter") {
-            currentPage = 1;
-            loadJobs();
-        }
-    });
-
-    // Add listeners for all filter elements
-    document.getElementById("filter-location").addEventListener("change", () => {
-        currentPage = 1;
-        loadJobs();
-    });
-
-    document.getElementById("filter-salary").addEventListener("change", () => {
-        currentPage = 1;
-        loadJobs();
-    });
-
-    document.getElementById("filter-experience").addEventListener("change", () => {
-        currentPage = 1;
-        loadJobs();
-    });
-
-    document.getElementById("filter-source").addEventListener("change", () => {
-        currentPage = 1;
-        loadJobs();
-    });
-
-    document.getElementById("filter-sort").addEventListener("change", () => {
-        currentPage = 1;
-        loadJobs();
-    });
-
-    document.getElementById("prev-btn").addEventListener("click", () => {
-        if (currentPage > 1) {
-            currentPage--;
-            loadJobs();
-        }
-    });
-
-    document.getElementById("next-btn").addEventListener("click", () => {
-        if (currentPage < totalPages) {
-            currentPage++;
-            loadJobs();
-        }
-    });
-
-    // Realtime update stats and jobs every 30 seconds
-    setInterval(() => {
-        const isUserTyping = document.activeElement === document.getElementById("search-input");
-        if (!isUserTyping) {
-            loadSummaryStats();
-            loadJobs();
-        }
-    }, 30000);
 });
 
-async function loadSummaryStats() {
+// ── KPI ──────────────────────────────────────────────────
+async function loadKPIs() {
     try {
-        const res = await fetch(`${API_URL}/api/v1/stats/summary`);
-        const stats = await res.json();
+        const res = await fetch(`${API_URL}/stats/kpi`);
+        const d = await res.json();
 
-        document.getElementById("stat-total-jobs").innerText = stats.total_jobs.toLocaleString();
-        if (document.getElementById("trend-total-jobs")) {
-            document.getElementById("trend-total-jobs").innerText = `+${(stats.new_jobs_7d || 0).toLocaleString()} job mới tuần này`;
-        }
-        
-        document.getElementById("stat-avg-salary").innerText = stats.average_salary_million;
-        if (document.getElementById("trend-avg-salary")) {
-            document.getElementById("trend-avg-salary").innerText = `Trung vị: ${stats.median_salary || 0} Tr | Công khai: ${stats.disclosure_rate || 0}%`;
-        }
+        // Total jobs
+        setKPIVal("stat-total-jobs", fmt(d.total_jobs));
 
-        document.getElementById("stat-total-companies").innerText = stats.total_companies.toLocaleString();
-        if (document.getElementById("trend-total-companies")) {
-            document.getElementById("trend-total-companies").innerText = `Fresher: ${(stats.fresher_jobs || 0).toLocaleString()} | Remote: ${(stats.remote_jobs || 0).toLocaleString()}`;
-        }
+        // New jobs in 7 days
+        const sub = document.getElementById("stat-new-jobs-sub");
+        if (sub) sub.textContent = "+" + fmt(d.new_jobs_7d || 0);
 
-        const skillsContainer = document.getElementById("stat-top-skills");
-        skillsContainer.innerHTML = stats.top_skills.map(s => 
-            `<span>${s.name} (${s.count})</span>`
-        ).join("");
+        // Average salary
+        const avgSal = d.average_salary_million;
+        setKPIVal("stat-avg-salary", avgSal && avgSal !== "N/A" ? `${avgSal} <small style="font-size:0.8rem;font-weight:500;color:var(--text-muted)">Tr. VNĐ</small>` : "N/A");
+
+        // Median salary
+        const med = document.getElementById("stat-median-salary");
+        if (med) med.textContent = d.median_salary && d.median_salary !== "0" ? d.median_salary : "N/A";
+
+        // Companies
+        setKPIVal("stat-total-companies", fmt(d.total_companies));
+
+        // Disclosure rate
+        const disc = parseFloat(d.disclosure_rate || 0);
+        setKPIVal("stat-disclosure-rate", `${disc.toFixed(1)}<span style="font-size:1rem;font-weight:600;color:var(--text-muted)">%</span>`);
+
+        // Fresher jobs
+        setKPIVal("stat-fresher-jobs", fmt(d.fresher_jobs));
+
+        // Top skills → skills bar
+        const skillsEl = document.getElementById("stat-top-skills");
+        if (skillsEl && Array.isArray(d.top_skills)) {
+            skillsEl.innerHTML = d.top_skills.slice(0, 10).map(s => {
+                const name = typeof s === "object" ? s.name : s;
+                const count = typeof s === "object" ? s.count : null;
+                const countBadge = count ? `<span class="chip-count">${fmt(count)}</span>` : "";
+                return `<span class="skill-chip">${name}${countBadge}</span>`;
+            }).join("");
+        }
     } catch (err) {
-        console.error("Lỗi khi load thống kê:", err);
+        console.error("KPI load error:", err);
     }
 }
 
+function setKPIVal(id, html) {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+}
+
+// ── Jobs list ─────────────────────────────────────────────
 async function loadJobs() {
-    const searchVal = document.getElementById("search-input").value;
-    const locationVal = document.getElementById("filter-location").value;
-    const salaryVal = document.getElementById("filter-salary").value;
-    const experienceVal = document.getElementById("filter-experience").value;
-    const sourceVal = document.getElementById("filter-source").value;
-    const sortVal = document.getElementById("filter-sort").value;
-    
-    let url = `${API_URL}/api/v1/jobs?page=${currentPage}&limit=10`;
-    if (searchVal) url += `&search=${encodeURIComponent(searchVal)}`;
-    if (locationVal) url += `&location=${encodeURIComponent(locationVal)}`;
-    if (salaryVal) url += `&salary=${encodeURIComponent(salaryVal)}`;
-    if (experienceVal) url += `&experience=${encodeURIComponent(experienceVal)}`;
-    if (sourceVal) url += `&source=${encodeURIComponent(sourceVal)}`;
-    if (sortVal) url += `&sort=${encodeURIComponent(sortVal)}`;
+    const search = document.getElementById("search-input").value;
+    const location = document.getElementById("filter-location").value;
+    const salary = document.getElementById("filter-salary").value;
+    const experience = document.getElementById("filter-experience").value;
+    const source = document.getElementById("filter-source").value;
+    const sort = document.getElementById("filter-sort").value;
+
+    let url = `${API_URL}/jobs?page=${currentPage}&limit=10`;
+    if (search)     url += `&search=${encodeURIComponent(search)}`;
+    if (location)   url += `&location=${encodeURIComponent(location)}`;
+    if (salary)     url += `&salary=${encodeURIComponent(salary)}`;
+    if (experience) url += `&experience=${encodeURIComponent(experience)}`;
+    if (source)     url += `&source=${encodeURIComponent(source)}`;
+    if (sort)       url += `&sort=${encodeURIComponent(sort)}`;
+
+    // Show skeleton
+    const container = document.getElementById("jobs-container");
+    container.innerHTML = buildSkeletons(4);
+    container.scrollTop = 0;
 
     try {
         const res = await fetch(url);
-        const result = await res.json();
+        const d = await res.json();
 
-        renderJobsList(result.data);
-        updatePagination(result.pagination);
+        // Support both flat and paginated response shapes
+        const jobs = d.data || d;
+        const total = d.total ?? (Array.isArray(jobs) ? jobs.length : 0);
+        const page = d.page || currentPage;
+        const totalPages = d.total_pages || d.pagination?.total_pages || 1;
+
+        const countEl = document.getElementById("results-count");
+        if (countEl) countEl.textContent = `${fmt(total)} kết quả`;
+
+        renderJobs(jobs, container);
+
+        document.getElementById("page-num").textContent = `Trang ${page} / ${totalPages}`;
+        document.getElementById("prev-btn").disabled = page <= 1;
+        document.getElementById("next-btn").disabled = page >= totalPages;
+
     } catch (err) {
-        console.error("Lỗi khi load danh sách jobs:", err);
+        console.error("Jobs load error:", err);
+        container.innerHTML = `<div class="empty-state"><p style="color:#ef4444">Không thể tải dữ liệu. Vui lòng thử lại.</p></div>`;
     }
 }
 
-function getDeadlineInfo(job) {
-    if (job.is_expired) {
-        return `<span class="deadline-badge expired">🔴 Hết hạn</span>`;
-    }
-    if (!job.deadline_raw || job.deadline_raw === 'NaN') {
-        return `<span class="deadline-badge">⏳ Thỏa thuận</span>`;
-    }
-    return `<span class="deadline-badge active">🟢 ${job.deadline_raw}</span>`;
+function buildSkeletons(n) {
+    return Array.from({ length: n }, () => `
+        <div class="job-card" style="pointer-events:none;">
+            <div class="job-card-top">
+                <div class="skeleton" style="width:65%;height:15px;border-radius:4px;"></div>
+                <div class="skeleton" style="width:44px;height:13px;border-radius:4px;"></div>
+            </div>
+            <div class="skeleton" style="width:45%;height:12px;border-radius:4px;margin:8px 0 12px;"></div>
+            <div style="display:flex;gap:8px;">
+                <div class="skeleton" style="width:55px;height:11px;border-radius:4px;"></div>
+                <div class="skeleton" style="width:75px;height:11px;border-radius:4px;"></div>
+                <div class="skeleton" style="width:65px;height:11px;border-radius:4px;"></div>
+            </div>
+        </div>
+    `).join("");
 }
 
-function renderJobsList(jobs) {
-    const container = document.getElementById("jobs-container");
-    document.getElementById("results-count").innerText = jobs.length;
-    
-    if (jobs.length === 0) {
-        container.innerHTML = `<p style="padding: 20px; font-style: italic; color: #94a3b8;">Không tìm thấy công việc nào phù hợp.</p>`;
+function renderJobs(jobs, container) {
+    container.innerHTML = "";
+    if (!jobs || jobs.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15.182 16.318A4.486 4.486 0 0 0 12.016 15a4.486 4.486 0 0 0-3.198 1.318M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM9.75 9.75c0 .414-.168.75-.375.75S9 10.164 9 9.75 9.168 9 9.375 9s.375.336.375.75Zm-.375 0h.008v.015h-.008V9.75Zm5.625 0c0 .414-.168.75-.375.75s-.375-.336-.375-.75.168-.75.375-.75.375.336.375.75Zm-.375 0h.008v.015h-.008V9.75Z" />
+                </svg>
+                <p>Không tìm thấy công việc phù hợp.</p>
+            </div>`;
         return;
     }
 
-    container.innerHTML = jobs.map(job => {
-        const sourceLower = (job.source_name || 'default').toLowerCase();
-        return `
-        <div class="job-card" onclick="loadJobDetail(${job.job_id}, this)">
-            <div class="job-card-header">
-                <h4>${job.title_clean}</h4>
-                <span class="badge-source badge-${sourceLower}">${job.source_name || 'Tuyển dụng'}</span>
+    jobs.forEach(job => {
+        const card = document.createElement("div");
+        card.className = "job-card";
+        card.innerHTML = `
+            <div class="job-card-top">
+                <h4>${job.title_clean || job.job_title || "Không có tiêu đề"}</h4>
+                <span class="src-badge ${srcClass(job.source_name)}">${job.source_name || "—"}</span>
             </div>
-            <div class="company">${job.company_display_name}</div>
-            <div class="job-card-details">
-                <span>
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" />
-                    </svg>
-                    ${job.location_clean || 'Hà Nội'}
-                </span>
-                <span>
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m-3-2.818.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-                    </svg>
-                    ${job.salary_raw || 'Thỏa thuận'}
-                </span>
-                <span>
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 14.15v4.25c0 .621-.504 1.125-1.125 1.125H4.875c-.621 0-1.125-.504-1.125-1.125v-4.25m16.5 0a2.25 2.25 0 0 0-2.25-2.25H5.625a2.25 2.25 0 0 0-2.25 2.25m16.5 0v-2.25A2.25 2.25 0 0 0 18 7.5H6A2.25 2.25 0 0 0 3.75 9.75v2.25A2.25 2.25 0 0 0 6 14.25h12a2.25 2.25 0 0 0 2.25-2.25ZM12 10.5v3.75m-3.75-3.75h7.5" />
-                    </svg>
-                    ${job.experience_raw || 'Không yêu cầu'}
-                </span>
-                <span>
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-                    </svg>
-                    ${getDeadlineInfo(job)}
-                </span>
+            <div class="company">${job.company_display_name || job.company_name || "—"}</div>
+            <div class="job-meta">
+                <span>📍 ${job.location_clean || "Hà Nội"}</span>
+                <span>💰 ${job.salary_raw || "Thỏa thuận"}</span>
+                <span>💼 ${job.experience_raw || "Không yêu cầu"}</span>
+                ${job.deadline_raw
+                    ? `<span>⏳ Hạn: ${job.deadline_raw}</span>`
+                    : `<span style="opacity:0.5">⏳ Không thời hạn</span>`}
             </div>
-        </div>
         `;
-    }).join("");
-}
-
-function updatePagination(pagination) {
-    currentPage = pagination.page;
-    totalPages = pagination.total_pages;
-
-    document.getElementById("page-num").innerText = `Trang ${currentPage} / ${totalPages || 1}`;
-    document.getElementById("prev-btn").disabled = currentPage <= 1;
-    document.getElementById("next-btn").disabled = currentPage >= totalPages;
-}
-
-function formatDescription(desc) {
-    if (!desc) return 'Không có mô tả chi tiết.';
-    
-    // Replace standard section headings with stylized titles only when they stand alone on a line
-    let formatted = desc
-        .replace(/(?:^|\n)(?:Mô tả công việc|Job Description|MÔ TẢ CÔNG VIỆC)[:\-]?\s*(?=\n|$)/gi, '\n<h4 class="section-title">📋 Mô tả công việc</h4>')
-        .replace(/(?:^|\n)(?:Yêu cầu công việc|Yêu cầu ứng viên|Yêu cầu tuyển dụng|Yêu cầu|Requirements|YÊU CẦU CÔNG VIỆC)[:\-]?\s*(?=\n|$)/gi, '\n<h4 class="section-title">🎯 Yêu cầu ứng viên</h4>')
-        .replace(/(?:^|\n)(?:Quyền lợi được hưởng|Quyền lợi|Benefits|QUYỀN LỢI ĐƯỢC HƯỞNG)[:\-]?\s*(?=\n|$)/gi, '\n<h4 class="section-title">💎 Quyền lợi được hưởng</h4>')
-        .replace(/(?:^|\n)(?:Cách thức ứng tuyển|Ứng tuyển)[:\-]?\s*(?=\n|$)/gi, '\n<h4 class="section-title">✉️ Cách thức ứng tuyển</h4>');
-    
-    // Split and format bullet points
-    let lines = formatted.split('\n');
-    let processedLines = lines.map(line => {
-        let trimmed = line.trim();
-        if (trimmed.startsWith('-') || trimmed.startsWith('+') || trimmed.startsWith('*') || trimmed.startsWith('•')) {
-            let cleanLine = trimmed.replace(/^[\-\+\*•]\s*/, '');
-            return `<li class="desc-bullet">${cleanLine}</li>`;
-        }
-        if (trimmed.startsWith('<h4')) {
-            return trimmed;
-        }
-        if (trimmed === '') {
-            return '';
-        }
-        return `<p class="desc-text">${trimmed}</p>`;
+        card.addEventListener("click", () => {
+            document.querySelectorAll(".job-card").forEach(c => c.classList.remove("active"));
+            card.classList.add("active");
+            loadJobDetail(job.job_id || job.id);
+        });
+        container.appendChild(card);
     });
-    
-    return processedLines.join('\n');
 }
 
-async function loadJobDetail(jobId, element) {
-    // Select active card class
-    document.querySelectorAll(".job-card").forEach(c => c.classList.remove("active"));
-    if (element) element.classList.add("active");
-
-    const detailPane = document.getElementById("detail-pane");
-    detailPane.innerHTML = `<div class="detail-placeholder"><p>Đang tải chi tiết...</p></div>`;
+// ── Job Detail ────────────────────────────────────────────
+async function loadJobDetail(jobId) {
+    const pane = document.getElementById("detail-pane");
+    pane.innerHTML = `
+        <div class="detail-placeholder">
+            <div class="skeleton" style="width:48px;height:48px;border-radius:14px;margin-bottom:16px;"></div>
+            <div class="skeleton" style="width:80%;height:18px;border-radius:5px;margin-bottom:8px;"></div>
+            <div class="skeleton" style="width:50%;height:14px;border-radius:5px;"></div>
+        </div>`;
 
     try {
-        const res = await fetch(`${API_URL}/api/v1/jobs/${jobId}`);
-        if (res.status === 404) {
-            detailPane.innerHTML = `<div class="detail-placeholder"><p>Không tìm thấy mô tả chi tiết.</p></div>`;
-            return;
-        }
+        const res = await fetch(`${API_URL}/jobs/${jobId}`);
         const job = await res.json();
-        const firstLetter = (job.company_name || 'C').charAt(0).toUpperCase();
 
-        // Extract active card detail badges for matching tags
-        const locationText = element ? element.querySelector(".job-card-details span:nth-child(1)").innerText.trim() : "Hà Nội";
-        const salaryText = element ? element.querySelector(".job-card-details span:nth-child(2)").innerText.trim() : "Thỏa thuận";
-        const experienceText = element ? element.querySelector(".job-card-details span:nth-child(3)").innerText.trim() : "Không yêu cầu";
+        const firstLetter = (job.company_name || "C").charAt(0).toUpperCase();
 
-        const deadlineTag = job.is_expired 
-            ? `<div class="detail-tag expired-tag">🔴 Đã hết hạn</div>`
-            : `<div class="detail-tag active-tag">🟢 Hạn nộp: ${job.deadline_raw || 'Liên hệ'}</div>`;
+        // Tính experience_raw nhất quán với list (vì API detail giờ trả về cả 2 field)
+        const expMin = job.experience_min_years;
+        const expMax = job.experience_max_years;
+        let expText = "Không yêu cầu";
+        if (expMin !== null && expMin !== undefined && expMax !== null && expMax !== undefined) {
+            if (expMin === expMax) expText = expMin > 0 ? `${expMin} năm` : "Dưới 1 năm";
+            else expText = `${expMin} - ${expMax} năm`;
+        } else if (expMin !== null && expMin !== undefined) {
+            expText = `Từ ${expMin} năm`;
+        } else if (expMax !== null && expMax !== undefined) {
+            expText = `Đến ${expMax} năm`;
+        }
 
-        detailPane.innerHTML = `
-            <div class="job-detail-content">
-                <div class="detail-header">
-                    <div class="company-logo-placeholder">${firstLetter}</div>
-                    <div class="detail-title-block">
-                        <h3>${job.title_clean}</h3>
-                        <div class="company">${job.company_name}</div>
-                    </div>
+        let desc = (job.description || "Không có mô tả chi tiết.")
+            .replace(/\n\s*\n/g, "\n\n")
+            .replace(/\n[-*•] /g, "\n<li class='desc-bullet'>")
+            .replace(/([A-ZÀ-Ỹ][A-ZÀ-Ỹ\s]+:)/g, "<span class='section-title'>$1</span>");
+
+        pane.innerHTML = `
+            <div class="detail-header">
+                <div class="company-logo">${firstLetter}</div>
+                <div style="flex:1;min-width:0;">
+                    <div class="detail-title">${job.title_clean || "Không có tiêu đề"}</div>
+                    <div class="detail-company">${job.company_name || "—"}</div>
                 </div>
-                
-                <div class="detail-tags-row">
-                    <div class="detail-tag">📍 ${locationText}</div>
-                    <div class="detail-tag">💰 ${salaryText}</div>
-                    <div class="detail-tag">💼 ${experienceText}</div>
-                    ${deadlineTag}
-                </div>
-
-                <hr class="detail-divider">
-                <div class="desc">${formatDescription(job.description)}</div>
-                
-                <div class="apply-container">
-                    <a href="${job.canonical_url}" target="_blank" class="apply-btn">Ứng Tuyển Ngay ➔</a>
-                </div>
+            </div>
+            <hr class="detail-divider">
+            <div class="detail-desc">${desc}</div>
+            <div class="apply-sticky">
+                <a href="${job.canonical_url || "#"}" target="_blank" class="btn-apply">Ứng Tuyển / Xem Nguồn Gốc ↗</a>
             </div>
         `;
     } catch (err) {
-        console.error("Lỗi khi load chi tiết công việc:", err);
-        detailPane.innerHTML = `<div class="detail-placeholder"><p>Lỗi kết nối máy chủ.</p></div>`;
+        console.error("Job detail error:", err);
+        pane.innerHTML = `<div class="detail-placeholder"><p style="color:#ef4444">Lỗi tải dữ liệu. Vui lòng thử lại.</p></div>`;
     }
 }
 
+// ── Analytics ─────────────────────────────────────────────
+async function loadAnalytics() {
+    await Promise.all([
+        loadSalaryChart(),
+        loadLocationChart(),
+        loadSkillsDemandChart(),
+    ]);
+}
+
+const CHART_DEFAULTS = {
+    color: "#64748b",
+    font: { family: "'Inter', sans-serif", size: 12 },
+};
+
+function applyChartDefaults() {
+    Chart.defaults.color = CHART_DEFAULTS.color;
+    Chart.defaults.font.family = CHART_DEFAULTS.font.family;
+    Chart.defaults.font.size = CHART_DEFAULTS.font.size;
+}
+
+async function loadSalaryChart() {
+    try {
+        const res = await fetch(`${API_URL}/stats/salary-by-skill`);
+        const data = await res.json();
+        applyChartDefaults();
+        const ctx = document.getElementById("salaryChart").getContext("2d");
+        if (salaryChartInstance) salaryChartInstance.destroy();
+
+        const labels = data.map(d => d.skill_name);
+        const avgMin = data.map(d => (d.avg_salary_min_vnd || 0) / 1e6);
+        const maxSal = data.map(d => (d.max_salary_max_vnd || 0) / 1e6);
+
+        salaryChartInstance = new Chart(ctx, {
+            type: "bar",
+            data: {
+                labels,
+                datasets: [
+                    {
+                        label: "Lương TB Min (Tr. VNĐ)",
+                        data: avgMin,
+                        backgroundColor: "rgba(56,189,248,0.75)",
+                        borderRadius: 5,
+                        borderSkipped: false,
+                    },
+                    {
+                        label: "Lương Max (Tr. VNĐ)",
+                        data: maxSal,
+                        backgroundColor: "rgba(129,140,248,0.65)",
+                        borderRadius: 5,
+                        borderSkipped: false,
+                    },
+                ],
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: "top", labels: { padding: 16, usePointStyle: true, pointStyle: "rectRounded" } },
+                    tooltip: {
+                        mode: "index", intersect: false,
+                        backgroundColor: "rgba(7,13,26,0.95)",
+                        titleColor: "#38bdf8", bodyColor: "#94a3b8",
+                        borderColor: "rgba(56,189,248,0.2)", borderWidth: 1,
+                        callbacks: { label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} triệu` },
+                    },
+                },
+                scales: {
+                    x: { grid: { color: "rgba(255,255,255,0.04)" }, ticks: { maxRotation: 35 } },
+                    y: { beginAtZero: true, grid: { color: "rgba(255,255,255,0.04)" }, ticks: { callback: v => v + "M" } },
+                },
+            },
+        });
+    } catch (err) { console.error("Salary chart error:", err); }
+}
+
+async function loadLocationChart() {
+    try {
+        const res = await fetch(`${API_URL}/stats/locations?top_n=8`);
+        const body = await res.json();
+        const data = body.data || body;
+        applyChartDefaults();
+        const ctx = document.getElementById("locationChart").getContext("2d");
+        if (locationChartInstance) locationChartInstance.destroy();
+
+        locationChartInstance = new Chart(ctx, {
+            type: "doughnut",
+            data: {
+                labels: data.map(d => d.location_name),
+                datasets: [{
+                    data: data.map(d => d.job_count),
+                    backgroundColor: [
+                        "rgba(56,189,248,0.8)", "rgba(129,140,248,0.8)",
+                        "rgba(52,211,153,0.8)", "rgba(251,146,60,0.8)",
+                        "rgba(217,70,239,0.8)", "rgba(96,165,250,0.8)",
+                        "rgba(248,113,113,0.8)", "rgba(250,204,21,0.8)",
+                    ],
+                    borderWidth: 2,
+                    borderColor: "rgba(7,13,26,0.8)",
+                }],
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: "right", labels: { padding: 14, usePointStyle: true } },
+                    tooltip: {
+                        backgroundColor: "rgba(7,13,26,0.95)",
+                        titleColor: "#38bdf8", bodyColor: "#94a3b8",
+                        borderColor: "rgba(56,189,248,0.2)", borderWidth: 1,
+                    },
+                },
+            },
+        });
+    } catch (err) { console.error("Location chart error:", err); }
+}
+
+async function loadSkillsDemandChart() {
+    try {
+        const res = await fetch(`${API_URL}/stats/skills?top_n=15`);
+        const body = await res.json();
+        const data = body.data || body;
+        applyChartDefaults();
+        const ctx = document.getElementById("skillsChart").getContext("2d");
+        if (skillsChartInstance) skillsChartInstance.destroy();
+
+        skillsChartInstance = new Chart(ctx, {
+            type: "bar",
+            data: {
+                labels: data.map(d => d.skill_name),
+                datasets: [{
+                    label: "Số lượng job yêu cầu",
+                    data: data.map(d => d.job_count),
+                    backgroundColor: data.map((_, i) =>
+                        `hsla(${190 + i * 12}, 80%, 60%, 0.75)`),
+                    borderRadius: 5,
+                    borderSkipped: false,
+                }],
+            },
+            options: {
+                indexAxis: "y",
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: "rgba(7,13,26,0.95)",
+                        titleColor: "#38bdf8", bodyColor: "#94a3b8",
+                        borderColor: "rgba(56,189,248,0.2)", borderWidth: 1,
+                    },
+                },
+                scales: {
+                    x: { grid: { color: "rgba(255,255,255,0.04)" }, beginAtZero: true },
+                    y: { grid: { display: false } },
+                },
+            },
+        });
+    } catch (err) { console.error("Skills chart error:", err); }
+}

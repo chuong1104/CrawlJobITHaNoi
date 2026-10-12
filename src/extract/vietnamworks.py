@@ -1,3 +1,4 @@
+
 import os
 import random
 import re
@@ -91,17 +92,21 @@ class VietnamWorksScraper(BaseScraper):
         return links
 
     def _do_fetch(self, url: str) -> Optional[str]:
-        """Override to force HTTP requests for job details instead of Playwright to save RAM and time."""
+        """Override to use Playwright with network_idle=True so React SPA can render title, company, etc. correctly."""
         try:
-            page = Fetcher.get(
+            from scrapling import DynamicFetcher
+            page = DynamicFetcher.fetch(
                 url,
+                headless=True,
+                disable_resources=True,
+                network_idle=True,
+                page_until="networkidle",
+                timeout=25000,
                 proxy=self.proxy or None,
-                stealthy_headers=True,
-                timeout=15000,
             )
             return self._adaptor_to_html(page)
         except Exception as e:
-            self.logger.error(f"HTTP fetch failed for {url}: {e}")
+            self.logger.error(f"Playwright fetch failed for {url}: {e}")
             return None
 
     # ------------------------------------------------------------------

@@ -4,10 +4,20 @@ from psycopg2.extras import DictCursor, execute_values
 import duckdb
 import pandas as pd
 from datetime import date
+from typing import Optional
 
 from src.config import DBConfig
 
 logger = logging.getLogger(__name__)
+
+def clean_str(val) -> Optional[str]:
+    if pd.isna(val) or val is None:
+        return None
+    val_str = str(val).strip()
+    if val_str.lower() in ("nan", "none", "null", ""):
+        return None
+    return val_str
+
 
 class SilverSyncEngine:
     def __init__(self, duckdb_path: str = "jobitvn.duckdb"):
@@ -68,19 +78,19 @@ class SilverSyncEngine:
             else:
                 skills = None
             records_to_insert.append((
-                row['source_code'],
-                str(row['source_job_id']),
-                row['canonical_url'],
-                row['title_raw'],
-                row['company_raw'],
-                row['location_raw'],
-                row['salary_raw'],
-                row['experience_raw'],
+                clean_str(row['source_code']),
+                clean_str(str(row['source_job_id'])),
+                clean_str(row['canonical_url']),
+                clean_str(row['title_raw']),
+                clean_str(row['company_raw']),
+                clean_str(row['location_raw']),
+                clean_str(row['salary_raw']),
+                clean_str(row['experience_raw']),
                 skills,
-                row['description'],
-                row['deadline_raw'],
-                row['title_clean'],
-                row['company_normalized'] if 'company_normalized' in row else row['company_raw'],
+                clean_str(row['description']),
+                clean_str(row['deadline_raw']),
+                clean_str(row['title_clean']),
+                clean_str(row['company_normalized'] if 'company_normalized' in row else row['company_raw']),
                 row['salary_min'] if not pd.isna(row['salary_min']) else None,
                 row['salary_max'] if not pd.isna(row['salary_max']) else None,
                 row['experience_min_years'] if not pd.isna(row['experience_min_years']) else None,

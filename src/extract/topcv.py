@@ -72,6 +72,12 @@ class TopCVScraper(BaseScraper):
             if not href:
                 continue
             full_url = urljoin(self.base_url, href).split("?")[0].split("#")[0]
+            # Filter out non-job URLs like Toppy AI suggestions or company pages without jobs
+            if "/viec-lam/" not in full_url and "/brand/" not in full_url:
+                continue
+            if "toppy" in full_url.lower():
+                continue
+            
             if full_url not in seen:
                 seen.add(full_url)
                 links.append(full_url)
