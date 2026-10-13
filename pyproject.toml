@@ -5,4 +5,4 @@ description = "Job Scraper Data Engineering Project Web Portal"
 requires-python = ">=3.10"
 
 [tool.vercel]
-entrypoint = "src.api.main:app"
+entrypoint = "api/index.py"
