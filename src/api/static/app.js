@@ -64,6 +64,37 @@ function deadlineInfo(job) {
     return { cls: "dl-none", text: "Không ghi hạn", expired: false };
 }
 
+// Xử lý mức lương: loại bỏ ký tự thừa ở đầu (dấu phẩy, gạch nối...), tách khoảng số cho badge
+function formatSalary(raw) {
+    if (!raw) return { display: "Thỏa thuận", badge: "Thỏa thuận", isNegotiable: true };
+
+    let s = String(raw).trim();
+    // Bỏ các ký tự thừa ở đầu/cuối: phẩy, chấm phẩy, hai chấm, gạch ngang, khoảng trắng...
+    s = s.replace(/^[\s,;:–—\-\.\/]+/, "").replace(/[\s,;:–—\-\.\/]+$/, "").trim();
+
+    if (!s || /^(nan|none|null|thỏa thuận|thoả thuận|thoa thuan|negotiable|cạnh tranh|competitive)$/i.test(s)) {
+        return { display: "Thỏa thuận", badge: "Thỏa thuận", isNegotiable: true };
+    }
+
+    let badge = s;
+    const rangeMatch = s.match(/^([\$€£¥₫]?\s*\d+[\d.,]*\s*(?:[-–—~]|đến|to)\s*[\$€£¥₫]?\s*\d+[\d.,]*(?:\s*(?:triệu|tr|trieu|USD|VND|VNĐ|k|mil|million|\/hr|\/h|\/tháng|\/thang))?)/i);
+    const upToMatch = s.match(/^(?:tới|lên tới|lên đến|đến|từ|up to|from)\s*[\$€£¥₫]?\s*\d+[\d.,]*(?:\s*(?:triệu|tr|trieu|USD|VND|VNĐ|k|mil|million|\/hr|\/h|\/tháng|\/thang))?/i);
+
+    if (rangeMatch && rangeMatch[1]) {
+        badge = rangeMatch[1].trim();
+    } else if (upToMatch && upToMatch[0]) {
+        badge = upToMatch[0].trim();
+    } else if (s.length > 25) {
+        badge = s.substring(0, 22).trim() + "…";
+    }
+
+    return {
+        display: s,
+        badge: badge,
+        isNegotiable: false
+    };
+}
+
 // Escape trước rồi mới đánh dấu từ khóa, tránh chèn HTML từ dữ liệu cào
 function highlight(text, query) {
     const safe = esc(text);
@@ -324,16 +355,15 @@ function renderJobs(jobs, container, query) {
         const company = job.company_display_name || job.company_name || "";
         const ago = timeAgo(job.last_seen_at || job.crawled_at);
         const loc = job.location_clean || "Hà Nội";
-        const salary = job.salary_raw || "Thỏa thuận";
+        const sal = formatSalary(job.salary_raw);
         const exp = job.experience_raw || "Không yêu cầu";
-        const isNegotiable = !job.salary_raw || /thỏa thuận|thoả thuận|negotiable/i.test(job.salary_raw);
         const id = job.job_id || job.id;
 
         return '<div class="job-card' + (dl.expired ? " is-expired" : "") + '" data-id="' + esc(id) + '">' +
             '<div class="job-title">' + highlight(title, query) + "</div>" +
             (company ? '<div class="job-company">' + highlight(company, query) + "</div>" : "") +
             '<div class="job-badges">' +
-                '<span class="badge-salary' + (isNegotiable ? " is-negotiable" : "") + '">' + esc(salary) + "</span>" +
+                '<span class="badge-salary' + (sal.isNegotiable ? " is-negotiable" : "") + '" title="' + esc(sal.display) + '">' + esc(sal.badge) + "</span>" +
                 '<span class="badge-tag">' + esc(loc) + "</span>" +
                 '<span class="badge-tag">' + esc(exp) + "</span>" +
             "</div>" +
@@ -424,6 +454,7 @@ async function loadJobDetail(jobId) {
         }
 
         const ago = timeAgo(job.last_seen_at || job.crawled_at);
+        const sal = formatSalary(job.salary_raw);
 
         pane.innerHTML =
             '<div class="detail-header">' +
@@ -432,7 +463,7 @@ async function loadJobDetail(jobId) {
             "</div>" +
             '<div class="detail-note ' + noteCls + '">' + esc(noteText) + "</div>" +
             '<div class="detail-grid">' +
-                '<div class="detail-grid-item"><span class="grid-lbl">Mức lương</span><span class="grid-val val-salary">' + esc(job.salary_raw || "Thỏa thuận") + "</span></div>" +
+                '<div class="detail-grid-item"><span class="grid-lbl">Mức lương</span><span class="grid-val val-salary">' + esc(sal.display) + "</span></div>" +
                 '<div class="detail-grid-item"><span class="grid-lbl">Địa điểm</span><span class="grid-val">' + esc(job.location_clean || "Hà Nội") + "</span></div>" +
                 '<div class="detail-grid-item"><span class="grid-lbl">Kinh nghiệm</span><span class="grid-val">' + esc(exp) + "</span></div>" +
                 '<div class="detail-grid-item"><span class="grid-lbl">Nguồn tin</span><span class="grid-val">' + esc(job.source_name || "") + "</span></div>" +

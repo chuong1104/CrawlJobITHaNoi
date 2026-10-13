@@ -163,6 +163,19 @@ def clean_deadline(val: Optional[str]) -> Optional[str]:
     return val
 
 
+def clean_salary(val: Optional[str]) -> Optional[str]:
+    if not val:
+        return None
+    val = str(val).strip()
+    if val in ("NaN", "nan", "None", "none", "", "null"):
+        return None
+    # Xóa các ký tự thừa ở đầu và cuối chuỗi (dấu phẩy, hai chấm, gạch ngang, khoảng trắng...)
+    val = re.sub(r"^[\s,;:–—\-\./]+", "", val).strip()
+    val = re.sub(r"[\s,;:–—\-\./]+$", "", val).strip()
+    return val if val else None
+
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -374,6 +387,7 @@ def get_jobs(
                     if val in ("NaN", "nan", "None", "none", ""):
                         j[key] = None
                 j["deadline_raw"] = clean_deadline(j.get("deadline_raw"))
+                j["salary_raw"] = clean_salary(j.get("salary_raw"))
 
                 if j.get("last_seen_at"):
                     j["scraped_at"] = j["last_seen_at"].isoformat() if hasattr(j["last_seen_at"], "isoformat") else str(j["last_seen_at"])
@@ -474,6 +488,7 @@ def get_job_detail(job_id: int):
             if val in ("NaN", "nan", "None", "none", ""):
                 job[key] = None
         job["deadline_raw"] = clean_deadline(job.get("deadline_raw"))
+        job["salary_raw"] = clean_salary(job.get("salary_raw"))
         
         raw_desc = job.get("description") or ""
         lines = [ln for ln in raw_desc.splitlines() if ln.strip() not in ("None", "nan", "NaN", "")]
