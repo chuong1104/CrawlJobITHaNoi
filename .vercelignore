@@ -6,7 +6,7 @@ scripts/
 tests/
 dbt/
 dbt_project/
-api/
+/api/
 *.parquet
 *.csv
 *.sql
