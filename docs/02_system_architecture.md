@@ -86,26 +86,26 @@ Mục tiêu kiến trúc:
 # 3. Service Architecture
 
 ```text
-job-it-platform
+job_scraper_de_project
 │
-├── crawler (Python)       # Job thu thập dữ liệu bằng Playwright
-├── floci (LocalStack)     # Giả lập AWS S3, nơi lưu trữ Data Lake chính yếu
-├── airflow (Python)       # Điều phối Workflow hàng ngày
-├── postgres (Docker)      # Database phục vụ API Web
-├── dbt (SQL)              # Data Build Tool (Transform)
-├── duckdb (In-process)    # Analytical Query Engine (Được Airflow/PowerBI gọi)
-├── fastapi (Python)       # Serving API
-└── powerbi (Desktop)      # Visualization qua ODBC kết nối DuckDB
+├── crawler (Python)       # Thu thập dữ liệu: Scrapling HTTP (TLS/JA4 bypass) + Playwright (Cookie Session)
+├── floci (LocalStack)     # Giả lập AWS S3, lưu trữ Bronze & Gold Delta Lake
+├── airflow (Python)       # Điều phối Workflow hàng ngày (Airflow 2.10 Standalone, limit 4GB, reservation 1.5GB)
+├── postgres (Docker)      # PostgreSQL 17: Silver 3NF ODS + Gold Kimball DWH + Materialized Views
+├── dbt (SQL)              # Data Build Tool (Staging, Intermediate, Warehouse, Marts BI)
+├── duckdb (In-process)    # Analytical In-Memory Vectorized Engine (delta_scan & OLAP)
+├── fastapi (Python)       # Serving API (SQLAlchemy QueuePool + TTL Cache) + Web Portal
+└── powerbi (Desktop)      # Visualization qua DirectQuery DWH hoặc ODBC DuckDB
 ```
 
 ---
 
 # 4. Crawling & Storage Layer
 
-Thu thập dữ liệu từ các website tuyển dụng, lưu tạm ra ổ cứng dưới dạng JSONL, sau đó upload ngay lên **Floci S3** và ghi đè dưới định dạng **Delta Lake** thông qua lớp quản lý `BronzeManager` và `DeltaLakeManager`.
+Thu thập dữ liệu từ 8+ website tuyển dụng (TopCV, ITviec, VietnamWorks, LinkedIn, CareerViet, JobsGO, Joboko, 123job), lưu đệm ra ổ cứng dưới dạng JSONL, sau đó upload lên **Floci S3** và ghi dưới định dạng **Delta Lake** (`python-deltalake`) thông qua lớp quản lý `BronzeManager` và `DeltaLakeManager`.
 
 ```text
-Website ──> Scraper (Playwright/Scrapy) ──> Local JSONL (Cache) ──> S3 / Delta Lake (Floci)
+Website ──> Scraper (Scrapling/Playwright) ──> Local JSONL (Cache) ──> S3 / Delta Lake (Floci)
 ```
 
 ---
@@ -114,69 +114,76 @@ Website ──> Scraper (Playwright/Scrapy) ──> Local JSONL (Cache) ──> 
 
 Đây là lõi xử lý dữ liệu của hệ thống.
 
-## 5.1 Tầng Data Lake & Cache
-Mặc dù Data Lake chính nằm trên S3 (Floci), để tối ưu độ trễ I/O trong quá trình chuyển đổi, `dbt` được cấu hình đọc trực tiếp các file JSONL cache ở local (`read_json_auto`).
+## 5.1 Tầng Data Lake & Smart Fallback
+Hồ dữ liệu chính được lưu tại S3 Floci (`s3://jobit-bronze`) dưới định dạng Delta Lake/Parquet. 
+Để đảm bảo tính linh hoạt tối đa khi chạy:
+* **Chế độ ưu tiên (`s3_parquet`):** `dbt` và `DuckDB` đọc trực tiếp các tệp Parquet/Delta trên S3 Floci qua `delta_scan()` hoặc S3 extension.
+* **Cơ chế Fallback thông minh (`local_jsonl`):** Nếu S3 chưa có tệp Parquet hoặc gặp sự cố kết nối, pipeline tự động chuyển sang đọc các tệp JSONL đệm cục bộ (`read_json_auto`) mà không làm gián đoạn luồng công việc.
 
 ## 5.2 Tầng Compute: DuckDB
-DuckDB dùng extension `json` để đọc hàng ngàn file JSONL vào RAM, thực hiện parse bằng regex (ví dụ: bóc tách số năm kinh nghiệm, mức lương) cực nhanh. DuckDB cũng tạo file database `jobitvn.duckdb` chứa các bảng Staging và Warehouse.
+DuckDB đóng vai trò In-Memory Vectorized Engine: đọc dữ liệu siêu tốc vào RAM, thực hiện parse regex (mức lương, số năm kinh nghiệm, chuẩn hóa kỹ năng) và tạo file database `jobitvn.duckdb` chứa các bảng Staging, Intermediate và Warehouse.
 
 ## 5.3 Tầng Transformation: dbt
-*   **Staging Models:** Làm sạch dữ liệu, chuẩn hóa tên cột, parse thông tin JSON text.
-*   **Warehouse Models:** Xây dựng Fact/Dim tables (Mô hình sao).
+*   **Staging Models (`staging/`):** 8 models tương ứng 8 nguồn tuyển dụng (`stg_topcv`, `stg_itviec`, `stg_vietnamworks`, `stg_linkedin`, `stg_careerviet`, `stg_jobsgo`, `stg_joboko`, `stg_123job`), làm sạch và cast type.
+*   **Intermediate Models (`intermediate/`):** Union 8 nguồn (`int_all_jobs_unioned`), dedup nội bộ (`int_deduped_jobs`), bóc tách kỹ năng (`int_job_skills_exploded`), và phát hiện biến động (`int_changed_jobs`).
+*   **Warehouse Models (`marts/warehouse/`):** Fact & Dimensions (Kimball Star Schema).
+*   **BI Marts (`marts/mart_bi/`):** 10 models tổng hợp KPI, xu hướng kỹ năng, phân tích mức lương và việc làm theo địa phương.
 
 ---
 
 # 6. Tầng Sync & PostgreSQL (Silver/Gold)
 
-Để phục vụ cho Web API, một luồng đồng bộ (Sync Layer) được thực hiện bằng Python trong Airflow:
+Để phục vụ cho Web API và Power BI, luồng đồng bộ (Sync Layer) được thực hiện tự động trong Airflow:
 
 ## Silver Layer (PostgreSQL)
-*   Sử dụng thuật toán **CDC Watermark** để chỉ đồng bộ những bản ghi mới từ DuckDB sang Postgres.
-*   Giải quyết Alias Công ty và theo dõi sự thay đổi của tin tuyển dụng qua SCD Type 2 (`job_snapshots`).
+*   Sử dụng thuật toán **CDC Watermark** (`silver.cdc_watermarks`) để chỉ đồng bộ những bản ghi mới từ DuckDB sang Postgres.
+*   Chuẩn hóa 3NF: tách `jobs`, `companies`, `skills`, `locations`.
+*   Giải quyết Alias Công ty qua `pg_trgm` (trigram fuzzy matching) và lưu vết lịch sử biến động việc làm qua SCD Type 2 (`silver.job_snapshots`).
+*   Phát hiện và gom nhóm tin trùng lặp cross-source (`JobDedupEngine`).
 
 ## Gold Layer (PostgreSQL & S3)
-*   **Postgres:** Sử dụng Stored Procedure để refresh các **Materialized Views** (`mv_kpi_realtime`, `latest_jobs_flat`) phục vụ Web.
-*   **S3:** `DeltaLakeManager` export các bảng báo cáo ra định dạng Delta Lake lên S3 (`s3://jobit-gold`) để dành cho Model Machine Learning sau này.
+*   **Postgres:** Sử dụng Stored Procedures (`dwh.sp_sync_*`) để đồng bộ từ Silver sang Gold Star Schema (`dwh.fct_job_posting`, `dwh.dim_*`) và refresh các **Materialized Views** (`mv_active_jobs_summary`, `mv_kpi_realtime`, `mv_salary_by_skill`, `mart_api.latest_jobs_flat`) phục vụ Web API (<50ms).
+*   **S3 Delta Lake:** `GoldExporter` export các bảng Data Mart (`mart_bi`, `mart_ml`) ra định dạng Delta Lake lên S3 (`s3://jobit-gold`) và Parquet phục vụ Machine Learning và Power BI.
 
 ---
 
 # 7. Airflow Orchestration
 
-Airflow điều phối luồng chạy hàng ngày (Daily DAG) với các nhánh chạy song song để tối ưu hóa thời gian:
+Airflow điều phối luồng chạy hàng ngày (Daily DAG `@ 06:00 AM`) với cấu trúc phân nhánh song song tối ưu:
 
 ```text
-       ┌───────────┐
-       │   start   │
-       └─────┬─────┘
-             ▼
- ┌───────────────────────┐
- │   crawl_all_sources   │
- └───────────┬───────────┘
-             ▼
- ┌───────────────────────┐
- │    run_dbt_staging    │
- └─────┬───────────┬─────┘
-       │           ├─────────────────────────┐
-       ▼           ▼                         ▼
- ┌───────────┐ ┌──────────┐         ┌─────────────────┐
- │dbt_gold   │ │sync_silv │         │archive_bronze   │
- └─────┬─────┘ └─────┬────┘         └────────┬────────┘
-       │             ▼                       │
-       │       ┌──────────┐                  │
-       │       │sync_gold │                  │
-       │       └─────┬────┘                  │
-       │             ▼                       │
-       │       ┌──────────┐                  │
-       │       │export_mar│                  │
-       │       └─────┬────┘                  │
-       ▼             ▼                       │
- ┌─────┴─────────────┴────┐                  │
- │  vacuum_delta_tables   │                  │
- └───────────┬────────────┘                  │
-             ▼                               ▼
-       ┌───────────┐                   ┌───────────┐
-       │    end    │                   │    end    │
-       └───────────┘                   └───────────┘
+        ┌───────────┐
+        │   start   │
+        └─────┬─────┘
+              ▼
+  ┌───────────────────────┐
+  │   crawl_all_sources   │ (Chạy song song 8 scrapers, metrics -> XCom)
+  └───────────┬───────────┘
+              ▼
+  ┌───────────────────────┐
+  │    run_dbt_staging    │ (Smart Fallback: S3 Parquet -> JSONL local)
+  └─────┬───────────┬─────┘
+        │           ├──────────────────────────────┐
+        ▼           ▼                              ▼
+  ┌───────────┐ ┌───────────────────┐      ┌─────────────────────┐
+  │run_dbt_gol│ │ sync_silver_layer │      │ archive_bronze_data │ (Gom nén JSON > 30 ngày)
+  └─────┬─────┘ └─────────┬─────────┘      └──────────┬──────────┘
+        │                 ▼                           │
+        │       ┌───────────────────┐                 │
+        │       │sync_postgres_gold │                 │
+        │       └─────────┬─────────┘                 │
+        │                 ▼                           │
+        │       ┌───────────────────┐                 │
+        │       │ export_gold_marts │                 │
+        │       └─────────┬─────────┘                 │
+        ▼                 ▼                           │
+  ┌─────┴─────────────────┴─────┐                     │
+  │    vacuum_delta_tables      │ (VACUUM Delta Tables)│
+  └──────────────┬──────────────┘                     │
+                 ▼                                    │
+           ┌───────────┐                              │
+           │    end    │◀─────────────────────────────┘
+           └───────────┘
 ```
 
 ---

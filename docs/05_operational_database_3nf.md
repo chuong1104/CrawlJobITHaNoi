@@ -79,7 +79,7 @@ Hệ thống sử dụng PostgreSQL Enums để kiểm soát chặt chẽ các t
 ---
 
 ## 2. Bảng Nguồn Tuyển Dụng (`silver.sources`)
-Lưu danh mục các website tuyển dụng.
+Lưu danh mục các website tuyển dụng. Mặc dù bảng seed khởi tạo sẵn 11 nguồn danh mục, hệ thống đang triển khai tự động hóa thu thập dữ liệu với **8 cổng tuyển dụng cốt lõi** (`topcv`, `itviec`, `vietnamworks`, `linkedin`, `careerviet`, `jobsgo`, `joboko`, `123job`).
 ```sql
 CREATE TABLE silver.sources (
     source_id       SMALLSERIAL PRIMARY KEY,

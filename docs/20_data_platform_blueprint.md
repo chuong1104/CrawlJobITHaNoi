@@ -1,7 +1,7 @@
 # 20. JobITVN Data Platform — Blueprint Toàn Diện
 
-> **Phiên bản:** 2.0 | **Ngày cập nhật:** 2026-06-24
-> Stack: Airflow · Floci S3 · DuckDB · dbt · Parquet · FastAPI · Elasticsearch · Power BI · ML/RAG
+> **Phiên bản:** 2.5 (Tối ưu Local & Cloud-Ready) | **Trạng thái:** Active Production
+> **Stack:** Apache Airflow 2.10 · Floci S3 (Delta Lake) · DuckDB 1.1+ · dbt-core 1.8+ · PostgreSQL 17 (3NF ODS & Kimball DWH) · FastAPI (QueuePool + TTL Cache) · Power BI · ML/RAG
 
 ---
 
@@ -27,20 +27,20 @@
 
 ### 1.1 Sơ đồ luồng dữ liệu
 
-Dữ liệu di chuyển qua 6 tầng chính theo hướng một chiều, từ nguồn thô đến các consumer cuối cùng:
+Dữ liệu di chuyển qua các tầng chính theo hướng một chiều, từ nguồn thô đến các consumer cuối cùng:
 
 ```
-[Nguồn: 11 job portals]
-        ↓  (Playwright / Scrapling HTTP)
-[Tầng 0 — Extract]  →  Validate schema, tính content hash
-        ↓  (JSONL upload lên Floci S3)
-[Tầng 1 — Bronze]   →  Raw lake, immutable, partition theo ngày
-        ↓  (dbt + DuckDB đọc JSON, transform, ghi Parquet)
-[Tầng 2 — Silver]   →  Cleaned, parsed, deduped, Parquet
-        ↓  (dbt build Gold models)
-[Tầng 3 — Gold]     →  Star Schema + Data Marts, Parquet
+[Nguồn: 8 job portals (TopCV, ITviec, VietnamWorks, LinkedIn, CareerViet, JobsGO, Joboko, 123job)]
+        ↓  (Scrapling HTTP TLS/JA4 bypass + Playwright Cookie Sessions)
+[Tầng 0 — Extract]  →  Validate Pydantic v2 data contracts, tính identity & content hash
+        ↓  (Delta Lake streaming append lên Floci S3 s3://jobit-bronze + Local JSONL buffer)
+[Tầng 1 — Bronze]   →  Delta Lake raw lake (ACID, schema evolution, _delta_log, time-travel)
+        ↓  (dbt-core + DuckDB: Staging & Intermediate)
+[Tầng 2 — Silver]   →  PostgreSQL 17 (3NF ODS, SCD Type 2 job_snapshots, Watermark CDC)
+        ↓  (Stored Procedures & SQL dwh.* + dbt marts)
+[Tầng 3 — Gold]     →  PostgreSQL Star Schema (fct_job_posting, dim_*) + S3 Delta Marts
         ↓
-[Tầng 4 — Serving]  →  FastAPI · Power BI · Elasticsearch
+[Tầng 4 — Serving]  →  FastAPI (QueuePool + TTL Cache <50ms) · Power BI · Web Portal Dark Mode
         ↓
 [Tầng 5 — AI/ML]    →  Recommendation · RAG · Salary Prediction
 ```
@@ -268,51 +268,45 @@ Thiết kế nguyên tắc: **denormalize hoàn toàn** để API chỉ cần sc
 
 ### 6.1 FastAPI — Web API
 
-FastAPI là lớp phục vụ dữ liệu cho ứng dụng web frontend và mobile. Thiết kế stateless, scale ngang, và có caching.
+FastAPI là lớp phục vụ dữ liệu cho ứng dụng web dashboard và external consumers. Thiết kế stateless, bất đồng bộ và có caching tối ưu.
 
-**DuckDB singleton service:** Một DuckDB connection duy nhất được khởi tạo khi server start, kết nối tới Floci S3, tạo sẵn các view trỏ vào Gold Parquet files. Mọi request đều dùng chung connection này. DuckDB đọc Parquet trực tiếp từ S3 rất nhanh nên không cần import vào database riêng.
+**Database Connection Pooling & Serving Strategy:**
+- Thay vì query raw files chậm chạp, FastAPI kết nối tới **PostgreSQL 17** qua **SQLAlchemy QueuePool** (`pool_size=5`, `max_overflow=10`, `pool_pre_ping=True`), tái sử dụng connection pool thay vì mở mới liên tục.
+- Dữ liệu được query trực tiếp từ **Materialized View** `mart_api.latest_jobs_flat` và `dwh.mv_*` đã được denormalize sẵn, có đánh chỉ mục B-tree và GIN.
 
 **Các endpoints chính:**
-- `GET /jobs` với filter theo city, skill, salary, job_type, page
-- `GET /jobs/{id}` lấy chi tiết một job
-- `GET /companies/{name}` profile công ty
-- `GET /skills/trending` skill đang tăng nhanh nhất
-- `POST /search` full-text search qua Elasticsearch
-- `POST /recommend` gợi ý jobs tương tự dựa trên content-based filtering
+- `GET /health` kiểm tra trạng thái API và connection pool
+- `GET /stats/summary` lấy các chỉ số KPI thị trường thời gian thực (tổng jobs, công ty, lương TB, tỷ lệ fresher, remote)
+- `GET /jobs` danh sách jobs với bộ lọc nâng cao (keyword, city, job_level, work_mode, source, salary_min, is_intern, is_fresher) và phân trang
+- `GET /jobs/{id}` chi tiết job kèm mô tả đầy đủ từ Silver snapshot
+- `GET /stats/skills` top skills có nhu cầu tuyển dụng cao nhất
+- `GET /stats/salaries` phân tích mức lương theo năm kinh nghiệm
+- `GET /stats/companies` top doanh nghiệp đang tuyển dụng nhiều nhất
+- `GET /stats/cities` phân bổ việc làm theo thành phố
+- `POST /cache/invalidate` xóa sạch cache (được Airflow gọi sau khi pipeline hoàn tất)
 
-**Caching:** Các query phổ biến (danh sách job mặc định, skill trending) được cache trong Redis với TTL 30 phút. Sau mỗi pipeline chạy xong, Airflow trigger một task xóa cache để data mới được serve ngay.
+**In-Memory TTL Caching:** Sử dụng decorator `ttl_cache(seconds=300)` ngay trong Python memory mà không cần setup Redis container cồng kềnh, giảm 90% tải truy vấn vào PostgreSQL DWH và giữ response time < 50ms.
 
-**Authentication:** Mọi endpoint đều yêu cầu API key qua header `X-API-Key`. Middleware kiểm tra key trước khi request đến router.
-
-**Rate limiting:** Mỗi API key bị giới hạn 100 requests/phút để tránh abuse.
+**Frontend Web Portal:** Mount thư mục `src/api/static` trực tiếp tại root `/`, cung cấp giao diện Dashboard Dark Mode (Glassmorphism) cực kỳ trực quan và tương tác mượt mà.
 
 ### 6.2 Power BI
 
-Power BI kết nối với DuckDB qua Python connector trong Power Query. Script Python chạy DuckDB query đọc Parquet từ S3 và trả về DataFrame. Power BI scheduled refresh chạy hàng ngày sau khi Airflow pipeline hoàn thành.
-
-Dữ liệu cho Power BI đến từ `mart_bi` — các bảng đã aggregate sẵn nên refresh rất nhanh (vài giây). Power BI không cần query trực tiếp fact table lớn.
-
-**Các dashboard chính:**
-- Overview: tổng số jobs đang mở, mới hôm nay, theo thành phố
-- Skill demand: top skills theo lượt tuyển dụng, xu hướng theo thời gian
-- Salary benchmark: so sánh salary theo skill, level, thành phố
-- Source analysis: hiệu suất từng portal (số job, chất lượng, tỉ lệ có salary)
+Power BI kết nối linh hoạt theo 2 phương thức:
+1. **DirectQuery vào PostgreSQL DWH (`dwh` schema):** Truy vấn trực tiếp các bảng Star Schema (`fct_job_posting`, `dim_company`, `dim_skill`, `dim_date`, `dim_location`, `bridge_*`) để cập nhật số liệu theo thời gian thực.
+2. **ODBC / Parquet từ S3:** Đọc trực tiếp các bảng Delta Lake `mart_bi` xuất ra từ `GoldExporter` để tính toán DAX siêu tốc trên RAM.
 
 ---
 
 ## 7. Tầng 5 — AI/ML & Search
 
-### 7.1 Elasticsearch — Full-text Search
+### 7.1 PostgreSQL GIN & Full-Text Search (Thay thế Elasticsearch cồng kềnh)
 
-Elasticsearch (ES) là search engine chuyên biệt, phục vụ use case tìm kiếm nhanh theo text và các filter phức tạp mà DuckDB không tối ưu bằng.
+Để tránh làm phình thêm tài nguyên RAM (tránh phải cấp thêm 2GB-4GB RAM trên máy cá nhân), hệ thống sử dụng **PostgreSQL Full-Text Search & pg_trgm (Trigram)** thay cho một cụm Elasticsearch cồng kềnh:
 
-**Index design:** Mỗi job là một document trong ES. Các trường text như `job_title` và `company` được index với analyzer tiếng Việt (xử lý dấu, tokenize phù hợp). Các trường categorical như `location`, `skills`, `job_type` dùng `keyword` type để filter chính xác. Ngoài ra, có một `dense_vector` field 768 chiều lưu embedding của job description cho semantic search.
-
-**Settings tối ưu:** Index config với `number_of_replicas=0` trong môi trường local (không cần HA), `refresh_interval=30s` thay vì mặc định 1s — giảm overhead khi bulk indexing.
-
-**Sync Gold → ES:** Airflow chạy một task sau khi Gold mart build xong, đọc `latest_jobs_flat` từ Parquet và bulk index vào ES. Chỉ sync records có `_gold_processed_at` mới hơn lần sync cuối (incremental). Dùng ES Bulk API với batch_size=500 để tối ưu throughput.
-
-**Full-text search API:** Endpoint `POST /search` nhận query text và các filter, xây dựng ES query với multi-match (`job_title^3`, `skills^2`, `company^1` — boosting theo độ quan trọng), fuzziness để chịu lỗi chính tả, và filter phần boolean. Kết quả có highlighting để frontend bold phần match.
+**Cơ chế đánh chỉ mục & tìm kiếm:**
+- Cột `title_clean` và mô tả tin được đánh chỉ mục **GIN Index** kết hợp toán tử vector `to_tsvector('simple', ...)` và `pg_trgm` (fuzzy similarity).
+- Hỗ trợ tìm kiếm từ khóa không dấu / có dấu tiếng Việt thông qua extension `unaccent`.
+- Phản hồi cực nhanh (<50ms) ngay trên cùng một instance PostgreSQL mà không cần đồng bộ thêm một database search riêng biệt.
 
 ### 7.2 Semantic Search — RAG
 
@@ -340,18 +334,14 @@ Airflow là bộ não điều phối toàn bộ pipeline. Mỗi task là một �
 
 ### 8.2 Các DAG chính
 
-**`daily_job_pipeline`** (6h sáng mỗi ngày): DAG chính, chạy toàn bộ pipeline ELT hàng ngày theo sequence:
-1. Extract song song tất cả sources
-2. S3KeySensor — chờ Bronze có data (timeout 5 phút)
-3. dbt Silver: staging → intermediate (tuần tự)
-4. dbt test Silver — fail fast, không tiếp tục nếu có data quality issue
-5. dbt Gold: snapshots → warehouse → marts (tuần tự)
-6. dbt test Gold
-7. Sync song song: Elasticsearch + cache invalidation
-
-**`weekly_ml_training`** (Chủ nhật 2h sáng): Train lại recommendation model, salary prediction model, cập nhật embeddings.
-
-**`monthly_full_refresh`** (Ngày 1 mỗi tháng 3h sáng): Full refresh `dim_date` và các dimension nhỏ để đảm bảo tính nhất quán. Chạy tất cả dbt tests một lần toàn bộ.
+**`daily_job_pipeline`** (6h sáng mỗi ngày): DAG chính điều phối toàn bộ pipeline ELT hàng ngày theo sequence tối ưu:
+1. `crawl_all_sources`: Extract song song 8 scrapers, ghi Delta Bronze và đẩy metrics lên XCom
+2. `run_dbt_staging`: dbt Staging & Intermediate với Smart Fallback (S3 Parquet -> JSONL local)
+3. `sync_silver_layer`: Python Sync Engine nạp vào PostgreSQL Silver 3NF, xử lý SCD Type 2 và cross-source dedup
+4. `run_dbt_gold` (nhánh song song): Build Star Schema & BI Marts trên DuckDB phục vụ Power BI
+5. `sync_postgres_gold`: Gọi Stored Procedures cập nhật DWH Fact/Dims và refresh Materialized Views cho Web API
+6. `export_gold_marts`: Export Data Marts từ PostgreSQL ra Delta Lake trên S3 Floci
+7. `archive_bronze_data` & `vacuum_delta_tables`: Dọn dẹp log Delta cũ > 7 ngày và nén JSON Bronze cũ > 30 ngày
 
 ### 8.3 Cơ chế an toàn
 
@@ -463,17 +453,11 @@ Có 4 loại metrics quan trọng:
 
 **API performance:**
 
-- `p50_response_time_ms`, `p95_response_time_ms`, `p99_response_time_ms`: phân vị latency
+- `p50_response_time_ms`, `p95_response_time_ms`, `p99_response_time_ms`: phân vị latency (< 50ms)
 - `requests_per_minute`: throughput
-- `cache_hit_rate_pct`: % requests được serve từ cache — nếu thấp (<50%) cần review TTL
-- `duckdb_query_duration_ms`: thời gian DuckDB thực thi query trong mỗi request
+- `cache_hit_rate_pct`: % requests được serve từ TTL Cache (> 70%)
+- `db_query_duration_ms`: thời gian PostgreSQL/DuckDB thực thi query trong mỗi request
 - `error_rate_pct`: % requests trả về 4xx/5xx
-
-**DuckDB serving health:**
-
-- `parquet_files_scanned_per_query`: số files Parquet phải đọc — giảm nhờ partition pruning
-- `bytes_scanned_per_query_mb`: data scan per query — chỉ số tốt cho columnar efficiency
-- `memory_peak_mb`: peak memory DuckDB dùng khi execute query
 
 **Power BI:**
 
@@ -482,14 +466,10 @@ Có 4 loại metrics quan trọng:
 
 ### 9.6 Metrics tầng Search & ML (Tầng 5)
 
-**Elasticsearch:**
+**PostgreSQL Trigram Search & API Serving:**
 
-- `es_index_size_gb`: kích thước index
-- `es_docs_total`: tổng số documents indexed
-- `bulk_indexing_duration_seconds`: thời gian bulk sync Gold → ES
-- `bulk_indexing_throughput_docs_per_sec`: tốc độ indexing
-- `search_query_latency_p95_ms`: latency search query ở percentile 95
-- `embedding_generation_duration_minutes`: thời gian tạo embeddings cho toàn bộ jobs
+- `search_query_latency_p95_ms`: latency search query ở percentile 95 (< 50ms nhờ GIN Trigram)
+- `embedding_generation_duration_minutes`: thời gian tạo embeddings cho toàn bộ jobs (ML/RAG)
 
 **ML metrics:**
 
@@ -552,53 +532,64 @@ Bảng dưới mô tả cách đọc metrics để ra quyết định:
 | `cache_hit_rate < 40%` | Cache không hiệu quả | Tăng TTL, review cache key design |
 | `bytes_scanned_per_query > 500MB` | Partition pruning không hoạt động | Kiểm tra lại WHERE clause có dùng partition key không |
 | `pipeline_duration > 3h` | Tổng pipeline quá chậm | Tăng parallelism, review bottleneck task |
-| `es_search_p95 > 500ms` | Search chậm | Kiểm tra ES heap, index sharding |
+| `api_search_p95 > 500ms` | Tìm kiếm API chậm | Kiểm tra PostgreSQL Trigram/GIN index, VACUUM ANALYZE |
 | `salary_mae > 5 triệu` | ML model kém | Thu thập thêm training data, tune hyperparams |
 
 ---
 
 ## 10. Kỹ thuật tối ưu DE tổng hợp
 
-### 10.1 Storage Optimization — Parquet + Snappy
+### 10.1 Storage Optimization — Parquet + Snappy & ZSTD
 
-Parquet là định dạng columnar — thay vì lưu row-by-row như CSV/JSON, dữ liệu được nhóm theo cột. Khi query chỉ cần 5 cột trong bảng 50 cột, Parquet chỉ đọc 5 cột đó, bỏ qua 45 cột còn lại. Kết hợp với Snappy compression, file nhỏ hơn JSON khoảng 5–8 lần.
+Parquet là định dạng columnar — thay vì lưu row-by-row như CSV/JSON, dữ liệu được nhóm theo cột. Khi query chỉ cần 5 cột trong bảng 50 cột, Parquet chỉ đọc 5 cột đó, bỏ qua 45 cột còn lại. Kết hợp với Snappy / ZSTD compression, dung lượng file nhỏ hơn JSON khoảng 5–8 lần.
 
-**Quy tắc:** Bronze = JSONL (giữ nguyên raw), Silver trở lên = Parquet Snappy. Không dùng Gzip cho Parquet dù nén tốt hơn Snappy vì Gzip không splittable — ảnh hưởng parallel read.
+**Quy tắc:** Bronze raw = JSONL (giữ nguyên cấu trúc gốc từ crawler); Bronze Storage & Gold Marts = Parquet (nén Snappy/ZSTD) để tối ưu dung lượng và I/O khi query.
 
-### 10.2 Partitioning — Predicate Pushdown
+### 10.2 Partition Pruning — Tránh Full Table Scan
 
-Cấu trúc S3 path `year=/month=/day=/` cho phép DuckDB và Spark bỏ qua các partition không liên quan mà không cần đọc. Khi query `WHERE posted_date >= '2026-06-01'`, DuckDB chỉ scan từ partition `month=06` trở đi, bỏ qua toàn bộ 5 tháng trước.
+Partition data theo `year=YYYY/month=MM/day=DD` (Bronze) hoặc theo `scraped_date` (Gold). Khi query lọc theo ngày:
+```sql
+-- CHỈ scan partition 2026/04/01, bỏ qua toàn bộ lịch sử
+SELECT * FROM bronze_jobs 
+WHERE year = 2026 AND month = 4 AND day = 1;
+```
+Partition pruning giảm 90–99% bytes scanned, giảm thời gian query từ hàng chục giây xuống vài trăm mili-giây.
 
-**Nguyên tắc chọn partition key:** Chọn trường thường xuất hiện trong WHERE clause của query phổ biến nhất. Với job data, `posted_date` là lựa chọn tự nhiên vì hầu hết query đều lọc theo ngày gần đây.
+### 10.3 Column Pruning — Chỉ Đọc Cột Cần Thiết
 
-### 10.3 Incremental Load — Không Full Refresh Hàng Ngày
+Luôn chỉ định danh sách cột cụ thể thay vì `SELECT *`. Trong Parquet và DuckDB:
+```sql
+-- Tốt: DuckDB chỉ tải 3 cột vào RAM
+SELECT job_id, title, salary_max FROM read_parquet('gold/jobs/*.parquet');
 
-Toàn bộ staging và fact models đều chạy incremental với strategy `merge`. Chỉ xử lý records có `_scraped_at` mới hơn `MAX(_scraped_at)` trong bảng hiện tại. Với 500 jobs/ngày và tổng 50,000 jobs, incremental chỉ xử lý 1% data mỗi ngày thay vì toàn bộ.
+-- Kém: Đọc toàn bộ 30+ cột gồm cả description dài hàng KB
+SELECT * FROM read_parquet('gold/jobs/*.parquet');
+```
 
-### 10.4 SCD Type 2 — Lịch sử thay đổi Dimension
+### 10.4 Bloom Filter Indexing
 
-Thay vì overwrite khi công ty thay đổi thông tin, dbt snapshot tự động thêm row mới với `valid_from = hôm nay` và đóng bản ghi cũ bằng `valid_to = hôm nay`. Query luôn join với `WHERE is_current = true` để lấy bản hiện tại. Dùng `WHERE valid_from <= some_date AND valid_to > some_date` để point-in-time analysis.
+Đánh Bloom Filter trên các cột ID có cardinality cao (ví dụ: `job_id`, `company_name`) trong Delta Lake hoặc Parquet. Bloom filter cho phép engine xác định nhanh chóng một row group chắc chắn **không chứa** giá trị tìm kiếm mà không cần giải nén dữ liệu.
 
-### 10.5 Content Hash — Pseudo-CDC
+### 10.5 Z-Order Clustering cho Multi-Dimensional Query
 
-Vì nguồn dữ liệu là web scraping (không phải database có CDC), ta dùng content hash làm giải pháp thay thế: hash một số trường quan trọng của mỗi record. Nếu hash của cùng `job_id` thay đổi giữa hai lần scrape, job đó đã được cập nhật. Kỹ thuật này cho phép track salary change, requirements change mà không cần Debezium hay Kafka.
+Khi dữ liệu thường xuyên được filter theo nhiều chiều (ví dụ: vừa lọc theo `location`, vừa lọc theo `skill_id`), Z-Order sắp xếp dữ liệu trong không gian đa chiều, giúp partition pruning hoạt động hiệu quả trên cả 2 cột thay vì chỉ 1 cột phân vùng chính.
 
-### 10.6 DuckDB Query Optimization
+### 10.6 DuckDB In-Memory Tuning
 
-DuckDB tự động thực hiện nhiều tối ưu: predicate pushdown (đẩy filter xuống file scan level), projection pushdown (chỉ đọc cột cần thiết), vectorized execution (xử lý batch rows thay vì từng row), và parallel query execution (multi-threaded). Để tận dụng tối đa:
-
-- Luôn dùng partition key trong WHERE clause khi có thể
-- Tránh `SELECT *` trong production queries — chỉ select cột cần thiết
-- Chạy `ANALYZE` sau mỗi merge lớn để DuckDB có statistics mới nhất
-- Set `memory_limit` và `threads` phù hợp với máy chủ
+- Cấu hình `SET memory_limit = '1GB'` và `SET threads = 2` để đảm bảo DuckDB chạy mượt mà mà không chiếm dụng quá mức bộ nhớ của container Airflow.
+- Sử dụng streaming query (`read_parquet`) thay vì load toàn bộ table vào RAM.
+- Chạy `ANALYZE` sau mỗi batch xử lý lớn để DuckDB cập nhật thống kê bộ tối ưu hóa chi phí (CBO).
+- Chỉ select cột cần thiết trong CTE và Staging models.
 
 ### 10.7 dbt Macros — Tái sử dụng Logic
 
-Thay vì copy-paste logic parse salary hay normalize location vào 11 staging models, gói chúng thành dbt macros (tương đương stored procedures trong SQL). Macro được gọi bằng Jinja syntax trong SQL và được compile trước khi chạy. Ưu điểm: sửa một chỗ, áp dụng cho tất cả.
+Thay vì copy-paste logic parse salary hay normalize location vào 8 staging models, gói chúng thành dbt macros (`parse_salary.sql`, `parse_experience.sql`). Macro được gọi bằng Jinja syntax trong SQL và được compile trước khi chạy. Ưu điểm: sửa một chỗ, áp dụng cho tất cả.
 
-### 10.8 Elasticsearch Optimization
+### 10.8 PostgreSQL Index & Materialized View Optimization
 
-Index được tạo với `refresh_interval=30s` thay vì mặc định 1s — trong quá trình bulk indexing, tắt refresh hoàn toàn rồi bật lại sau, tăng tốc indexing 5–10 lần. Sau khi index xong, chạy `_forcemerge` để giảm số segments, cải thiện search performance.
+- Tạo các **Materialized Views** (`mv_active_jobs_summary`, `mv_kpi_realtime`, `mv_salary_by_skill`) lưu sẵn kết quả tính toán phức tạp.
+- Đánh chỉ mục **GIN Index** kết hợp `pg_trgm` (trigram) và Full-Text Vector để tìm kiếm từ khóa tiếng Việt không dấu/có dấu trong < 50ms.
+- Tự động refresh concurrently sau mỗi lần pipeline hoàn thành thông qua stored procedure `dwh.sp_refresh_all_materialized_views()`.
 
 ---
 
@@ -606,7 +597,7 @@ Index được tạo với `refresh_interval=30s` thay vì mặc định 1s — 
 
 ### 11.1 Credential Management
 
-Tất cả credentials (S3 keys, API keys, Elasticsearch passwords, proxy list) được lưu trong file `.env` và không bao giờ commit lên Git. File `.gitignore` phải bao gồm `.env`, `*.json` raw data, `*.parquet`. Khi deploy lên production cloud, dùng AWS Secrets Manager hoặc Airflow Variables/Connections thay vì file `.env`.
+Tất cả credentials (S3 keys, DB passwords, proxy list) được lưu trong file `.env` và không bao giờ commit lên Git. File `.gitignore` phải bao gồm `.env`, `*.json` raw data, `*.parquet`. Khi deploy lên production cloud, dùng AWS Secrets Manager hoặc Airflow Variables/Connections thay vì file `.env`.
 
 ### 11.2 API Security
 
@@ -697,113 +688,102 @@ job_scraper_de_project/
 │
 ├── src/
 │   ├── extract/
-│   │   ├── base/
-│   │   │   ├── base_crawler.py          ← Abstract class + retry + rate limit
-│   │   │   └── session_manager.py       ← Playwright session pool
-│   │   ├── job_online/
-│   │   │   ├── topcv.py
-│   │   │   ├── itviec.py
-│   │   │   ├── linkedin.py
-│   │   │   └── ... (11 scrapers)
-│   │   └── schemas/
-│   │       ├── job_posting.py           ← Pydantic validate schema
-│   │       └── reject_log.py
-│   ├── aws/
-│   │   ├── s3_client.py                 ← boto3 wrapper
-│   │   ├── init_s3.py                   ← Tạo buckets lần đầu
-│   │   └── exceptions.py
-│   ├── serving/
-│   │   ├── main.py                      ← FastAPI entry point
-│   │   ├── routers/
-│   │   │   ├── jobs.py
-│   │   │   ├── companies.py
-│   │   │   ├── skills.py
-│   │   │   └── search.py
-│   │   ├── services/
-│   │   │   ├── duckdb_service.py        ← DuckDB singleton, query Gold
-│   │   │   ├── elasticsearch_service.py ← ES client + sync
-│   │   │   └── cache_service.py         ← Redis cache wrapper
-│   │   └── middleware/
-│   │       ├── auth.py                  ← API key middleware
-│   │       └── rate_limit.py
-│   └── ml/
-│       ├── rag/
-│       │   ├── embeddings.py            ← Vietnamese SBERT embedding
-│       │   ├── vector_store.py          ← Upload embeddings vào ES
-│       │   └── rag_pipeline.py          ← Retriever + LLM
-│       └── recommendation/
-│           ├── model_trainer.py         ← TF-IDF + cosine sim
-│           └── recommender.py           ← Serving inference
+│   │   ├── base_scraper.py                ← Base scraper (Pydantic validation, retry, jitter)
+│   │   ├── utils/                         ← Regex extractors, date parsers, clean string
+│   │   ├── topcv.py                       ← Scrapling HTTP (TLS/JA4 bypass)
+│   │   ├── itviec.py                      ← Scraper ITviec
+│   │   ├── linkedin.py                    ← Playwright Cookie Session persistence
+│   │   ├── vietnamworks.py                ← Scraper VietnamWorks
+│   │   ├── careerviet.py                  ← Scraper CareerViet
+│   │   ├── jobsgo.py                      ← Scraper JobsGO
+│   │   ├── joboko.py                      ← Scraper Joboko
+│   │   └── job_123.py                     ← Scraper 123Job
+│   ├── storage/
+│   │   ├── s3_client.py                   ← boto3 wrapper Floci S3
+│   │   ├── delta_manager.py               ← Delta Lake manager (ACID, VACUUM, Time Travel)
+│   │   ├── bronze_manager.py              ← Ghi Bronze JSONL/Delta + Pydantic validation
+│   │   └── init_buckets.py                ← Khởi tạo S3 buckets
+│   ├── silver/
+│   │   ├── sync_engine.py                 ← DuckDB → PostgreSQL Silver 3NF sync
+│   │   ├── cdc_tracker.py                 ← CDC Watermark tracking & Anomaly detection
+│   │   ├── dedup_engine.py                ← Cross-source fuzzy dedup (TF-IDF cosine similarity)
+│   │   └── quality_checks.py              ← Great Expectations / SQL assertions
+│   ├── gold/
+│   │   └── gold_exporter.py               ← PostgreSQL DWH → Delta Lake S3 Marts
+│   ├── lifecycle/
+│   │   ├── bronze_archiver.py             ← Nén dữ liệu Bronze cũ > 30 ngày (Parquet ZSTD)
+│   │   └── lifecycle_manager.py           ← Quản lý lifecycle & review queue
+│   ├── api/
+│   │   ├── database.py                    ← SQLAlchemy Engine & QueuePool kết nối PostgreSQL
+│   │   ├── main.py                        ← FastAPI server (TTL cache, dark mode static mount)
+│   │   ├── routers/jobs.py                ← Tra cứu tin tuyển dụng, phân trang & stats
+│   │   └── static/                        # Frontend Dark Mode (index.html, styles.css, app.js)
+│   └── aws/
+│       └── s3_client.py                   ← boto3 S3 client helper
 │
-├── elasticsearch/
-│   └── setup/
-│       ├── create_index.py              ← Tạo ES index với mapping
-│       └── initial_bulk_load.py         ← Load lần đầu toàn bộ jobs vào ES
+├── scripts/
+│   ├── sql/
+│   │   ├── init_db.sql                    ← Khởi tạo Database & Schemas (staging, ods, dwh, audit)
+│   │   ├── silver/                        ← Stored Procedures load ODS (SCD2, dedup)
+│   │   ├── gold/                          ← Star Schema DWH & Materialized Views
+│   │   └── migrations/                    ← Defensive checks & partition migrations
+│   ├── run_all_scrapers.py                ← Chạy toàn bộ 8 scrapers song song
+│   └── setup_env.bat                      ← Khởi tạo môi trường ảo Python
 │
 ├── monitoring/
-│   ├── pipeline_metrics.duckdb          ← DuckDB persistent file lưu metrics
-│   └── dashboards/
-│       └── pipeline_health.pbix         ← Power BI dashboard engineering
+│   └── dashboards/                        ← File mẫu Power BI / Dashboards
 │
-├── docs/
-│   ├── 10_project_structure.md
-│   └── 20_data_platform_blueprint.md   ← File này
+├── docs/                                  ← Toàn bộ tài liệu kỹ thuật & kiến trúc
+│   ├── data_contracts/                    ← Data contracts Bronze, Silver, Gold
+│   └── *.md                               ← 20+ tài liệu chi tiết
 │
-├── docker-compose.yml                   ← Airflow + Floci + Elasticsearch + Redis
-├── .env                                 ← Credentials (không commit)
+├── docker-compose.yml                     ← Airflow 2.10 + Floci S3 + Postgres 17 (Yêu cầu ~4GB RAM)
+├── .env                                   ← Credentials & configurations
 ├── .gitignore
 ├── requirements.txt
-└── run_scrapers_once.py
+├── vercel.json                            ← Cấu hình triển khai Serverless API trên Vercel
+├── api/index.py                           ← Serverless entrypoint cho Vercel
+└── run_scrapers_once.py                   ← Script trigger scrapers đơn giản
 ```
 
 ---
 
 ## 13. Checklist triển khai theo phase
 
-###  Phase 1 — Foundation (Tuần 1–2)
+### Phase 1 — Foundation & Data Ingestion (Hoàn thành)
 
-- [ ] Implement Pydantic validation trong tất cả scrapers (reject queue)
-- [ ] Content hash trong mỗi record
-- [ ] S3 path convention `year=/month=/day=/` cho Bronze
-- [ ] Metadata file `.meta.json` kèm mỗi Bronze file (volume + timing metrics)
-- [ ] `schema.yml` với `not_null`, `unique`, `accepted_values` tests
-- [ ] dbt staging models cho tất cả 11 sources (incremental)
-- [ ] Airflow DAG với TaskGroups và failure alerts
+- [x] Base Scraper với Pydantic validation (reject log queue)
+- [x] Content hash SHA-256 trong mỗi record để chống trùng lặp
+- [x] S3 Floci bucket path convention `bronze/year=YYYY/month=MM/day=DD/`
+- [x] Scrapling HTTP (TLS/JA4 fingerprint bypass) cho TopCV & Playwright Cookie Session cho LinkedIn
+- [x] dbt staging models cho toàn bộ 8 cổng tuyển dụng hoạt động (`topcv`, `itviec`, `vietnamworks`, `linkedin`, `careerviet`, `jobsgo`, `joboko`, `123job`)
+- [x] Airflow DAG `daily_job_pipeline` tự động hóa hàng ngày với fallback thông minh (S3 Parquet -> JSONL local)
 
-###  Phase 2 — Warehouse (Tuần 3–4)
+### Phase 2 — Operational Data Store & Data Warehouse (Hoàn thành)
 
-- [ ] `dim_date` (static table, generate once)
-- [ ] `dim_skill` + seed `dim_skill_mapping.csv`
-- [ ] `dim_location` + seed `dim_location_mapping.csv`
-- [ ] dbt snapshot cho `dim_company` (SCD Type 2)
-- [ ] `fct_job_posting` (incremental, partitioned)
-- [ ] `fct_job_skill` (bridge table)
-- [ ] `int_changed_jobs` (pseudo-CDC)
-- [ ] Bảng `pipeline_run_metrics` + task `collect_metrics` trong Airflow
+- [x] PostgreSQL 17 ODS (3NF) với bảng `jobs`, `companies`, `job_skills`, `skills`
+- [x] Stored procedures xử lý SCD Type 2 (`sp_process_raw_to_silver`) và cross-source dedup (`sp_deduplicate_jobs`)
+- [x] Star Schema DWH (`dim_date`, `dim_company`, `dim_skill`, `dim_location`, `fct_job_postings`, `fct_job_skills`)
+- [x] Materialized Views tăng tốc phân tích (`mv_active_jobs_summary`, `mv_kpi_realtime`, `mv_salary_by_skill`)
+- [x] dbt intermediate models: `int_all_jobs_unioned.sql` (hợp nhất 8 nguồn), `int_deduped_jobs.sql`, `int_job_skills_exploded.sql`
 
-###  Phase 3 — Marts & Serving (Tuần 5–6)
+### Phase 3 — Serving Layer & Visualization (Hoàn thành)
 
-- [ ] `mart_bi`: agg_demand_trend, agg_salary_by_skill, kpi_daily
-- [ ] `mart_api`: latest_jobs_flat (denormalized), company_profiles, skill_stats
-- [ ] `mart_ml`: job_features, skill_cooccurrence, salary_prediction_input
-- [ ] FastAPI với auth, rate limit, /jobs + /search endpoints
-- [ ] DuckDB singleton service + Redis cache
-- [ ] Power BI connection + Operational dashboard
-- [ ] Power BI Pipeline Health dashboard (từ `pipeline_run_metrics`)
+- [x] FastAPI web service với SQLAlchemy QueuePool (5 connection pool, 10 max overflow)
+- [x] In-Memory TTL Cache (@ttl_cache) tối ưu tốc độ response < 50ms cho dashboard
+- [x] GIN Trigram Index (`pg_trgm`) trên PostgreSQL cho Full-Text Search tiếng Việt không cần Elasticsearch
+- [x] Web Dashboard Dark Mode tích hợp trực tiếp (HTML5, Vanilla CSS Glassmorphism, JS Chart.js)
+- [x] Hỗ trợ triển khai Serverless trên Vercel qua `api/index.py` & `vercel.json`
+- [x] Power BI kết nối trực tiếp PostgreSQL DWH qua DirectQuery/Import Mode
 
-###  Phase 4 — AI/ML & Search (Tuần 7–10)
+### Phase 4 — Mở rộng & Nâng cao (Roadmap hạ tầng lớn)
 
-- [ ] Elasticsearch docker service + index creation + bulk load
-- [ ] Airflow task: sync Gold → ES (incremental)
-- [ ] Full-text search API endpoint với boosting
-- [ ] Vietnamese SBERT embeddings + upload dense_vector vào ES
-- [ ] KNN semantic search endpoint
-- [ ] TF-IDF skill similarity recommendation model
-- [ ] Salary prediction model (Gradient Boosting)
-- [ ] Weekly ML training DAG
-- [ ] RAG pipeline (retriever + LLM integration)
-- [ ] Elasticsearch performance metrics (p95 latency, indexing throughput)
+- [ ] Mở rộng Elasticsearch / OpenSearch khi dataset vượt > 5 triệu records hoặc khi RAM máy chủ > 8GB
+- [ ] Tích hợp Vietnamese SBERT (phobert / sentence-transformers) tạo dense vector cho Semantic Search (kNN)
+- [ ] Xây dựng mô hình Machine Learning dự đoán dải lương theo kỹ năng và số năm kinh nghiệm
+- [ ] RAG Pipeline (LLM Assistant hỏi đáp thị trường tuyển dụng từ DWH)
+- [ ] Quản lý Data Governance và Data Catalog tự động qua OpenLineage / Marquez
 
 ---
 
-> **Ghi chú:** Document này là thiết kế tham chiếu. Các quyết định cụ thể về implementation có thể thay đổi dựa trên constraints thực tế về tài nguyên và timeline. Ưu tiên Phase 1 & 2 trước khi nghĩ đến Phase 4.
+> **Ghi chú:** Kiến trúc thực tế của hệ thống hiện tại chạy trên Docker Compose (yêu cầu khoảng 4GB RAM cho toàn bộ stack). Nếu muốn cắt giảm tài nguyên xuống < 1.5GB cho máy yếu, tham khảo chiến lược đề xuất tại [RAM_OPTIMIZATION_STRATEGY.md](file:///d:/JobITVN/job_scraper_de_project/docs/RAM_OPTIMIZATION_STRATEGY.md).

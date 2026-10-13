@@ -78,23 +78,11 @@ Người tìm việc phải tìm kiếm nhiều lần trên từng website.
 
 ## Problem 1.5: Unstructured Data & Missing Fields
 
-Nhiều website (như LinkedIn) gộp chung toàn bộ thông tin (Yêu cầu, Phúc lợi, Lương) vào một khối văn bản `description` khổng lồ, khiến dữ liệu cào về bị `NULL` ở các trường quan trọng. Hệ thống yêu cầu tích hợp một lớp Regex thông minh ngay tại tầng Extract để bóc tách và "cứu" những trường dữ liệu này trước khi đưa xuống Data Lake.
+Nhiều website (đặc biệt là LinkedIn hay các tin tuyển dụng tự do) gộp chung toàn bộ thông tin (Yêu cầu, Phúc lợi, Lương, Địa điểm) vào một khối văn bản `description` khổng lồ không có cấu trúc, khiến dữ liệu cào về bị `NULL` ở các trường quan trọng. 
 
-Thông tin tuyển dụng phân tán trên nhiều website.
-
-Ví dụ:
-
-Một vị trí:
-
-Data Engineer Intern
-
-có thể được đăng trên:
-
-* TopCV
-* ITviec
-* VietnamWorks
-
-Người tìm việc phải tìm kiếm nhiều lần trên từng website.
+Hệ thống yêu cầu:
+* Tích hợp lớp Regex bóc tách thông minh (`regex_extractor.py`) ngay tại tầng Extract để phân tích và chuẩn hóa mức lương, số năm kinh nghiệm, kỹ năng từ văn bản tự do trước khi nạp vào Lakehouse.
+* Cơ chế Data Contracts bằng Pydantic v2 để xác thực cấu trúc và gán giá trị mặc định, ngăn chặn dữ liệu rác làm ô nhiễm các tầng downstream.
 
 ---
 

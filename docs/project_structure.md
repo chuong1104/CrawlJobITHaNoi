@@ -1,83 +1,116 @@
-# Cấu Trúc Thư Mục Dự Án Job Scraper DE
+# Cấu Trúc Thư Mục Dự Án JobITVN (Medallion Lakehouse)
 
-Tài liệu này giải thích chi tiết chức năng của từng thư mục, mục đích sử dụng và nhiệm vụ của các thư mục con bên trong dự án.
+Tài liệu này giải thích chi tiết chức năng của từng thư mục, mục đích sử dụng và nhiệm vụ của các module con bên trong dự án **JobITVN Data Platform**.
 
-## Tổng Quan Cấu Trúc
+---
+
+## 📁 Tổng Quan Cấu Trúc Dự Án
 
 ```text
 job_scraper_de_project/
-├── dags/
-├── data/
-├── dbt_jobitvn/
-├── docs/
-├── logs/
-├── plugins/
-├── scripts/
-├── src/
-├── tests/
-└── venv/
+├── .env.example               # Template biến môi trường
+├── .dockerignore              # Bỏ qua các tệp không cần thiết khi build Docker
+├── .gitignore                 # Loại trừ secrets, logs, local data
+├── Dockerfile                 # Đóng gói image cho Airflow và scrapers
+├── docker-compose.yml         # Khởi chạy Postgres 17, Floci S3, Airflow 2.10, Web API
+├── requirements.txt           # Thư viện Python phụ thuộc
+├── vercel.json                # Cấu hình triển khai FastAPI lên Vercel Serverless
+├── README.md                  # Tài liệu tổng quan dự án chuẩn Enterprise
+│
+├── api/                       # Vercel Serverless Function entrypoint
+│   ├── index.py               # Expose FastAPI app từ src.api.main
+│   └── requirements.txt
+│
+├── dags/                      # Airflow DAGs (Điều phối luồng dữ liệu tự động)
+│   └── daily_pipeline.py      # DAG chạy hàng ngày lúc 6:00 AM (Medallion ELT)
+│
+├── data/                      # Dữ liệu đệm và storage local (KHÔNG commit)
+│   ├── auth/                  # Cookies/Sessions (linkedin_session.json)
+│   ├── bronze/                # Raw JSON đệm từ scrapers theo source
+│   ├── floci/                 # Persistent storage của AWS S3 mock
+│   ├── mart_bi/               # Parquet fallback cho Power BI
+│   ├── mart_ml/               # Parquet fallback cho Machine Learning
+│   └── jobitvn.duckdb         # File DuckDB OLAP database chính
+│
+├── dbt_jobitvn/               # dbt-core Project (Data Transformation)
+│   ├── models/
+│   │   ├── staging/           # 8 view models làm sạch dữ liệu từ 8 nguồn
+│   │   ├── intermediate/      # 5 table models union, dedup, explode skills
+│   │   ├── metrics/           # dbt Semantic Layer (sem_job_market.yml)
+│   │   └── marts/
+│   │       ├── warehouse/     # Kimball Star Schema (fct_job_posting, dim_*)
+│   │       └── mart_bi/       # 10 Aggregate models cho Power BI & API
+│   ├── seeds/                 # Dữ liệu mapping tĩnh: dim_skill, dim_location
+│   ├── macros/                # Macro Jinja tái sử dụng (parse_salary, parse_experience)
+│   ├── tests/                 # Singular & generic data quality tests
+│   ├── dbt_project.yml        # Cấu hình dự án dbt
+│   └── profiles.yml           # Kết nối DuckDB / PostgreSQL
+│
+├── docs/                      # Tài liệu thiết kế kiến trúc hoàn chỉnh
+│   ├── data_contracts/        # Pydantic & YAML Data Contracts (Bronze, Silver, Gold)
+│   └── *.md                   # 20+ tài liệu chuyên sâu theo số thứ tự
+│
+├── logs/                      # Nhật ký hoạt động của Airflow và scrapers
+├── plugins/                   # Custom plugins cho Apache Airflow
+│
+├── scripts/                   # Scripts vận hành độc lập & Migration SQL
+│   ├── sql/                   # DDL SQL scripts
+│   │   ├── silver/            # Schema Silver, CDC watermarks, Procedures, Batch procs
+│   │   ├── gold/              # Schema DWH, Stored Procedures, Materialized Views
+│   │   └── migrations/        # Các bản cập nhật thủ tục phòng thủ (defensive checks)
+│   ├── run_scrapers.py        # CLI chạy scraper song song đa luồng ngoài Airflow
+│   ├── login_linkedin_interactive.py  # Đăng nhập LinkedIn lưu session cookie
+│   ├── sync_data_to_s3_parquet.py     # Đồng bộ dữ liệu local lên S3 Floci
+│   ├── run_all_scrapers.sh    # Script shell test toàn bộ scrapers qua Docker
+│   └── run_test_topcv.sh      # Script shell test nhanh TopCV
+│
+├── src/                       # Mã nguồn cốt lõi (Core Python Modules)
+│   ├── config.py              # Cấu hình tập trung (paths, DB, S3, proxies)
+│   ├── utils.py               # Hàm tiện ích chung (hashing, text cleaning)
+│   ├── api/                   # Web Portal & REST API
+│   │   ├── database.py        # Quản lý asyncpg connection
+│   │   ├── main.py            # FastAPI app: QueuePool, TTL Cache, Static mount
+│   │   ├── routers/jobs.py    # Router xử lý tìm kiếm và thống kê
+│   │   └── static/            # Frontend Dark Mode (index.html, styles.css, app.js)
+│   ├── aws/                   # Client kết nối Floci S3 (boto3 wrapper)
+│   ├── extract/               # Bộ thu thập dữ liệu (Scrapling HTTP + Playwright)
+│   │   ├── base_scraper.py    # Abstract base scraper (retry, rate limit, Pydantic)
+│   │   ├── utils/             # Regex extractors, date parsers, string cleaners
+│   │   ├── careerviet.py      # Scraper CareerViet
+│   │   ├── itviec.py          # Scraper ITViec
+│   │   ├── job_123.py         # Scraper 123Job
+│   │   ├── joboko.py          # Scraper JobOko
+│   │   ├── jobsgo.py          # Scraper JobsGO
+│   │   ├── linkedin.py        # Scraper LinkedIn (Persistent Cookie Session)
+│   │   ├── topcv.py           # Scraper TopCV (TLS/JA4 bypass)
+│   │   └── vietnamworks.py    # Scraper VietnamWorks
+│   ├── storage/               # Quản lý Data Lake & Delta Lake
+│   │   ├── bronze_manager.py  # Ghi Delta Bronze, validate schema Pydantic
+│   │   ├── delta_manager.py   # Wrapper deltalake: ACID, VACUUM, OPTIMIZE
+│   │   └── s3_client.py       # Wrapper S3 Floci với retry logic
+│   ├── schema/                # Pydantic v2 Strict Data Contracts (bronze, silver, gold)
+│   ├── silver/                # Xử lý tầng Silver 3NF
+│   │   ├── sync_engine.py     # Nạp DuckDB vào Postgres, chống N+1, cập nhật SCD
+│   │   ├── cdc_tracker.py     # Tracking mốc watermark (last_sync_at), anomaly detection
+│   │   ├── dedup_engine.py    # Khử trùng lặp cross-source bằng TF-IDF cosine similarity
+│   │   └── quality_checks.py  # Kiểm tra tính toàn vẹn dữ liệu
+│   ├── gold/                  # Xử lý tầng Gold
+│   │   └── gold_exporter.py   # Export PostgreSQL DWH ra Delta Tables trên S3
+│   └── lifecycle/             # Quản lý vòng đời dữ liệu
+│       ├── bronze_archiver.py # Gom nén JSON cũ > 30 ngày thành Parquet ZSTD
+│       └── lifecycle_manager.py # Điều phối các tác vụ review và bảo trì
+│
+└── tests/                     # Automated Tests
+    └── test_*.py              # Test suite kiểm tra từng module scraper
 ```
 
 ---
 
-## Chi Tiết Từng Thư Mục
+## 📌 Vai Trò Của Các Tầng Trong Kiến Trúc
 
-### 1. `dags/`
-- **Mục đích:** Chứa các DAG (Directed Acyclic Graph) của Apache Airflow.
-- **Cách dùng:** Airflow sẽ quét thư mục này để tìm các file định nghĩa luồng công việc (workflow). Bạn tạo hoặc chỉnh sửa các file Python ở đây để lên lịch tự động cho các tác vụ như cào dữ liệu, xử lý dữ liệu và chạy dbt.
-- **File tiêu biểu:** `daily_pipeline.py` (Định nghĩa pipeline chạy hàng ngày).
-
-### 2. `data/`
-- **Mục đích:** Đóng vai trò là bộ nhớ đệm tạm thời (local buffer/staging) trên máy hoặc môi trường phát triển cục bộ, trước khi dữ liệu được đẩy lên S3 (Floci). Dù mục tiêu chính là lưu trữ trên S3, thư mục này vẫn tồn tại vì:
-  1. **An toàn dữ liệu (Buffer):** Khi cào dữ liệu, ghi file xuống ổ cứng cục bộ (vào `data/bronze/`) sẽ an toàn hơn. Nếu mạng chập chờn hoặc kết nối tới S3/Floci bị lỗi, dữ liệu đã cào không bị mất. Sau đó, một tác vụ đồng bộ (sync) sẽ đẩy các file này lên S3.
-  2. **Test/Phát triển (Local Dev):** Giúp lập trình viên có thể chạy thử pipeline ở máy cá nhân (Local) mà không cần phải kết nối hoặc làm rác hệ thống lưu trữ S3 thực tế.
-- **Cách dùng:** Nơi lưu trữ file tạm thời trong quá trình cào, hoặc đọc/ghi khi phát triển local. Cấu trúc bên trong mô phỏng đúng như trên S3 theo kiến trúc Medallion:
-  - `bronze/`: Lưu trữ dữ liệu thô (raw data) vừa mới cào từ các trang web về, chuẩn bị đẩy lên Bucket S3 ở layer Bronze.
-  - `silver/`: (Local cache) Chứa dữ liệu đã được làm sạch, trước hoặc sau khi tải từ S3.
-  - `gold/`: (Local cache) Chứa dữ liệu đã tổng hợp.
-
-### 3. `dbt_jobitvn/`
-- **Mục đích:** Thư mục dự án của dbt (Data Build Tool), quản lý quá trình chuyển đổi dữ liệu (Transformation) từ lớp Silver lên Gold bằng SQL.
-- **Cách dùng:** Sử dụng các lệnh dbt (như `dbt run`, `dbt test`) bên trong thư mục này để thực thi các model biến đổi dữ liệu trên Data Warehouse.
-- **Các thư mục con:**
-  - `models/`: Chứa các file `.sql` định nghĩa logic biến đổi dữ liệu (tables, views).
-  - `macros/`: Chứa các đoạn mã SQL có thể tái sử dụng (giống như các hàm trong lập trình).
-  - `seeds/`: Chứa các file dữ liệu tĩnh (như `.csv`) dùng để load trực tiếp thành bảng lookup/mapping trong database.
-  - `tests/`: Định nghĩa các bài kiểm tra chất lượng dữ liệu (Data Quality Tests) trên các model.
-
-### 4. `src/` (Source)
-- **Mục đích:** Chứa toàn bộ mã nguồn chính (core logic) của dự án bằng Python.
-- **Cách dùng:** Các script và DAG sẽ import (gọi) các hàm và class từ thư mục này để thực thi nhiệm vụ.
-- **Các thư mục con:**
-  - `extract/`: Chứa logic dùng để cào dữ liệu (scraping), ví dụ như code tương tác với API hoặc HTML của các trang web việc làm.
-  - `schema/`: Định nghĩa cấu trúc dữ liệu (Data Schemas), thường dùng Pydantic để kiểm tra tính hợp lệ của dữ liệu đầu vào/đầu ra.
-  - `storage/`: Chứa mã nguồn quản lý việc kết nối với cơ sở dữ liệu và lưu trữ (đọc/ghi file, insert database).
-  - `silver/`: Chứa các logic nghiệp vụ chuẩn hóa dữ liệu, đồng bộ hóa (Sync Engine), theo dõi CDC (CDC Watermark Tracker), và loại bỏ trùng lặp (Dedup Engine).
-
-### 5. `scripts/`
-- **Mục đích:** Chứa các tập lệnh thực thi độc lập (standalone scripts) thường dùng để test nhanh, chạy thủ công hoặc xử lý một tác vụ cụ thể ngoài pipeline.
-- **Cách dùng:** Chạy trực tiếp qua terminal (ví dụ: `python scripts/run_scrapers.py`).
-- **File tiêu biểu:**
-  - `run_scrapers.py`: Kích hoạt quá trình cào dữ liệu theo cách thủ công.
-  - `login_linkedin_interactive.py`: Hỗ trợ đăng nhập thủ công/lấy cookies đối với những trang yêu cầu xác thực phức tạp.
-
-### 6. `tests/`
-- **Mục đích:** Chứa các bài kiểm tra tự động (Unit Tests / Integration Tests) cho mã nguồn Python.
-- **Cách dùng:** Chạy framework pytest (ví dụ: `pytest tests/`) để đảm bảo các module cào dữ liệu và xử lý hoạt động chính xác sau khi có thay đổi code.
-- **File tiêu biểu:** Chứa các test cho các module cụ thể như `test_itviec_full.py`, `test_linkedin_full.py`.
-
-### 7. `logs/`
-- **Mục đích:** Lưu trữ các file nhật ký hoạt động (log files) của hệ thống.
-- **Cách dùng:** Dùng để kiểm tra, debug và giám sát khi pipeline chạy lỗi. Thư mục này thường chứa log của các scraper hoặc của Airflow.
-
-### 8. `docs/`
-- **Mục đích:** Chứa các tài liệu thiết kế, hướng dẫn sử dụng, hoặc kiến trúc của dự án.
-- **Cách dùng:** Nơi team phát triển lưu lại các kiến thức và thiết kế hệ thống.
-
-### 9. `plugins/`
-- **Mục đích:** Thư mục dành riêng cho các plugin tùy chỉnh của Apache Airflow.
-- **Cách dùng:** Nếu bạn viết thêm các Operators, Hooks hoặc Macros mới cho Airflow, bạn sẽ đặt chúng ở đây để Airflow tự động nhận diện.
-
-### 10. `venv/`
-- **Mục đích:** Chứa môi trường ảo của Python (Virtual Environment).
-- **Cách dùng:** Cô lập các thư viện cài đặt cho dự án này (như pandas, dbt, airflow, selenium...) để không xung đột với hệ thống. Kích hoạt môi trường này trước khi chạy code (`source venv/bin/activate`).
+1. **`src/extract/` (Tầng Thu thập):** Sử dụng chiến thuật đa tầng (Multi-tier Strategy). Tầng siêu nhẹ dùng Scrapling HTTP (curl_cffi) giả lập TLS/JA4 fingerprint chỉ tốn 30-50MB RAM/worker cho các nguồn như TopCV, VietnamWorks, CareerViet, JobsGO. Tầng Persistent Session dùng Playwright lưu cookie session cho LinkedIn.
+2. **`src/storage/` (Tầng Lakehouse):** Đảm bảo tính ACID của Data Lake trên S3 (Floci) bằng định dạng **Delta Lake** (`python-deltalake`), hỗ trợ time-travel và tự động dọn dẹp `VACUUM`.
+3. **`dbt_jobitvn/` (Tầng Chuyển đổi):** DuckDB làm việc trực tiếp với file Delta/Parquet trên S3 bằng `delta_scan()`, thực hiện các model Staging và Intermediate siêu tốc mà không cần cụm Spark nặng nề.
+4. **`src/silver/` (Tầng ODS 3NF):** Lưu trữ trong PostgreSQL 17, tích hợp CDC Watermark Tracker, xử lý lịch sử trạng thái bằng SCD Type 2 (`job_snapshots`) và khử trùng lặp công ty bằng `pg_trgm`.
+5. **`scripts/sql/gold/` & `src/gold/` (Tầng DWH & Marts):** Xây dựng Star Schema trong PostgreSQL (`dwh`) với Fact/Dimensions, tạo các Materialized Views phục vụ Web API (<50ms) và xuất Delta Lake Marts ra S3 cho Power BI / AI.
+6. **`src/api/` & `api/` (Tầng Phục vụ):** FastAPI Backend với SQLAlchemy QueuePool và TTL Cache, đi kèm giao diện Web Dashboard Dark Mode trực quan hóa số liệu thời gian thực.

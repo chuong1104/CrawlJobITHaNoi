@@ -19,21 +19,25 @@ job_scraper_de_project/
 ├── .gitignore                 # Exclude secrets, data, logs, cache
 ├── .dockerignore
 ├── Dockerfile                 # Image build cho Airflow + scrapers
-├── docker-compose.yml         # Services: Postgres, Floci S3, Airflow, Web API
+├── docker-compose.yml         # Services: Postgres 17, Floci S3, Airflow 2.10, Web API
 ├── requirements.txt           # Thư viện Python
+├── vercel.json                # Cấu hình deploy FastAPI lên Vercel
 ├── README.md                  # Giới thiệu & hướng dẫn nhanh
+├── api/                       # Vercel Serverless Entrypoint
+│   ├── index.py               # Expose FastAPI app cho Vercel runtime
+│   └── requirements.txt
 │
 ├── dags/                      # Airflow DAGs (Điều phối luồng)
 │   └── daily_pipeline.py      # DAG chạy pipeline hàng ngày
 │
 ├── dbt_jobitvn/               # dbt Project (Data Transformation)
 │   ├── models/
-│   │   ├── staging/           # Tầng làm sạch & chuẩn hóa (view)
-│   │   ├── intermediate/      # Dedup, union, logic phức tạp (table)
+│   │   ├── staging/           # Tầng làm sạch & chuẩn hóa (8 view models)
+│   │   ├── intermediate/      # Dedup, union, logic phức tạp (5 table models)
 │   │   ├── metrics/           # dbt Semantic Layer (MetricFlow)
 │   │   └── marts/
-│   │       ├── warehouse/     # Star Schema DWH — Kimball (table)
-│   │       └── mart_bi/       # Aggregate tables cho Power BI (incremental)
+│   │       ├── warehouse/     # Star Schema DWH — Kimball (fct, dim, bridge)
+│   │       └── mart_bi/       # 10 Aggregate models cho Power BI & API
 │   ├── seeds/                 # Dữ liệu tĩnh: dim_skill, dim_location
 │   ├── macros/                # Hàm Jinja tái sử dụng
 │   ├── tests/                 # Singular tests kiểm tra chất lượng dữ liệu
@@ -46,17 +50,22 @@ job_scraper_de_project/
 │
 ├── scripts/                   # Scripts vận hành & SQL DDL
 │   ├── sql/                   # SQL DDL Migration scripts
-│   │   ├── silver/            # Schema Silver, CDC watermarks, Procedures
+│   │   ├── silver/            # Schema Silver, CDC watermarks, Procedures, Batch procs
 │   │   └── gold/              # Schema DWH, Stored Procedures, Materialized Views
 │   ├── run_scrapers.py        # Chạy scraper thủ công ngoài Airflow
 │   ├── login_linkedin_interactive.py  # Đăng nhập LinkedIn lấy session
+│   ├── sync_data_to_s3_parquet.py     # Đồng bộ local JSONL lên S3 Floci
 │   ├── run_all_scrapers.sh    # Shell runner: test tất cả scrapers qua Docker
 │   └── run_test_topcv.sh      # Shell runner: test TopCV qua Docker
 │
 ├── src/                       # Mã nguồn Python
 │   ├── config.py              # Cấu hình tập trung (env vars, paths)
 │   ├── utils.py               # Helper functions dùng chung
-│   ├── api/                   # FastAPI Web Portal (routers, database)
+│   ├── api/                   # FastAPI Web Portal
+│   │   ├── database.py        # Kết nối CSDL asyncpg
+│   │   ├── main.py            # App chính (SQLAlchemy QueuePool, TTL Cache, Static mount)
+│   │   ├── routers/jobs.py    # Endpoints tra cứu job & stats
+│   │   └── static/            # Frontend Dark Mode (index.html, styles.css, app.js)
 │   ├── aws/                   # Helper kết nối AWS/Floci S3
 │   ├── extract/               # Python Scrapers (Playwright/Scrapling)
 │   │   ├── base_scraper.py    # Abstract base class cho mọi scraper
@@ -111,19 +120,21 @@ job_scraper_de_project/
 
 | Layer | Folder | Materialization | Mô tả |
 |---|---|---|---|
-| Staging | `staging/` | View | Làm sạch, rename, cast type |
-| Intermediate | `intermediate/` | Table | Union 9 nguồn, dedup, explode skills |
-| DWH | `marts/warehouse/` | Table | Star Schema: dim_*, fct_* |
-| BI Mart | `marts/mart_bi/` | Incremental | KPI, trend, salary aggregates |
-| Semantic | `models/metrics/` | `.yml` only | MetricFlow definitions |
+| Staging | `staging/` | View | Làm sạch, rename, cast type (8 models) |
+| Intermediate | `intermediate/` | Table | Union 8 nguồn (`int_all_jobs_unioned`), dedup, explode skills |
+| DWH | `marts/warehouse/` | Table | Star Schema: dim_*, fct_*, bridge_* |
+| BI Mart | `marts/mart_bi/` | Incremental | 10 models: KPI, trend, salary aggregates |
+| Semantic | `models/metrics/` | `.yml` only | MetricFlow definitions (`sem_job_market.yml`) |
 
 ### 3.4. `dbt_jobitvn/seeds/` (Static Reference Data)
 * **`dim_skill_mapping.csv`:** Chuẩn hóa tên skill (e.g. "JS" → "JavaScript").
 * **`dim_location_mapping.csv`:** Chuẩn hóa tên tỉnh/thành phố.
 
-### 3.5. `src/api/` (Serving Layer)
-* **FastAPI** application phục vụ dữ liệu cho frontend dashboard và external consumers.
-* Kết nối PostgreSQL thông qua `database.py`, expose routers tại `/api/v1/`.
+### 3.5. `src/api/` (Serving Layer & Web Portal)
+* **FastAPI Backend:** Kết nối PostgreSQL thông qua **SQLAlchemy QueuePool** (`pool_size=5`, `max_overflow=10`, `pool_pre_ping=True`) giúp tái sử dụng kết nối.
+* **In-Memory TTL Caching:** Decorator `ttl_cache(seconds=300)` giảm tải tối đa cho PostgreSQL Gold DWH, response time < 50ms.
+* **Frontend Web Dashboard:** Static assets (`static/index.html`, `styles.css`, `app.js`) giao diện Vibrant Dark Mode phục vụ trực tiếp tại root `/`.
+* **Serverless Deployment:** Entrypoint `api/index.py` và `vercel.json` hỗ trợ deploy miễn phí lên Vercel.
 
 ### 3.6. `scripts/` (Ops & Migration)
 * **`scripts/sql/silver/`:** DDL tạo Silver schema, CDC watermark tables, stored procedures.

@@ -277,6 +277,22 @@ if __name__ == "__main__":
 
 ---
 
+### Bước 2.3.1: Phiên Bản Production Tối Ưu Với QueuePool & TTL Cache (`src/api/main.py`)
+
+Trong môi trường thực tế, để giảm tải cho database và tăng tốc độ response < 50ms, dự án cung cấp phiên bản production tại `src/api/main.py` với các cải tiến:
+1. **SQLAlchemy QueuePool (`pool_size=5, max_overflow=10`):** Tái sử dụng kết nối database thay vì tạo mới.
+2. **In-Memory `@ttl_cache`:** Cache kết quả KPI và thống kê kỹ năng/công ty trong bộ nhớ RAM tạm thời mà không cần Redis.
+3. **Endpoint `/cache/invalidate`:** Hỗ trợ Airflow tự động xóa cache sau mỗi lần pipeline hoàn thành.
+4. **Vercel Serverless Ready:** Cung cấp file entrypoint `api/index.py` import trực tiếp `app` từ `src.api.main`, kết hợp file cấu hình `vercel.json` để deploy miễn phí lên nền tảng Vercel.
+
+```python
+# api/index.py
+from src.api.main import app
+# Expose app for Vercel Serverless
+```
+
+---
+
 ### Bước 2.4: Giao diện HTML Dashboard (`src/api/static/index.html`)
 
 Tạo giao diện Web Dashboard sang trọng, responsive gồm ô tìm kiếm, khối KPI và danh sách tin:

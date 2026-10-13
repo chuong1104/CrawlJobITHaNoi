@@ -15,19 +15,19 @@ Thay vì dùng các công cụ Big Data cồng kềnh (Hadoop, Spark, Trino), d�
 
 # 1. Technology Stack Overview
 
-| Layer                  | Technology                        |
-| ---------------------- | --------------------------------- |
-| Crawling               | Scrapling, Playwright, Python (Regex Fallback) |
-| Local Cloud Simulation | Floci (giả lập AWS S3, RDS)       |
-| Data Lake Storage      | **Delta Lake (via python-deltalake)** trên Floci S3 |
-| Operational Database (Silver) | **PostgreSQL (3NF ODS)** |
-| Compute Engine         | DuckDB & PostgreSQL |
-| Data Transformation    | dbt-core (dbt-duckdb, dbt-postgres) |
-| Semantic / Metrics Layer| **dbt Semantic Layer (MetricFlow)** |
-| Orchestration          | Apache Airflow |
-| Serving API            | FastAPI (tận dụng **Materialized Views**) |
-| Dashboard              | Power BI (đọc trực tiếp từ Delta Tables & DWH) |
-| Containerization       | Docker |
+| Layer                  | Technology | Vai trò & Đặc tả |
+| :--------------------- | :--------------------------------- | :---------------- |
+| **Crawling & Ingestion** | Scrapling (curl_cffi), Playwright, Pydantic v2 | 8+ portals; TLS/JA4 bypass (~30-50MB RAM/worker), Cookie session persistence (LinkedIn) |
+| **Local Cloud Simulation** | Floci (giả lập AWS S3, Hybrid Storage) | S3 Object Storage mock cực nhẹ (khởi động 24ms, ~13MB RAM) |
+| **Data Lake Storage** | **Delta Lake 0.18+ (python-deltalake)** trên S3 Floci | Bronze & Gold Delta Tables với ACID transactions (`_delta_log`), Time-Travel, VACUUM |
+| **Operational ODS (Silver)** | **PostgreSQL 17 (3NF ODS)** | Ràng buộc 3NF, SCD Type 2 (`job_snapshots`), Watermark CDC, Trigram (`pg_trgm`) |
+| **Data Warehouse (Gold)** | **PostgreSQL 17 & DuckDB 1.1+** | Kimball Star Schema (`dwh`), Materialized Views, In-Memory OLAP Columnar Engine |
+| **Data Transformation** | dbt-core 1.8+ (dbt-duckdb, dbt-postgres) | 8 Staging models, 5 Intermediate models, 10 Warehouse & Mart models, data tests |
+| **Semantic / Metrics Layer** | **dbt Semantic Layer (MetricFlow)** | Định nghĩa tập trung metrics thị trường (`sem_job_market.yml`), time-spine |
+| **Orchestration** | Apache Airflow 2.10 (LocalExecutor) | Daily DAG `@ 06:00 AM`, parallel branch execution, XCom metrics (yêu cầu Docker ~4GB RAM) |
+| **Serving API & Portal** | FastAPI 0.110+ + HTML5/CSS3 Dark Mode | SQLAlchemy QueuePool (5/10), TTL Cache in-memory, response time <50ms, Vercel ready |
+| **Business Intelligence** | Power BI Desktop | DirectQuery vào PostgreSQL DWH hoặc ODBC vào DuckDB Star Schema |
+| **Containerization & Ops** | Docker & Docker Compose v2 | Giới hạn 3 CPU, 4GB RAM container limit; tổng stack yêu cầu 4GB - 6GB RAM (kèm tài liệu chiến lược tối ưu RAM) |
 
 ---
 

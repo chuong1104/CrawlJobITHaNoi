@@ -87,39 +87,39 @@ Cơ chế **Change Data Capture (CDC)** dựa trên watermark đã được tíc
 
 # 4. Airflow DAG Workflow (Daily Execution Pipeline)
 
-Mỗi ngày lúc 6h sáng, Airflow kích hoạt pipeline và giám sát luồng chạy song song:
+Mỗi ngày lúc 6h sáng, Airflow kích hoạt pipeline và giám sát luồng chạy song song được tối ưu hóa:
 
 ```text
-       ┌───────────┐
-       │   start   │
-       └─────┬─────┘
-             ▼
- ┌───────────────────────┐
- │   crawl_all_sources   │
- └───────────┬───────────┘
-             ▼
- ┌───────────────────────┐
- │    run_dbt_staging    │
- └─────┬───────────┬─────┘
-       │           ├─────────────────────────┐
-       ▼           ▼                         ▼
- ┌───────────┐ ┌──────────┐         ┌─────────────────┐
- │run_dbt_gol│ │sync_silv │         │archive_bronze_da│
- └─────┬─────┘ └─────┬────┘         └────────┬────────┘
-       │             ▼                       │
-       │       ┌──────────┐                  │
-       │       │sync_postg│                  │
-       │       └─────┬────┘                  │
-       │             ▼                       │
-       │       ┌──────────┐                  │
-       │       │export_gol│                  │
-       │       └─────┬────┘                  │
-       ▼             ▼                       │
- ┌─────┴─────────────┴────┐                  │
- │  vacuum_delta_tables   │                  │
- └───────────┬────────────┘                  │
-             ▼                               ▼
-       ┌───────────┐                   ┌───────────┐
-       │    end    │                   │    end    │
-       └───────────┘                   └───────────┘
+        ┌───────────┐
+        │   start   │
+        └─────┬─────┘
+              ▼
+  ┌───────────────────────┐
+  │   crawl_all_sources   │ (Chạy song song 8 scrapers, metrics -> XCom)
+  └───────────┬───────────┘
+              ▼
+  ┌───────────────────────┐
+  │    run_dbt_staging    │ (Smart Fallback: S3 Parquet -> JSONL local)
+  └─────┬───────────┬─────┘
+        │           ├──────────────────────────────┐
+        ▼           ▼                              ▼
+  ┌───────────┐ ┌───────────────────┐      ┌─────────────────────┐
+  │run_dbt_gol│ │ sync_silver_layer │      │ archive_bronze_data │ (Gom nén JSON > 30 ngày)
+  └─────┬─────┘ └─────────┬─────────┘      └──────────┬──────────┘
+        │                 ▼                           │
+        │       ┌───────────────────┐                 │
+        │       │sync_postgres_gold │                 │
+        │       └─────────┬─────────┘                 │
+        │                 ▼                           │
+        │       ┌───────────────────┐                 │
+        │       │ export_gold_marts │                 │
+        │       └─────────┬─────────┘                 │
+        ▼                 ▼                           │
+  ┌─────┴─────────────────┴─────┐                     │
+  │    vacuum_delta_tables      │ (VACUUM Delta Tables)│
+  └──────────────┬──────────────┘                     │
+                 ▼                                    │
+           ┌───────────┐                              │
+           │    end    │◀─────────────────────────────┘
+           └───────────┘
 ```

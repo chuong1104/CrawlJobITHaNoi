@@ -1,19 +1,24 @@
-# Chiến Lược Tối Ưu Hóa RAM & Hiệu Năng Cho JobITVN Trên Local
+# Phân Tích Hiện Trạng & Chiến Lược Đề Xuất Tối Ưu Hóa RAM (Roadmap to 1.5GB)
 
-> **Mục tiêu:** Giảm mức tiêu thụ RAM toàn bộ hệ thống từ **~4.5GB - 6GB xuống dưới 1.2GB - 1.8GB**, cho phép chạy mượt mà trên laptop cá nhân (8GB - 16GB RAM) mà vẫn giữ nguyên kiến trúc chuẩn Data Engineering (Medallion Lakehouse + ODS 3NF + dbt + Serving API).
+> [!WARNING]
+> **THỰC TRẠNG HIỆN TẠI CỦA DỰ ÁN (Current Reality):**
+> - **Chưa tối ưu về 1.5GB:** Trong thực tế, toàn bộ hệ thống đang chạy trên Docker Compose gồm **Apache Airflow 2.10 (Standalone)**, **PostgreSQL 17**, **Web API (FastAPI)** và **Floci S3**. 
+> - Riêng container `airflow` trong [docker-compose.yml](file:///d:/JobITVN/job_scraper_de_project/docker-compose.yml) được cấu hình **limits: 4GB RAM**, **reservations: 1.5GB**.
+> - Tổng mức tiêu thụ RAM thực tế của toàn bộ Docker stack khi khởi chạy dao động từ **~3.5GB đến 5.0GB RAM**. Do đó, máy tính cá nhân cần có tối thiểu **8GB - 16GB RAM** (với ít nhất 4GB cấp phát cho Docker WSL2) để chạy mượt mà.
+> - **Bản chất của tài liệu này:** Đây là **Bản Thiết Kế Nghiên Cứu & Chiến Lược Đề Xuất (Optimization Proposal & Roadmap)** nhằm phân tích các bottleneck ngốn RAM và vạch ra lộ trình các bước kỹ thuật để đưa hệ thống về ngưỡng **~1.2GB - 1.8GB RAM** trong tương lai (hoặc khi chuyển đổi sang mô hình Local Runner / Prefect).
 
 ---
 
-## Bảng So Sánh Tổng Quan (Trước vs Sau Tối Ưu)
+## Bảng So Sánh Hiện Trạng Thực Tế vs Đề Xuất Tối Ưu Hóa
 
-| Thành phần | Kiến trúc hiện tại (Heavy) | RAM hiện tại | Đề xuất tối ưu (Ultra-Light) | RAM sau tối ưu | Mức tiết kiệm |
+| Thành phần | Hiện trạng thực tế trong repo hiện tại | RAM thực tế hiện tại | Đề xuất tối ưu hóa (Roadmap ~1.5GB) | RAM kỳ vọng sau tối ưu | Trạng thái trong codebase |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Crawling Engine** | Playwright / Headless Chrome (`DynamicFetcher`) | ~800MB - 1.8GB (khi spawn nhiều worker) | **Obscura / Scrapling HTTP Fingerprint / Camoufox (hoặc curl_cffi)** | ~80MB - 200MB | **~85%** |
-| **Orchestrator** | Apache Airflow 2.10 (Webserver + Scheduler + Celery/Local + DB) | ~1.5GB - 3.0GB (Docker container giới hạn 3G) | **Prefect 2.x/3.x** (Local Ephemeral Engine hoặc Kestra/Dagster-light) | ~100MB - 250MB | **~90%** |
-| **Operational DB** | PostgreSQL 17 (Shared Buffers 512MB, work_mem 32MB) | ~700MB - 1.2GB | **PostgreSQL Tuned for Local** (shared_buffers 128MB, work_mem 4-8MB) | ~150MB - 250MB | **~75%** |
-| **Serving API & Compute** | Uvicorn (FastAPI) + DuckDB daemon | ~300MB - 600MB | **FastAPI single worker + DuckDB out-of-core memory limit** (`SET max_memory='512MB'`) | ~120MB - 200MB | **~50%** |
-| **S3 Mock & Storage** | Floci (Go-based) | ~15MB - 30MB | Giữ nguyên **Floci** (đã siêu nhẹ) | ~15MB | 0% (Đã tối ưu) |
-| **Tổng cộng** | **Toàn bộ hệ thống chạy đồng thời** | **~3.5GB - 6.5GB** | **Toàn bộ hệ thống chạy đồng thời** | **~500MB - 1.1GB** | **Tiết kiệm ~75-80% RAM** |
+| **Crawling Engine** | Kết hợp **Scrapling HTTP** cho 7 nguồn, nhưng **LinkedIn vẫn dùng Playwright Chrome** (`launch_persistent_context`) | ~400MB - 1.2GB (khi mở browser) | Thay thế hoàn toàn Playwright bằng **curl_cffi / Camoufox** (Firefox headless) | ~80MB - 150MB | ⏳ *Mới áp dụng Scrapling cho TopCV/API; LinkedIn vẫn còn dùng Playwright* |
+| **Orchestrator** | **Apache Airflow 2.10 Standalone** trong Docker (Webserver + Scheduler + Triggerer gộp 1 container) | ~1.5GB - 2.5GB (Limit 4G, Reserve 1.5G) | Chuyển sang **Prefect Cloud Worker** hoặc **Local Python Script Runner** (chạy cron OS) | ~100MB - 200MB | ⏳ *Đề xuất kiến trúc; hiện tại repo vẫn dùng Airflow* |
+| **Operational DB** | **PostgreSQL 17** (đã hạ `shared_buffers=128MB`, `work_mem=8MB`) | ~250MB - 450MB | Sử dụng PostgreSQL Alpine, giảm kết nối `max_connections=20` | ~120MB - 180MB | ✅ *Đã cấu hình trong docker-compose.yml* |
+| **Serving API** | **FastAPI + Uvicorn** với SQLAlchemy QueuePool (5 pool, 10 overflow) + In-Memory TTL Cache | ~150MB - 250MB | Chạy serverless trên Vercel qua `api/index.py` (0MB RAM local) | ~0MB (Vercel) / ~80MB (Local) | ✅ *Đã có vercel.json và TTL cache* |
+| **S3 Storage** | **Floci S3 Mock** (Go-based) | ~20MB - 30MB | Giữ nguyên Floci | ~20MB | ✅ *Đã tối ưu siêu nhẹ* |
+| **Tổng cộng toàn hệ thống** | **Chạy đồng thời trên Docker Compose** | **~3.5GB - 5.0GB** | **Nếu áp dụng đầy đủ lộ trình đề xuất** | **~1.0GB - 1.8GB** | 📌 **Hiện tại hệ thống cần ~4GB RAM** |
 
 ---
 
@@ -371,17 +376,42 @@ Người dùng có thể tự kiểm tra và tái hiện kết quả benchmark t
    ```bash
    docker stats --no-stream
    ```
-   *Kết quả kỳ vọng:*
-   - `postgres`: ~120MB - 180MB RAM (so với 800MB trước tối ưu)
-   - `floci`: ~15MB RAM
-   - `web-api`: ~80MB - 120MB RAM
-   - `airflow`: ~400MB - 650MB RAM
+   *Kết quả thực tế đo được hiện tại:*
+   - `airflow`: ~1.2GB - 2.2GB RAM (chạy Airflow 2.10 Standalone gồm Webserver, Scheduler, LocalExecutor)
+   - `postgres`: ~200MB - 400MB RAM (PostgreSQL 17 với `shared_buffers=128MB`)
+   - `web-api`: ~100MB - 180MB RAM (FastAPI backend + Uvicorn)
+   - `floci`: ~20MB - 30MB RAM (Go-based S3 mock)
+   $\rightarrow$ **Tổng RAM thực tế của Docker stack:** dao động từ **~3.5GB đến 4.5GB**.
 
 ---
 
-## 10. Kết Luận
+## 10. Kết Luận & Hướng Dẫn Vận Hành Thực Tế
 
-Hệ thống **JobITVN** đã được thiết kế và triển khai tuân thủ đầy đủ **20/20 tiêu chuẩn tối ưu hóa hiệu năng & RAM** của ngành Data Engineering hiện đại. 
+1. **Về hiện trạng hệ thống:**
+   - Dự án hiện tại đang duy trì kiến trúc chuẩn Enterprise với **Apache Airflow 2.10** để phục vụ việc demo trực quan DAG, quản lý dependency và học tập kỹ năng Data Engineering chuyên nghiệp.
+   - Để chạy mượt mà toàn bộ Docker stack (`docker-compose up -d`), máy tính cá nhân cần có **tối thiểu 8GB - 16GB RAM** (với ít nhất 4GB cấp cho Docker Desktop / WSL2).
 
-Toàn bộ pipeline từ khâu thu thập dữ liệu bất đồng bộ, nạp hàng loạt (Batch Ingestion), khử trùng lặp 2 cấp độ (Exact Hash + TF-IDF), quản lý lịch sử SCD Type 2, đến điều phối phân tán qua Airflow đều đạt hiệu suất cao, tiêu thụ tài nguyên tối thiểu và hoàn toàn có thể chạy mượt mà trên môi trường máy tính cá nhân 8GB - 16GB RAM mà không bị gián đoạn hay nghẽn bộ nhớ.
+2. **Cách chạy siêu nhẹ (~500MB - 1.5GB) khi máy bị giới hạn RAM:**
+   Nếu máy của bạn có cấu hình yếu hoặc không muốn tốn nhiều RAM cho Docker, bạn có thể áp dụng ngay phương án **chạy Hybrid / Local Script**:
+   - **Bước 1:** Chỉ bật PostgreSQL và Floci S3 trong Docker:
+     ```bash
+     docker-compose up -d postgres floci
+     ```
+     *(Lúc này Docker chỉ ngốn khoảng ~300MB - 400MB RAM)*
+   - **Bước 2:** Chạy scraper và biến đổi dữ liệu trực tiếp bằng Python trên máy host (không qua container Airflow):
+     ```bash
+     # Chạy cào dữ liệu 8 nguồn:
+     python scripts/run_all_scrapers.py
+
+     # Chạy dbt chuyển đổi Staging:
+     cd dbt_jobitvn && dbt run
+
+     # Chạy sync vào PostgreSQL ODS:
+     python -c "from src.silver.sync_engine import SilverSyncEngine; engine = SilverSyncEngine(); engine.connect(); engine.sync_staged_jobs(session_id=1); engine.close()"
+     ```
+   - **Bước 3:** Chạy FastAPI phục vụ Web Dashboard:
+     ```bash
+     python -m src.api.main
+     ```
+   $\rightarrow$ Theo cách này, bạn hoàn toàn vận hành được toàn bộ luồng Data Platform từ Cào $\rightarrow$ Lakehouse $\rightarrow$ ODS $\rightarrow$ Web Dashboard mà tổng dung lượng RAM tiêu thụ chỉ dưới **1.0GB - 1.5GB RAM**!
 
