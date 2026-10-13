@@ -52,34 +52,27 @@ body {
     line-height: 1.6;
 }
 
-/* Ambient glow orbs */
-.glow-bg { position: fixed; border-radius: 50%; z-index: -1; pointer-events: none; }
+/* Ambient glow orbs (Tối ưu GPU: Dùng radial-gradient thuần tĩnh, loại bỏ filter:blur và animation vô hạn gây giật lag) */
+.glow-bg {
+    position: fixed;
+    border-radius: 50%;
+    z-index: -1;
+    pointer-events: none;
+    transform: translateZ(0);
+    contain: strict;
+}
 .glow-1 {
     top: -15%; right: 5%;
-    width: 700px; height: 700px;
-    background: radial-gradient(circle, rgba(56,189,248,0.07) 0%, transparent 65%);
-    filter: blur(80px);
-    animation: floatOrb 18s ease-in-out infinite;
+    width: 650px; height: 650px;
+    background: radial-gradient(circle, rgba(56,189,248,0.06) 0%, rgba(56,189,248,0.02) 40%, transparent 70%);
 }
 .glow-2 {
     bottom: -10%; left: 0%;
-    width: 800px; height: 800px;
-    background: radial-gradient(circle, rgba(129,140,248,0.07) 0%, transparent 65%);
-    filter: blur(80px);
-    animation: floatOrb 24s ease-in-out infinite reverse;
+    width: 750px; height: 750px;
+    background: radial-gradient(circle, rgba(129,140,248,0.06) 0%, rgba(129,140,248,0.02) 40%, transparent 70%);
 }
 .glow-3 {
-    top: 40%; left: 40%;
-    width: 400px; height: 400px;
-    background: radial-gradient(circle, rgba(52,211,153,0.04) 0%, transparent 65%);
-    filter: blur(60px);
-    animation: floatOrb 30s ease-in-out infinite;
-}
-
-@keyframes floatOrb {
-    0%, 100% { transform: translate(0, 0) scale(1); }
-    33%       { transform: translate(30px, -20px) scale(1.05); }
-    66%       { transform: translate(-20px, 15px) scale(0.97); }
+    display: none;
 }
 
 /* ── Navbar ───────────────────────────────────────────── */
@@ -412,7 +405,17 @@ body {
     background: var(--cyan-dim); color: var(--cyan); font-weight: 600;
 }
 
-.jobs-list { display: flex; flex-direction: column; gap: 10px; max-height: 840px; overflow-y: auto; padding-right: 6px; }
+.jobs-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 840px;
+    overflow-y: auto;
+    padding-right: 6px;
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
+    contain: layout;
+}
 
 /* ── Job Card ─────────────────────────────────────────── */
 .job-card {
@@ -421,10 +424,15 @@ body {
     border-radius: var(--radius-md);
     padding: 15px 16px;
     cursor: pointer;
-    transition: transform 0.2s cubic-bezier(0.16,1,0.3,1),
-                border-color 0.2s, background 0.2s, box-shadow 0.2s, opacity 0.2s;
+    transform: translateZ(0);
+    contain: content;
+    transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
-.job-card:hover { transform: translateX(3px); border-color: rgba(255,255,255,0.15); background: rgba(255,255,255,0.04); }
+.job-card:hover {
+    transform: translateX(3px);
+    border-color: rgba(255,255,255,0.18);
+    background: rgba(255,255,255,0.04);
+}
 .job-card.active { border-color: var(--cyan); background: var(--cyan-dim); box-shadow: inset 3px 0 0 var(--cyan); }
 .job-card.is-expired {
     opacity: 0.76;

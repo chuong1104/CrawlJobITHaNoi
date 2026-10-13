@@ -235,39 +235,53 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 // ── KPI ──────────────────────────────────────────────────
+function renderKPIs(d) {
+    if (!d) return;
+    setKPIVal("stat-total-jobs", fmt(d.total_jobs));
+
+    const sub = document.getElementById("stat-new-jobs-sub");
+    if (sub) sub.textContent = "+" + fmt(d.new_jobs_7d || 0);
+
+    const avgSal = d.average_salary_million;
+    setKPIVal("stat-avg-salary", avgSal && avgSal !== "N/A" ? `${avgSal} <small style="font-size:0.8rem;font-weight:500;color:var(--text-muted)">Tr. VNĐ</small>` : "N/A");
+
+    const med = document.getElementById("stat-median-salary");
+    if (med) med.textContent = d.median_salary && d.median_salary !== "0" ? d.median_salary : "N/A";
+
+    setKPIVal("stat-total-companies", fmt(d.total_companies));
+
+    const disc = parseFloat(d.disclosure_rate || 0);
+    setKPIVal("stat-disclosure-rate", `${disc.toFixed(1)}<span style="font-size:1rem;font-weight:600;color:var(--text-muted)">%</span>`);
+
+    setKPIVal("stat-fresher-jobs", fmt(d.fresher_jobs));
+
+    const skillsEl = document.getElementById("stat-top-skills");
+    if (skillsEl && Array.isArray(d.top_skills)) {
+        skillsEl.innerHTML = d.top_skills.slice(0, 10).map(s => {
+            const name = typeof s === "object" ? s.name : s;
+            const count = typeof s === "object" ? s.count : null;
+            const countBadge = count ? `<span class="chip-count">${fmt(count)}</span>` : "";
+            return `<span class="skill-chip">${name}${countBadge}</span>`;
+        }).join("");
+    }
+}
+
 async function loadKPIs() {
+    // 1. Instant Render từ Cache (0ms - người dùng không phải chờ)
+    try {
+        const stored = localStorage.getItem("jobitvn_kpis");
+        if (stored) {
+            renderKPIs(JSON.parse(stored));
+        }
+    } catch (e) {}
+
+    // 2. Fetch ngầm và cập nhật dữ liệu mới nhất
     try {
         const res = await fetch(`${API_URL}/stats/kpi`);
         if (!res.ok) return;
         const d = await res.json();
-
-        setKPIVal("stat-total-jobs", fmt(d.total_jobs));
-
-        const sub = document.getElementById("stat-new-jobs-sub");
-        if (sub) sub.textContent = "+" + fmt(d.new_jobs_7d || 0);
-
-        const avgSal = d.average_salary_million;
-        setKPIVal("stat-avg-salary", avgSal && avgSal !== "N/A" ? `${avgSal} <small style="font-size:0.8rem;font-weight:500;color:var(--text-muted)">Tr. VNĐ</small>` : "N/A");
-
-        const med = document.getElementById("stat-median-salary");
-        if (med) med.textContent = d.median_salary && d.median_salary !== "0" ? d.median_salary : "N/A";
-
-        setKPIVal("stat-total-companies", fmt(d.total_companies));
-
-        const disc = parseFloat(d.disclosure_rate || 0);
-        setKPIVal("stat-disclosure-rate", `${disc.toFixed(1)}<span style="font-size:1rem;font-weight:600;color:var(--text-muted)">%</span>`);
-
-        setKPIVal("stat-fresher-jobs", fmt(d.fresher_jobs));
-
-        const skillsEl = document.getElementById("stat-top-skills");
-        if (skillsEl && Array.isArray(d.top_skills)) {
-            skillsEl.innerHTML = d.top_skills.slice(0, 10).map(s => {
-                const name = typeof s === "object" ? s.name : s;
-                const count = typeof s === "object" ? s.count : null;
-                const countBadge = count ? `<span class="chip-count">${fmt(count)}</span>` : "";
-                return `<span class="skill-chip">${name}${countBadge}</span>`;
-            }).join("");
-        }
+        renderKPIs(d);
+        try { localStorage.setItem("jobitvn_kpis", JSON.stringify(d)); } catch (e) {}
     } catch (err) {
         console.error("KPI load error:", err);
     }
@@ -300,7 +314,7 @@ async function loadJobs() {
 
     const container = document.getElementById("jobs-container");
 
-    // Kiểm tra Client Cache để phản hồi tức thì
+    // 1. Kiểm tra RAM cache trong phiên hiện tại
     const cacheKey = url;
     const cached = clientCache.get(cacheKey);
     const now = Date.now();
@@ -309,8 +323,21 @@ async function loadJobs() {
         return;
     }
 
-    // Hiển thị khung chờ tải (Skeleton)
-    container.innerHTML = buildSkeletons(Math.min(pageSize, 6));
+    // 2. Instant Render Page 1 từ Storage (0ms khi người dùng mới vào web)
+    const isDefaultQuery = (currentPage === 1 && !search && (!status || status === "active") && !location && !salary && !experience && !source && (!sort || sort === "newest"));
+    if (isDefaultQuery && container.children.length === 0) {
+        try {
+            const stored = sessionStorage.getItem("jobitvn_jobs_p1");
+            if (stored) {
+                applyJobsData(JSON.parse(stored), "", container);
+            }
+        } catch (e) {}
+    }
+
+    // Hiển thị khung chờ tải chỉ khi chưa có dữ liệu nào
+    if (container.children.length === 0 || container.querySelector(".empty-state")) {
+        container.innerHTML = buildSkeletons(Math.min(pageSize, 6));
+    }
 
     try {
         const res = await fetch(url);
@@ -319,14 +346,21 @@ async function loadJobs() {
             throw new Error(d.detail || `Máy chủ phản hồi mã lỗi ${res.status}`);
         }
 
-        // Lưu vào Client Cache
+        // Lưu vào RAM cache
         clientCache.set(cacheKey, { data: d, timestamp: now });
+
+        // Lưu Page 1 mặc định vào Storage
+        if (isDefaultQuery) {
+            try { sessionStorage.setItem("jobitvn_jobs_p1", JSON.stringify(d)); } catch (e) {}
+        }
 
         applyJobsData(d, search, container);
 
     } catch (err) {
         console.error("Jobs load error:", err);
-        container.innerHTML = `<div class="empty-state"><p style="color:#ef4444">Không thể tải dữ liệu: ${err.message || "Vui lòng thử lại"}</p></div>`;
+        if (container.children.length === 0 || container.querySelector(".skeleton")) {
+            container.innerHTML = `<div class="empty-state"><p style="color:#ef4444">Không thể tải dữ liệu: ${err.message || "Vui lòng thử lại"}</p></div>`;
+        }
     }
 }
 

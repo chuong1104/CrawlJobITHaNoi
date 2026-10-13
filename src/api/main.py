@@ -539,110 +539,107 @@ def get_location_stats(top_n: int = Query(default=10, le=50)):
 
 
 @app.get("/stats/kpi", tags=["Statistics"])
-@ttl_cache(seconds=60)
+@ttl_cache(seconds=600)  # Cache 10 phút — KPI thị trường thay đổi chậm, giảm tải tối đa cho DB
 def get_kpi_summary():
     try:
-        kpi_data = {}
-        try:
-            kpi_data_rows = _query("SELECT * FROM dwh.mv_kpi_realtime LIMIT 1")
-            kpi_data = kpi_data_rows[0] if kpi_data_rows else {}
-        except Exception:
+        # Tái sử dụng 1 kết nối duy nhất (single connection) thay vì mở/đóng 4 lần liên tục
+        with engine.connect() as conn:
             kpi_data = {}
-
-        total_jobs = kpi_data.get("total_active_jobs", 0)
-        total_companies = kpi_data.get("total_hiring_companies", 0)
-        remote_jobs = kpi_data.get("total_remote_hybrid_jobs", 0)
-        avg_sal = kpi_data.get("market_avg_salary_vnd") or 0
-        med_sal = kpi_data.get("market_median_salary_vnd") or 0
-        disclosure_rate = kpi_data.get("salary_disclosure_rate_pct", 0)
-
-        # ── Fallback sang silver layer nếu mv_kpi_realtime chưa được refresh ──
-        if not total_jobs:
             try:
-                live_stats = _query("""
-                    SELECT
-                        COUNT(DISTINCT j.job_id) AS total_jobs,
-                        COUNT(DISTINCT s.company_id) AS total_companies,
-                        COUNT(DISTINCT CASE WHEN s.is_remote = true THEN j.job_id END) AS remote_jobs,
-                        AVG(NULLIF(s.salary_avg_vnd, 0)) AS avg_sal,
-                        COUNT(DISTINCT CASE WHEN s.salary_avg_vnd > 0 THEN j.job_id END)::numeric / NULLIF(COUNT(DISTINCT j.job_id), 0) * 100 AS disclosure_rate
-                    FROM silver.jobs j
-                    JOIN silver.job_snapshots s ON j.job_id = s.job_id AND s.is_current = true
-                    WHERE j.is_active = true
-                """)
-                if live_stats and live_stats[0].get("total_jobs"):
-                    row = live_stats[0]
-                    total_jobs = row.get("total_jobs") or 0
-                    total_companies = row.get("total_companies") or 0
-                    remote_jobs = row.get("remote_jobs") or 0
-                    avg_sal = row.get("avg_sal") or 0
-                    disclosure_rate = row.get("disclosure_rate") or 0
+                res = conn.execute(text("SELECT * FROM dwh.mv_kpi_realtime LIMIT 1"))
+                rows = [dict(zip(res.keys(), row)) for row in res.fetchall()]
+                kpi_data = rows[0] if rows else {}
             except Exception:
-                pass
+                kpi_data = {}
 
-        # ── Top skills: thử mv_salary_by_skill trước, fallback sang silver ──
-        skill_mv_sql = """
-            SELECT skill_name, job_count
-            FROM dwh.mv_salary_by_skill
-            ORDER BY demand_rank ASC LIMIT 10
-        """
-        skill_silver_sql = """
-            SELECT s.display_name AS skill_name, COUNT(*) AS job_count
-            FROM silver.job_snapshot_skills jss
-            JOIN silver.skills s ON jss.skill_id = s.skill_id
-            JOIN silver.job_snapshots js ON jss.snapshot_id = js.snapshot_id
-            WHERE js.is_current = true
-            GROUP BY s.display_name
-            ORDER BY job_count DESC
-            LIMIT 10
-        """
-        try:
-            skill_rows = _query(skill_mv_sql)
-            if not skill_rows:
-                skill_rows = _query(skill_silver_sql)
-        except Exception:
+            total_jobs = kpi_data.get("total_active_jobs", 0)
+            total_companies = kpi_data.get("total_hiring_companies", 0)
+            remote_jobs = kpi_data.get("total_remote_hybrid_jobs", 0)
+            avg_sal = kpi_data.get("market_avg_salary_vnd") or 0
+            med_sal = kpi_data.get("market_median_salary_vnd") or 0
+            disclosure_rate = kpi_data.get("salary_disclosure_rate_pct", 0)
+
+            # Fallback sang silver layer nếu mv_kpi_realtime chưa được tính
+            if not total_jobs:
+                try:
+                    res = conn.execute(text("""
+                        SELECT
+                            COUNT(DISTINCT j.job_id) AS total_jobs,
+                            COUNT(DISTINCT s.company_id) AS total_companies,
+                            COUNT(DISTINCT CASE WHEN s.is_remote = true THEN j.job_id END) AS remote_jobs,
+                            AVG(NULLIF(s.salary_avg_vnd, 0)) AS avg_sal,
+                            COUNT(DISTINCT CASE WHEN s.salary_avg_vnd > 0 THEN j.job_id END)::numeric / NULLIF(COUNT(DISTINCT j.job_id), 0) * 100 AS disclosure_rate
+                        FROM silver.jobs j
+                        JOIN silver.job_snapshots s ON j.job_id = s.job_id AND s.is_current = true
+                        WHERE j.is_active = true
+                    """))
+                    live_stats = [dict(zip(res.keys(), row)) for row in res.fetchall()]
+                    if live_stats and live_stats[0].get("total_jobs"):
+                        row = live_stats[0]
+                        total_jobs = row.get("total_jobs") or 0
+                        total_companies = row.get("total_companies") or 0
+                        remote_jobs = row.get("remote_jobs") or 0
+                        avg_sal = row.get("avg_sal") or 0
+                        disclosure_rate = row.get("disclosure_rate") or 0
+                except Exception:
+                    pass
+
+            # Top skills (đọc từ Materialized View có sẵn)
+            skill_rows = []
             try:
-                skill_rows = _query(skill_silver_sql)
+                res = conn.execute(text("SELECT skill_name, job_count FROM dwh.mv_salary_by_skill ORDER BY demand_rank ASC LIMIT 10"))
+                skill_rows = [dict(zip(res.keys(), row)) for row in res.fetchall()]
             except Exception:
-                skill_rows = []
-        skills = [{"name": r.get("skill_name", ""), "count": r.get("job_count", 0)} for r in skill_rows]
+                try:
+                    res = conn.execute(text("""
+                        SELECT s.display_name AS skill_name, COUNT(*) AS job_count
+                        FROM silver.job_snapshot_skills jss
+                        JOIN silver.skills s ON jss.skill_id = s.skill_id
+                        JOIN silver.job_snapshots js ON jss.snapshot_id = js.snapshot_id
+                        WHERE js.is_current = true
+                        GROUP BY s.display_name
+                        ORDER BY job_count DESC LIMIT 10
+                    """))
+                    skill_rows = [dict(zip(res.keys(), row)) for row in res.fetchall()]
+                except Exception:
+                    skill_rows = []
+            skills = [{"name": r.get("skill_name", ""), "count": r.get("job_count", 0)} for r in skill_rows]
 
-        # ── New jobs 7 ngày: tính theo last_seen_at trong 7 ngày gần nhất ──
-        new_jobs_sql = """
-            SELECT COUNT(DISTINCT j.job_id) AS cnt
-            FROM silver.jobs j
-            WHERE j.is_active = true
-              AND j.last_seen_at >= CURRENT_DATE - INTERVAL '7 days'
-        """
-        try:
-            new_jobs_7d = _query(new_jobs_sql)[0].get("cnt", 0)
-        except Exception:
+            # New jobs 7 ngày gần nhất
             new_jobs_7d = 0
+            try:
+                res = conn.execute(text("SELECT COUNT(*) AS cnt FROM silver.jobs WHERE is_active = true AND last_seen_at >= CURRENT_DATE - INTERVAL '7 days'"))
+                row = res.fetchone()
+                if row:
+                    new_jobs_7d = row[0]
+            except Exception:
+                new_jobs_7d = 0
 
-        # ── Fresher: query trực tiếp từ silver ──
-        fresher_sql = """
-            SELECT COUNT(DISTINCT j.job_id) AS cnt
-            FROM silver.jobs j
-            JOIN silver.job_snapshots s ON j.job_id = s.job_id AND s.is_current = true
-            WHERE j.is_active = true
-              AND (s.experience_min_years = 0 OR s.experience_min_years IS NULL)
-        """
-        try:
-            fresher_jobs = _query(fresher_sql)[0].get("cnt", 0)
-        except Exception:
-            fresher_jobs = kpi_data.get("total_fresher_jobs", 0)
+            # Fresher jobs
+            fresher_jobs = kpi_data.get("total_fresher_jobs")
+            if fresher_jobs is None:
+                try:
+                    res = conn.execute(text("""
+                        SELECT COUNT(*) AS cnt FROM silver.jobs j
+                        JOIN silver.job_snapshots s ON j.job_id = s.job_id AND s.is_current = true
+                        WHERE j.is_active = true AND (s.experience_min_years = 0 OR s.experience_min_years IS NULL)
+                    """))
+                    row = res.fetchone()
+                    fresher_jobs = row[0] if row else 0
+                except Exception:
+                    fresher_jobs = 0
 
-        return {
-            "total_jobs":              total_jobs,
-            "new_jobs_7d":             new_jobs_7d,
-            "average_salary_million":  f"{avg_sal / 1_000_000:.1f} Tr" if avg_sal else "N/A",
-            "median_salary":           f"{med_sal / 1_000_000:.1f}" if med_sal else "0",
-            "disclosure_rate":         round(disclosure_rate or 0, 1),
-            "total_companies":         total_companies,
-            "fresher_jobs":            fresher_jobs,
-            "remote_jobs":             remote_jobs,
-            "top_skills":              skills,
-        }
+            return {
+                "total_jobs":              total_jobs,
+                "new_jobs_7d":             new_jobs_7d,
+                "average_salary_million":  f"{avg_sal / 1_000_000:.1f} Tr" if avg_sal else "N/A",
+                "median_salary":           f"{med_sal / 1_000_000:.1f}" if med_sal else "0",
+                "disclosure_rate":         round(disclosure_rate or 0, 1),
+                "total_companies":         total_companies,
+                "fresher_jobs":            fresher_jobs,
+                "remote_jobs":             remote_jobs,
+                "top_skills":              skills,
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
