@@ -31,6 +31,9 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql://airflow:airflow@postgres:5432/job_scraper_db"
 )
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
 
 # QueuePool: duy trì pool_size kết nối thường trực,
 # cho phép thêm max_overflow kết nối tạm khi bận.
