@@ -124,6 +124,10 @@ document.addEventListener("DOMContentLoaded", () => {
 async function loadKPIs() {
     try {
         const res = await fetch(`${API_URL}/stats/kpi`);
+        if (!res.ok) {
+            console.error("KPI load HTTP error:", res.status);
+            return;
+        }
         const d = await res.json();
 
         // Total jobs
@@ -199,10 +203,13 @@ async function loadJobs() {
     try {
         const res = await fetch(url);
         const d = await res.json();
+        if (!res.ok) {
+            throw new Error(d.detail || `Máy chủ phản hồi mã lỗi ${res.status}`);
+        }
 
         // Support both flat and paginated response shapes
-        const jobs = d.data || d;
-        const total = d.total ?? (Array.isArray(jobs) ? jobs.length : 0);
+        const jobs = Array.isArray(d.data) ? d.data : (Array.isArray(d) ? d : []);
+        const total = d.total ?? jobs.length;
         const page = d.page || currentPage;
         const totalPages = d.total_pages || d.pagination?.total_pages || 1;
 
@@ -217,7 +224,7 @@ async function loadJobs() {
 
     } catch (err) {
         console.error("Jobs load error:", err);
-        container.innerHTML = `<div class="empty-state"><p style="color:#ef4444">Không thể tải dữ liệu. Vui lòng thử lại.</p></div>`;
+        container.innerHTML = `<div class="empty-state"><p style="color:#ef4444">Không thể tải dữ liệu: ${err.message || "Vui lòng thử lại"}</p></div>`;
     }
 }
 
@@ -240,7 +247,7 @@ function buildSkeletons(n) {
 
 function renderJobs(jobs, container) {
     container.innerHTML = "";
-    if (!jobs || jobs.length === 0) {
+    if (!Array.isArray(jobs) || jobs.length === 0) {
         container.innerHTML = `
             <div class="empty-state">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
@@ -427,7 +434,9 @@ function applyChartDefaults() {
 async function loadSalaryChart() {
     try {
         const res = await fetch(`${API_URL}/stats/salary-by-skill`);
+        if (!res.ok) return;
         const data = await res.json();
+        if (!Array.isArray(data)) return;
         applyChartDefaults();
         const ctx = document.getElementById("salaryChart").getContext("2d");
         if (salaryChartInstance) salaryChartInstance.destroy();
@@ -481,8 +490,10 @@ async function loadSalaryChart() {
 async function loadLocationChart() {
     try {
         const res = await fetch(`${API_URL}/stats/locations?top_n=8`);
+        if (!res.ok) return;
         const body = await res.json();
-        const data = body.data || body;
+        const data = Array.isArray(body.data) ? body.data : (Array.isArray(body) ? body : []);
+        if (!data.length) return;
         applyChartDefaults();
         const ctx = document.getElementById("locationChart").getContext("2d");
         if (locationChartInstance) locationChartInstance.destroy();
@@ -521,8 +532,10 @@ async function loadLocationChart() {
 async function loadSkillsDemandChart() {
     try {
         const res = await fetch(`${API_URL}/stats/skills?top_n=15`);
+        if (!res.ok) return;
         const body = await res.json();
-        const data = body.data || body;
+        const data = Array.isArray(body.data) ? body.data : (Array.isArray(body) ? body : []);
+        if (!data.length) return;
         applyChartDefaults();
         const ctx = document.getElementById("skillsChart").getContext("2d");
         if (skillsChartInstance) skillsChartInstance.destroy();
