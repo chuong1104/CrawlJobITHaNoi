@@ -167,12 +167,15 @@ def health_check():
     """Kiểm tra trạng thái API và kết nối database."""
     try:
         _query("SELECT 1")
-        pool_status = {
-            "pool_size": engine.pool.size(),
-            "checked_in": engine.pool.checkedin(),
-            "checked_out": engine.pool.checkedout(),
-            "overflow": engine.pool.overflow(),
-        }
+        if hasattr(engine.pool, "size"):
+            pool_status = {
+                "pool_size": engine.pool.size(),
+                "checked_in": engine.pool.checkedin(),
+                "checked_out": engine.pool.checkedout(),
+                "overflow": engine.pool.overflow(),
+            }
+        else:
+            pool_status = {"type": "NullPool (serverless)"}
         return {"status": "ok", "db": "connected", "pool": pool_status}
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"DB unavailable: {e}")
