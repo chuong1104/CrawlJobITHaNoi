@@ -63,15 +63,25 @@ Bạn có thể chọn 1 trong 2 cách sau tùy theo trạng thái dữ liệu h
 #### Cách A: Di chuyển toàn bộ dữ liệu hiện tại từ Local sang Neon (Khuyên dùng)
 Nếu ở máy local bạn đã chạy Docker và đã có sẵn dữ liệu trong PostgreSQL:
 
-1. **Dump dữ liệu từ Docker local ra file SQL:**
+1. **Dump dữ liệu an toàn từ Docker container (tránh lỗi font tiếng Việt trên Windows):**
+   > [!IMPORTANT]
+   > Trên Windows PowerShell, tuyệt đối **không** dùng `docker exec -t ... > backup.sql` vì PowerShell sẽ chuyển đổi luồng UTF-8 qua bảng mã console OEM (CP437), gây lỗi font (mojibake: `thß╗▒c v├á...`).
+   > Hãy dump thẳng vào file bên trong container rồi copy ra:
+
    ```bash
-   # Mở Terminal (PowerShell/CMD) tại thư mục project
-   docker exec -t postgres pg_dump -U airflow -d job_scraper_db --no-owner --no-acl > backup_local.sql
+   # Bước 1.1: Xuất file trực tiếp bên trong container (100% chuẩn UTF-8)
+   docker exec postgres pg_dump -U airflow -d job_scraper_db --no-owner --no-acl -f /tmp/backup.sql
+
+   # Bước 1.2: Copy file ra ngoài thư mục dự án
+   docker cp postgres:/tmp/backup.sql ./backup_clean_fixed.sql
    ```
+
+   *(Nếu đã lỡ bị file backup dính lỗi font tiếng Việt, chạy `python scripts/convert_backup.py backup_clean.sql backup_clean_fixed.sql` để khôi phục lại 100% tiếng Việt chuẩn).*
+
 2. **Restore file backup lên Neon Cloud:**
    *(Lưu ý: Dùng chuỗi kết nối **Direct** - bỏ chữ `-pooler` để chạy lệnh DDL restore)*:
    ```bash
-   psql "postgresql://<username>:<password>@ep-cool-cloud.ap-southeast-1.aws.neon.tech/neondb?sslmode=require" -f backup_local.sql
+   psql "postgresql://<username>:<password>@ep-cool-cloud.ap-southeast-1.aws.neon.tech/neondb?sslmode=require" -f backup_clean_fixed.sql
    ```
 
 #### Cách B: Khởi tạo Schema mới từ các file SQL của dự án
