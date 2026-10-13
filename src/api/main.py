@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import create_engine, text
-from sqlalchemy.pool import QueuePool
+from sqlalchemy.pool import QueuePool, NullPool
 
 logger = logging.getLogger(__name__)
 
@@ -35,18 +35,28 @@ if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 
-# QueuePool: duy trì pool_size kết nối thường trực,
-# cho phép thêm max_overflow kết nối tạm khi bận.
-engine = create_engine(
-    DATABASE_URL,
-    poolclass=QueuePool,
-    pool_size=5,           # Số kết nối thường trực trong pool
-    max_overflow=10,       # Số kết nối tạm thêm khi pool đầy
-    pool_timeout=30,       # Thời gian chờ lấy connection từ pool (giây)
-    pool_recycle=3600,     # Tái tạo connection sau 1 tiếng (tránh idle timeout)
-    pool_pre_ping=True,    # Kiểm tra connection còn sống trước khi dùng
-    echo=False,
-)
+# Serverless (Vercel): dùng NullPool để không giữ connection idle khi Lambda đóng băng
+# Local/Docker: dùng QueuePool để tối ưu hiệu năng
+is_serverless = os.getenv("VERCEL") == "1"
+
+if is_serverless:
+    engine = create_engine(
+        DATABASE_URL,
+        poolclass=NullPool,
+        pool_pre_ping=True,
+        echo=False,
+    )
+else:
+    engine = create_engine(
+        DATABASE_URL,
+        poolclass=QueuePool,
+        pool_size=5,
+        max_overflow=10,
+        pool_timeout=30,
+        pool_recycle=3600,
+        pool_pre_ping=True,
+        echo=False,
+    )
 
 # ---------------------------------------------------------------------------
 # Simple TTL Cache (không cần Redis, dùng dict + timestamp)
