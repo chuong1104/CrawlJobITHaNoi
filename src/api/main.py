@@ -30,9 +30,14 @@ logger = logging.getLogger(__name__)
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql://airflow:airflow@postgres:5432/job_scraper_db"
+).strip()
+# Chuẩn hoá về driver psycopg2 (psycopg2-binary) bất kể Vercel/Neon cấp URL dạng nào
+DATABASE_URL = re.sub(
+    r"^(postgres|postgresql)(\+[a-z0-9_]+)?://",
+    "postgresql+psycopg2://",
+    DATABASE_URL,
+    count=1,
 )
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 
 # Serverless (Vercel): dùng NullPool để không giữ connection idle khi Lambda đóng băng
