@@ -95,8 +95,28 @@ BEGIN
         stg.scraped_at,
         COALESCE(prev.version_number, 0) + 1,
         stg.title_raw, stg.title_clean, stg.description,
-        stg.salary_raw, stg.salary_min, stg.salary_max,
-        stg.experience_raw, stg.experience_min_years, stg.experience_max_years,
+        stg.salary_raw,
+        CASE 
+            WHEN stg.salary_min IS NOT NULL AND stg.salary_max IS NOT NULL AND stg.salary_min > stg.salary_max 
+            THEN stg.salary_max 
+            ELSE stg.salary_min 
+        END,
+        CASE 
+            WHEN stg.salary_min IS NOT NULL AND stg.salary_max IS NOT NULL AND stg.salary_min > stg.salary_max 
+            THEN stg.salary_min 
+            ELSE stg.salary_max 
+        END,
+        stg.experience_raw,
+        CASE 
+            WHEN stg.experience_min_years IS NOT NULL AND stg.experience_max_years IS NOT NULL AND stg.experience_min_years > stg.experience_max_years 
+            THEN stg.experience_max_years 
+            ELSE stg.experience_min_years 
+        END,
+        CASE 
+            WHEN stg.experience_min_years IS NOT NULL AND stg.experience_max_years IS NOT NULL AND stg.experience_min_years > stg.experience_max_years 
+            THEN stg.experience_min_years 
+            ELSE stg.experience_max_years 
+        END,
         stg.job_level, stg.job_type, stg.work_mode, stg.job_family,
         stg.deadline_raw, stg.deadline_date, stg.is_intern, stg.is_fresher, stg.content_hash
     FROM staging.stg_jobs stg

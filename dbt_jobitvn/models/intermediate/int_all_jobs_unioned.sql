@@ -38,14 +38,30 @@ SELECT
     job_type_raw,
     job_position_raw,
     salary_raw,
-    salary_min,
-    salary_max,
+    CASE 
+        WHEN salary_min IS NOT NULL AND salary_max IS NOT NULL AND salary_min > salary_max 
+        THEN salary_max 
+        ELSE salary_min 
+    END AS salary_min,
+    CASE 
+        WHEN salary_min IS NOT NULL AND salary_max IS NOT NULL AND salary_min > salary_max 
+        THEN salary_min 
+        ELSE salary_max 
+    END AS salary_max,
     salary_avg,
     salary_is_negotiable,
     salary_currency,
     experience_raw,
-    experience_min_years,
-    experience_max_years,
+    CASE 
+        WHEN experience_min_years IS NOT NULL AND experience_max_years IS NOT NULL AND experience_min_years > experience_max_years 
+        THEN experience_max_years 
+        ELSE experience_min_years 
+    END AS experience_min_years,
+    CASE 
+        WHEN experience_min_years IS NOT NULL AND experience_max_years IS NOT NULL AND experience_min_years > experience_max_years 
+        THEN experience_min_years 
+        ELSE experience_max_years 
+    END AS experience_max_years,
     skills_raw,
     deadline_raw,
     posted_date_raw,
@@ -55,3 +71,9 @@ SELECT
     content_hash
 
 FROM unioned
+WHERE title_raw IS NOT NULL 
+  AND TRIM(title_raw) != '' 
+  AND LOWER(TRIM(title_raw)) NOT IN ('none', 'nan', 'null')
+  AND company_raw IS NOT NULL 
+  AND TRIM(company_raw) != '' 
+  AND LOWER(TRIM(company_raw)) NOT IN ('none', 'nan', 'null')

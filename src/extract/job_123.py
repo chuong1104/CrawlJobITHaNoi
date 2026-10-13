@@ -21,15 +21,18 @@ class Job123Scraper(BaseScraper):
     )
 
     def __init__(self, start_url: str | None = None, **kwargs) -> None:
-        kwargs.setdefault("delay_range", (8.0, 15.0))
-        kwargs.setdefault("max_retries", 5)
+        kwargs.setdefault("delay_range", (3.0, 6.0))
+        kwargs.setdefault("max_retries", 2)
         super().__init__(**kwargs)
         self.start_url = self._canonicalize_list_url(start_url or self.DEFAULT_START_URL)
+        self._company_cache: dict[str, tuple[str | None, str | None]] = {}
 
     def _is_valid_html(self, html: str, url: str) -> bool:
         """Kiểm tra xem trang có bị chặn hoặc lỗi không."""
+        if not html or len(html.strip()) < 200:
+            return False
         html_lower = html.lower()
-        if "cf-browser-verification" in html_lower or "just a moment" in html_lower:
+        if "cf-browser-verification" in html_lower or "just a moment" in html_lower or "challenges.cloudflare.com" in html_lower:
             return False
         if "429 too many requests" in html_lower or "mã lỗi: 429" in html_lower:
             return False
@@ -37,11 +40,12 @@ class Job123Scraper(BaseScraper):
             return False
 
         page = Adaptor(html)
-        is_list_page = bool(page.css("h2.job__list-item-title a"))
+        is_list_page = bool(page.css("h2.job__list-item-title a, div.job__list-item"))
         if not is_list_page:
-            title_el = page.css("h1.job-title, h1.js-job")
-            company_el = page.css("div.d-flex.justify-between span.text-normal, a[href*='/company/'], a[href*='/cong-ty/'], p.company-name")
-            if not title_el and not company_el:
+            if "/company/" in url or "/cong-ty/" in url:
+                return bool(page.css("h1, h2, div.introduce-content, .content-wrap, title"))
+            has_detail = bool(page.css("h1, h2, div.job-title, p.company-name, title"))
+            if not has_detail:
                 return False
                 
         return True
@@ -348,29 +352,33 @@ class Job123Scraper(BaseScraper):
         company_url_raw = page.css("div.company-url a::attr(href)").get()
         if company_url_raw:
             company_url = urljoin(self.base_url, company_url_raw.strip())
-            self.logger.info(f"Fetching company page for info: {company_url}")
-            comp_html = self._fetch_html(company_url)
-            if comp_html:
-                comp_page = Adaptor(comp_html)
-                # Lấy thông tin giới thiệu công ty ở introduce-left
-                company_info = self._get_block_text(comp_page, "div.introduce-left .introduce-content")
-                if not company_info:
-                    company_info = self._get_block_text(comp_page, "div.introduce-content")
-                if not company_info:
-                    company_info = self._get_block_text(comp_page, ".content-wrap")
+            if company_url in self._company_cache:
+                company_info, company_website = self._company_cache[company_url]
+            else:
+                self.logger.info(f"Fetching company page for info: {company_url}")
+                comp_html = self._fetch_html(company_url)
+                if comp_html:
+                    comp_page = Adaptor(comp_html)
+                    # Lấy thông tin giới thiệu công ty ở introduce-left
+                    company_info = self._get_block_text(comp_page, "div.introduce-left .introduce-content")
+                    if not company_info:
+                        company_info = self._get_block_text(comp_page, "div.introduce-content")
+                    if not company_info:
+                        company_info = self._get_block_text(comp_page, ".content-wrap")
 
-                # Lấy website công ty ở trang công ty
-                for intro_item in comp_page.css("div.introduce-item"):
-                    label = intro_item.css(".item-text::text").get() or ""
-                    if "website" in label.lower():
-                        val = intro_item.css(".item-value::text").get()
-                        if val and val.strip() and val.strip().lower() != "đang cập nhật":
-                            company_website = val.strip()
-                        if not company_website:
-                            href = intro_item.css(".item-value a::attr(href)").get()
-                            if href:
-                                company_website = href.strip()
-                        break
+                    # Lấy website công ty ở trang công ty
+                    for intro_item in comp_page.css("div.introduce-item"):
+                        label = intro_item.css(".item-text::text").get() or ""
+                        if "website" in label.lower():
+                            val = intro_item.css(".item-value::text").get()
+                            if val and val.strip() and val.strip().lower() != "đang cập nhật":
+                                company_website = val.strip()
+                            if not company_website:
+                                href = intro_item.css(".item-value a::attr(href)").get()
+                                if href:
+                                    company_website = href.strip()
+                            break
+                self._company_cache[company_url] = (company_info, company_website)
 
         # Fallback lấy trên trang chi tiết công việc nếu trang công ty không có hoặc fetch lỗi
         if not company_info:

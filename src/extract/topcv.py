@@ -53,8 +53,18 @@ class TopCVScraper(BaseScraper):
         # Kiểm tra chi tiết cấu trúc nếu là trang job
         if "/viec-lam/" in url or "/brand/" in url:
             page = Adaptor(html)
-            title_el = page.css("h1.job-detail__info--title, h2.premium-job-basic-information__content--title, h1.job-title, h1.job-detail__title, h1.job-name, .job-title h1, .job-detail-header h1, h2.job-title, h2.title")
-            company_el = page.css("a.name[rel='nofollow'], a[href*='/cong-ty/'], h1.title, h2.company-name, h1.company-name, .company-name, .brand-name")
+            title_el = page.css(
+                "h1.box-header-job__title, h1.job-detail__info--title, "
+                "h2.premium-job-basic-information__content--title, "
+                "h1.job-title, h1.job-detail__title, h1.job-name, "
+                ".box-header-job__title, .job-title h1, .job-detail-header h1, "
+                "h2.job-title, h2.title, button[data-title], meta[property='og:title']"
+            )
+            company_el = page.css(
+                "a.name[rel='nofollow'], a[href*='/cong-ty/'], "
+                "h1.title, h2.company-name, h1.company-name, "
+                ".company-name, .brand-name, .box-company-info"
+            )
             if not title_el and not company_el:
                 # Nếu trang detail nhưng không tìm thấy title hay company nào, rất có thể trang bị lỗi hoặc chưa load xong
                 return False
@@ -65,7 +75,29 @@ class TopCVScraper(BaseScraper):
     # ------------------------------------------------------------------
     def extract_job_urls(self, list_page_html: str) -> list[str]:
         page = Adaptor(list_page_html)
-        hrefs = page.css("div.avatar a::attr(href)").getall()
+        # Bóc tách URL từ tiêu đề công việc (ưu tiên), logo, và các thẻ thẻ card việc làm
+        href_selectors = [
+            "h3.title a::attr(href)",
+            ".title a::attr(href)",
+            "a.job-title::attr(href)",
+            ".job-item-search-result h3 a::attr(href)",
+            ".job-item-search-result .title a::attr(href)",
+            ".job-item-search-result a[href*='/viec-lam/']::attr(href)",
+            ".job-item-search-result a[href*='/brand/']::attr(href)",
+            ".job-item-search-result a::attr(href)",
+            "div.title-block a::attr(href)",
+            "div.body a::attr(href)",
+            "div.avatar a::attr(href)",
+            "a[data-job-id]::attr(href)",
+            "a[href*='/viec-lam/']::attr(href)",
+            "a[href*='/brand/']::attr(href)"
+        ]
+        hrefs: list[str] = []
+        for sel in href_selectors:
+            found = page.css(sel).getall()
+            if found:
+                hrefs.extend(found)
+
         links: list[str] = []
         seen: set[str] = set()
         for href in hrefs:
@@ -134,8 +166,36 @@ class TopCVScraper(BaseScraper):
     def _job_description_section(self, page: Adaptor, heading_keyword: str) -> str | None:
         """
         Tìm trong .job-description__item có <h3> chứa heading_keyword,
+        hoặc trong .box-job-information-detail-item (TopCV V2 layout),
         hoặc trong .box-info / .job-detail-section có h2/h3 chứa heading_keyword.
         """
+        # 1. Cấu trúc TopCV V2 layout (.box-job-information-detail-item)
+        for item in page.css("div.box-job-information-detail-item"):
+            header_text = ""
+            for h_sel in [
+                "h2.box-job-information-detail-item__title--title",
+                ".box-job-information-detail-item__title h2",
+                ".box-job-information-detail-item__title",
+                "h2", "h3"
+            ]:
+                h_el = item.css(h_sel)
+                if h_el:
+                    header_text = "".join(h_el.css("::text").getall()).strip()
+                    if header_text:
+                        break
+            if heading_keyword.lower() in header_text.lower():
+                content_el = item.css("div.box-job-information-detail-item__text")
+                if content_el:
+                    txt = self._block_text(content_el)
+                    if self._is_valid_content(txt):
+                        return txt
+                txt = self._block_text(item)
+                if txt and header_text in txt:
+                    txt = txt.replace(header_text, "", 1).strip()
+                if self._is_valid_content(txt):
+                    return txt
+
+        # 2. Cấu trúc cũ .job-description__item
         for item in page.css("div.job-description__item"):
             h3 = item.css("h3::text").get() or ""
             if heading_keyword.lower() in h3.lower():
@@ -145,7 +205,7 @@ class TopCVScraper(BaseScraper):
                     if self._is_valid_content(txt):
                         return txt
 
-        # Check in .box-info, .job-detail-section, .box-job-detail, etc.
+        # 3. Check in .box-info, .job-detail-section, .box-job-detail, etc.
         for item in page.css("div.box-info, div.job-detail-section, div.box-job-detail"):
             header_text = ""
             for h_sel in ["h2.title", "h2", "h3", ".title"]:
@@ -195,6 +255,16 @@ class TopCVScraper(BaseScraper):
         if val:
             return val
             
+        # 1.5 Thử cấu trúc TopCV V2 layout (.box-header-job-list-info__item)
+        for item in page.css("div.box-header-job-list-info__item"):
+            lbl_el = item.css(".list-info__content__title::text").get()
+            if lbl_el and label_keyword.lower() in lbl_el.lower():
+                val_el = item.css(".list-info__content__desc")
+                if val_el:
+                    txt = " ".join("".join(val_el.css("::text").getall()).split())
+                    if txt:
+                        return txt
+
         # 2. Thử cấu trúc trang thường thứ hai (.box-general-group-info)
         val = self._box_general_info(page, label_keyword)
         if val:
@@ -208,8 +278,10 @@ class TopCVScraper(BaseScraper):
                 if val_el and val_el.strip():
                     return val_el.strip()
 
-        # 3. Thử quét các container tổng quát thường gặp trên trang brand
+        # 3. Thử quét các container tổng quát thường gặp trên trang brand và v2 layout
         for container_sel in [
+            "div.box-header-job-list-info__item",
+            "div.box-job-information-address-and-time-list__item",
             "div.job-summary-item", "div.summary-item", "div.job-info-item", 
             "div.info-item", "div.detail-item", "div.box-item", "div.job-detail-item",
             "div.box-general-group-info"
@@ -217,7 +289,12 @@ class TopCVScraper(BaseScraper):
             for item in page.css(container_sel):
                 # Thử tìm nhãn/tiêu đề
                 title_text = ""
-                for title_sel in [".summary-label", ".label", ".title", ".item-title", "span.text-muted", "div.text-muted", ".box-general-group-info-title"]:
+                for title_sel in [
+                    ".list-info__content__title",
+                    ".box-job-information-address-and-time-list__item--title",
+                    ".summary-label", ".label", ".title", ".item-title", 
+                    "span.text-muted", "div.text-muted", ".box-general-group-info-title"
+                ]:
                     title_el = item.css(title_sel)
                     if title_el:
                         title_text = "".join(title_el.css("::text").getall()).strip()
@@ -230,10 +307,15 @@ class TopCVScraper(BaseScraper):
                 
                 if label_keyword.lower() in title_text.lower():
                     # Thử tìm phần chứa giá trị
-                    for value_sel in [".summary-value", ".value", "strong", "span.text-dark", "div.text-dark", ".item-value", ".box-general-group-info-value"]:
+                    for value_sel in [
+                        ".list-info__content__desc",
+                        ".box-job-information-address-and-time-list__item--content",
+                        ".summary-value", ".value", "strong", "span.text-dark", 
+                        "div.text-dark", ".item-value", ".box-general-group-info-value"
+                    ]:
                         value_el = item.css(value_sel)
                         if value_el:
-                            val_text = "".join(value_el.css("::text").getall()).strip()
+                            val_text = " ".join("".join(value_el.css("::text").getall()).split())
                             if val_text:
                                 return val_text
                     
@@ -251,20 +333,93 @@ class TopCVScraper(BaseScraper):
         page = Adaptor(detail_html)
 
         # ── Tên job ─────────────────────────────────────────────────────
-        # <h1 class="job-detail__info--title">
-        #   <a class="text-highlight">Tên job</a>
-        # </h1>
         title = None
-        title_el = page.css("h1.job-detail__info--title, h2.premium-job-basic-information__content--title")
-        if title_el:
-            # Lấy toàn bộ text của thẻ h1 để tránh bị mất phần chữ trong ngoặc hoặc các từ khoá khác được gắn link
-            parts = title_el.css("::text").getall()
-            raw_text = "".join(parts)
-            title = " ".join(raw_text.split()) or None
+        title_selectors = [
+            "h1.box-header-job__title",
+            ".box-header-job__title",
+            "h1.job-detail__info--title",
+            ".job-detail__info--title",
+            "h2.premium-job-basic-information__content--title",
+            "h1.job-title",
+            "h1.job-detail__title",
+            "h1.job-name",
+            ".job-title h1",
+            ".job-detail-header h1",
+            ".job-header h1",
+            ".box-header-job h1",
+            "h2.job-title",
+            "h2.title"
+        ]
 
+        # 1. Thử các selector h1/h2 tiêu đề phổ biến
+        for sel in title_selectors:
+            el = page.css(sel)
+            if not el:
+                continue
+            # Lấy toàn bộ text của thẻ, ưu tiên loại bỏ các phần tử icon / tooltip / badge
+            parts = el.css(":not(.icon-verified-employer):not(.icon-verified-employer-tooltip):not(.badge)::text").getall()
+            if not parts:
+                parts = el.css("::text").getall()
+            raw_text = " ".join("".join(parts).split()).strip()
+            if not raw_text:
+                continue
+
+            # Kiểm tra xem có phải tiêu đề section bị bắt nhầm không
+            if raw_text.lower() in [
+                "tổng quan", "địa điểm làm việc", "mô tả công việc", "yêu cầu ứng viên", 
+                "quyền lợi được hưởng", "quyền lợi ứng viên", "giới thiệu", "thông tin công ty",
+                "gửi tôi việc làm tương tự", "việc làm liên quan", "thông tin"
+            ]:
+                continue
+
+            title = raw_text
+            break
+
+        # 2. Fallback cực kỳ chuẩn xác từ data-title trên TopCV (luôn có trong nút Lưu tin)
+        if not title:
+            for attr_sel in [
+                "button.btn-save-job::attr(data-title)",
+                "button.btn-save::attr(data-title)",
+                "button.btn-unsave::attr(data-title)",
+                "button[data-title]::attr(data-title)",
+                "button[data-keyword]::attr(data-keyword)",
+                ".btn-save-job::attr(data-title)"
+            ]:
+                val = page.css(attr_sel).get()
+                if val and val.strip():
+                    val_clean = " ".join(val.split()).strip()
+                    if val_clean.lower() not in ["lưu tin", "đã lưu"]:
+                        title = val_clean
+                        break
+
+        # 3. Fallback từ thẻ meta og:title hoặc title của trang HTML
+        if not title:
+            for meta_sel in [
+                "meta[property='og:title']::attr(content)",
+                "meta[name='title']::attr(content)",
+                "title::text"
+            ]:
+                meta_val = page.css(meta_sel).get()
+                if meta_val and meta_val.strip():
+                    t = meta_val.strip()
+                    if t.lower().startswith("tuyển dụng "):
+                        t = t[11:].strip()
+                    if " tại " in t.lower():
+                        t = t[:t.lower().find(" tại ")].strip()
+                    for sep in [" - TopCV", " | TopCV", " – TopCV"]:
+                        if sep.lower() in t.lower():
+                            t = t[:t.lower().find(sep.lower())].strip()
+                    if t and len(t) > 3:
+                        title = t
+                        break
+
+        # 4. Làm sạch noise ở cuối tiêu đề nếu có
         if title:
-            # Remove common tab headers or section names that might be nested inside the title element
-            for noise in ["tóm tắt", "địa điểm làm việc", "mô tả công việc", "yêu cầu ứng viên", "quyền lợi được hưởng", "thời gian làm việc"]:
+            for noise in [
+                "tóm tắt", "địa điểm làm việc", "mô tả công việc", "yêu cầu ứng viên", 
+                "quyền lợi được hưởng", "thời gian làm việc", "gửi tôi việc làm tương tự",
+                "nhà tuyển dụng đã được xác thực"
+            ]:
                 if f" {noise}" in title.lower():
                     idx = title.lower().find(f" {noise}")
                     title = title[:idx].strip()
@@ -272,37 +427,9 @@ class TopCVScraper(BaseScraper):
                     idx = title.lower().rfind(noise)
                     title = title[:idx].strip()
             
-            if title and "toppy ai" in title.lower():
+            # Chỉ loại bỏ nếu chuỗi chỉ vỏn vẹn là banner Toppy AI
+            if title and title.lower() in ["toppy ai", "trợ lý toppy ai", "toppy ai gợi ý việc làm"]:
                 title = None
-
-        if not title:
-            # Fallback for brand pages or other layouts
-            for sel in [
-                "h1.job-title", "h1.job-detail__title", "h1.job-name",
-                ".job-title h1", ".job-detail-header h1", ".job-header h1",
-                ".job-title h2", "h2.job-title", "h2.title"
-            ]:
-                el = page.css(sel)
-                if el:
-                    # check if the text contains section headers we want to avoid
-                    t_get = "".join(el.css("::text").getall()).strip()
-                    if t_get.lower() in [
-                        "địa điểm làm việc", "mô tả công việc", "yêu cầu ứng viên", 
-                        "quyền lợi được hưởng", "giới thiệu", "thông tin công ty"
-                    ] or "toppy ai" in t_get.lower():
-                        continue
-                    parts = el.css("::text").getall()
-                    t = " ".join(p.strip() for p in parts if p.strip())
-                    if t:
-                        for noise in ["tóm tắt", "địa điểm làm việc", "mô tả công việc", "yêu cầu ứng viên", "quyền lợi được hưởng", "thời gian làm việc"]:
-                            if f" {noise}" in t.lower():
-                                idx = t.lower().find(f" {noise}")
-                                t = t[:idx].strip()
-                            elif noise in t.lower() and t.lower().endswith(noise):
-                                idx = t.lower().rfind(noise)
-                                t = t[:idx].strip()
-                        title = t
-                        break
 
         # ── Tên công ty ─────────────────────────────────────────────────
         # <a rel="nofollow" class="name" href="...">CÔNG TY...</a>
@@ -315,6 +442,9 @@ class TopCVScraper(BaseScraper):
         if not company:
             # Fallback: link cong-ty trong job-detail
             for sel in [
+                "div.box-company-info a.name::text",
+                "div.box-company-info__detail a.name::text",
+                "div.box-company-info a[href*='/cong-ty/']::text",
                 "div.job-detail__company--information a.name::text",
                 "a[href*='/cong-ty/']::text",
                 "div.brand-info h1.name::text",
@@ -340,18 +470,31 @@ class TopCVScraper(BaseScraper):
         #   <div class="company-value">...</div>
         # </div>
         location = None
-        addr_el = page.css("div.company-address div.company-value")
-        if addr_el:
-            location = addr_el.css("::text").get()
-            if location:
-                location = location.strip() or None
+        # V2 layout address list item
+        for item in page.css("div.box-job-information-address-and-time-list__item"):
+            t_el = item.css(".box-job-information-address-and-time-list__item--title::text").get() or ""
+            if "địa điểm" in t_el.lower() or "nơi làm việc" in t_el.lower():
+                c_el = item.css(".box-job-information-address-and-time-list__item--content")
+                if c_el:
+                    txt = self._block_text(c_el)
+                    if txt:
+                        lines = [l.strip() for l in txt.split("\n") if l.strip()]
+                        location = "\n".join(lines)
+                        break
+
+        if not location:
+            addr_el = page.css("div.company-address div.company-value")
+            if addr_el:
+                location = addr_el.css("::text").get()
+                if location:
+                    location = location.strip() or None
         if not location:
             # Fallback: data-original-title trên company-address
             location = page.css(
                 "div.company-address div.company-value::attr(data-original-title)"
             ).get()
         if not location:
-            # Fallback cho trang brand: quét nhãn địa điểm
+            # Fallback cho trang brand và v2 layout header: quét nhãn địa điểm
             for label in ["địa điểm", "địa chỉ", "nơi làm việc"]:
                 val = self._find_info_by_label(page, label)
                 if val:
@@ -393,6 +536,9 @@ class TopCVScraper(BaseScraper):
         salary = self._find_info_by_label(page, "mức lương") or self._find_info_by_label(page, "lương") or self._find_info_by_label(page, "thu nhập")
         if not salary:
             for sel in [
+                ".box-header-job__salary--title::text",
+                ".box-header-job__salary span::text",
+                ".box-header-job__salary::text",
                 "div.salary::text",
                 ".salary::text",
                 ".job-salary::text",
@@ -418,11 +564,15 @@ class TopCVScraper(BaseScraper):
             if job_deadline:
                 job_deadline = job_deadline.strip() or None
         if not job_deadline:
-            # Fallback cho trang brand
+            # Fallback cho trang brand và v2 layout header
             job_deadline = self._find_info_by_label(page, "hạn nộp") or self._find_info_by_label(page, "hạn ứng tuyển")
         if not job_deadline:
-            # Fallback for span.deadline or .deadline
-            for sel in ["span.deadline", ".deadline", ".job-deadline"]:
+            # Fallback for span.deadline or .box-applied-cv
+            for sel in [
+                ".box-applied-cv span.date::text",
+                ".box-applied-cv .date::text",
+                "span.deadline", ".deadline", ".job-deadline"
+            ]:
                 el = page.css(sel)
                 if el:
                     parts = el.css("::text").getall()
@@ -432,27 +582,49 @@ class TopCVScraper(BaseScraper):
                         break
 
         # ── Loại hình làm việc ───────────────────────────────────────────
-        job_type = self._find_info_by_label(page, "loại hình") or self._find_info_by_label(page, "loại hình làm việc")
+        job_type = self._find_info_by_label(page, "loại hình") or self._find_info_by_label(page, "loại hình làm việc") or self._find_info_by_label(page, "hình thức") or self._find_info_by_label(page, "hình thức làm việc")
+        if not job_type:
+            # Check thời gian làm việc in V2 layout
+            for item in page.css("div.box-job-information-address-and-time-list__item"):
+                t_el = item.css(".box-job-information-address-and-time-list__item--title::text").get() or ""
+                if "thời gian" in t_el.lower():
+                    c_el = item.css(".box-job-information-address-and-time-list__item--content")
+                    if c_el:
+                        txt = self._block_text(c_el)
+                        if txt:
+                            job_type = txt.replace("\n", " ").strip()
+                            break
 
         # ── Cấp bậc ──────────────────────────────────────────────────────
         job_position = self._find_info_by_label(page, "cấp bậc")
 
         # ── Ngành nghề ───────────────────────────────────────────────────
         job_industry = None
-        for sel in [
-            "div.box-category-tags a.box-category-tag",
-            "div.box-category-tags a",
-            "div.job-tags a",
-            "div.tags a",
-            ".category-tags a"
-        ]:
-            industry_tags = page.css(sel)
-            if industry_tags:
-                tags = [t.css("::text").get() for t in industry_tags if t.css("::text").get()]
-                tags = [t.strip() for t in tags if t and t.strip()]
+        # Ưu tiên nhóm tag "Chuyên môn" của TopCV V2 layout
+        for group in page.css("div.job-tags div.job-tags__group"):
+            g_title = group.css(".job-tags__group-name::text").get() or ""
+            if "chuyên môn" in g_title.lower() or "ngành" in g_title.lower():
+                tags = [t.strip() for t in group.css(".job-tags__group-list-tag a::text").getall() if t and t.strip()]
                 if tags:
-                    job_industry = ", ".join(tags) if tags else None
+                    job_industry = ", ".join(tags)
                     break
+
+        if not job_industry:
+            for sel in [
+                "div.box-category-tags a.box-category-tag",
+                "div.box-category-tags a",
+                "div.job-tags a.link",
+                "div.job-tags a",
+                "div.tags a",
+                ".category-tags a"
+            ]:
+                industry_tags = page.css(sel)
+                if industry_tags:
+                    tags = [t.css("::text").get() for t in industry_tags if t.css("::text").get()]
+                    tags = [t.strip() for t in tags if t and t.strip()]
+                    if tags:
+                        job_industry = ", ".join(tags) if tags else None
+                        break
 
         # Trích xuất kinh nghiệm từ tags ngành nghề nếu bị thiếu ở khung thông tin chính
         if not experience_level and job_industry:
@@ -523,6 +695,19 @@ class TopCVScraper(BaseScraper):
                         company_website = href.strip()
                         break
                 if company_website:
+                    break
+        if not company_website:
+            # Fallback sang URL trang công ty trên TopCV nếu không có website riêng
+            for sel in [
+                "div.box-company-info a.name::attr(href)",
+                "div.box-company-info__detail a.name::attr(href)",
+                "a.name[rel='nofollow']::attr(href)",
+                "a.box-company-info__image::attr(href)",
+                "a[href*='/cong-ty/']::attr(href)"
+            ]:
+                comp_link = page.css(sel).get()
+                if comp_link and comp_link.strip():
+                    company_website = urljoin(self.base_url, comp_link.strip())
                     break
 
         return {

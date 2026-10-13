@@ -99,8 +99,8 @@ Lưu thông tin công ty tuyển dụng, hỗ trợ xử lý ẩn danh.
 ```sql
 CREATE TABLE silver.companies (
     company_id      SERIAL       PRIMARY KEY,
-    normalized_name VARCHAR(255) NOT NULL,  -- Tên đã loại bỏ suffix pháp lý (TNHH, JSC,...)
-    display_name    VARCHAR(255),            -- Tên hiển thị đẹp nhất tìm được
+    normalized_name TEXT         NOT NULL,  -- Tên đã loại bỏ suffix pháp lý (TNHH, JSC,...)
+    display_name    TEXT,                   -- Tên hiển thị đẹp nhất tìm được
     website         TEXT,
     industry        VARCHAR(100),
     company_size    VARCHAR(50),            -- '1-10', '11-50', '51-200', ...
@@ -118,7 +118,7 @@ Giải quyết vấn đề một công ty có nhiều tên viết khác nhau tr�
 CREATE TABLE silver.company_aliases (
     alias_id        SERIAL       PRIMARY KEY,
     company_id      INT          NOT NULL REFERENCES silver.companies(company_id) ON DELETE CASCADE,
-    alias_text      VARCHAR(255) NOT NULL,  -- Tên gốc từ website nguồn
+    alias_text      TEXT         NOT NULL,  -- Tên gốc từ website nguồn
     source_id       SMALLINT     REFERENCES silver.sources(source_id),
     confidence      SMALLINT     NOT NULL DEFAULT 100 CHECK (confidence BETWEEN 0 AND 100),
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
@@ -135,7 +135,7 @@ CREATE TABLE silver.jobs (
     job_id              BIGSERIAL       PRIMARY KEY,
     source_id           SMALLINT        NOT NULL REFERENCES silver.sources(source_id),
     company_id          INT             NOT NULL REFERENCES silver.companies(company_id),
-    source_job_id       VARCHAR(255),   -- ID gốc từ web nguồn
+    source_job_id       TEXT,           -- ID gốc từ web nguồn
     canonical_url       TEXT,           -- URL đã sạch tham số UTM
     identity_hash       CHAR(16)        NOT NULL,  -- SHA-256[:16] trên các trường bất biến
     latest_content_hash CHAR(16),       -- Hash nội dung phiên bản mới nhất
@@ -172,7 +172,7 @@ CREATE TABLE silver.job_snapshots (
     title_clean         TEXT,
     description         TEXT,
     requirements        TEXT,
-    salary_raw          VARCHAR(255),
+    salary_raw          TEXT,
     salary_min          NUMERIC(15,0), -- VND
     salary_max          NUMERIC(15,0), -- VND
     salary_avg          NUMERIC(15,0) GENERATED ALWAYS AS (
@@ -331,12 +331,12 @@ Nơi nhận kết quả biến đổi dữ liệu của `dbt` từ file DuckDB l
 CREATE TABLE staging.stg_jobs (
     stg_id              BIGSERIAL    PRIMARY KEY,
     source_code         VARCHAR(50)  NOT NULL,
-    source_job_id       VARCHAR(255),
+    source_job_id       TEXT,
     canonical_url       TEXT,
     title_raw           TEXT         NOT NULL,
-    company_raw         VARCHAR(255) NOT NULL,
+    company_raw         TEXT         NOT NULL,
     location_raw        TEXT,
-    salary_raw          VARCHAR(255),
+    salary_raw          TEXT,
     experience_raw      TEXT,
     skills_raw          TEXT[],
     job_type_raw        VARCHAR(100),
@@ -344,7 +344,7 @@ CREATE TABLE staging.stg_jobs (
     deadline_raw        TEXT,
     posted_date_raw     DATE,
     title_clean         TEXT,
-    company_normalized  VARCHAR(255),
+    company_normalized  TEXT,
     salary_min          NUMERIC(15,0),
     salary_max          NUMERIC(15,0),
     salary_currency     VARCHAR(10),

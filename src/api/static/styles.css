@@ -380,6 +380,19 @@ body {
     padding-top: 16px;
     border-top: 1px solid var(--border);
 }
+.filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+.filter-label {
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding-left: 2px;
+}
 .filter-group select {
     width: 100%; background: rgba(0,0,0,0.4); color: var(--text);
     border: 1px solid var(--border); padding: 9px 12px;
@@ -409,10 +422,17 @@ body {
     padding: 15px 16px;
     cursor: pointer;
     transition: transform 0.2s cubic-bezier(0.16,1,0.3,1),
-                border-color 0.2s, background 0.2s, box-shadow 0.2s;
+                border-color 0.2s, background 0.2s, box-shadow 0.2s, opacity 0.2s;
 }
 .job-card:hover { transform: translateX(3px); border-color: rgba(255,255,255,0.15); background: rgba(255,255,255,0.04); }
 .job-card.active { border-color: var(--cyan); background: var(--cyan-dim); box-shadow: inset 3px 0 0 var(--cyan); }
+.job-card.is-expired {
+    opacity: 0.76;
+    border-left: 3px solid #ef4444;
+}
+.job-card.is-expired:hover {
+    opacity: 0.95;
+}
 .job-card-top { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
 .job-card h4 { font-size: 0.92rem; font-weight: 600; line-height: 1.45; flex: 1; }
 .job-card .company { color: var(--indigo); font-size: 0.8rem; font-weight: 500; margin-bottom: 10px; }
@@ -436,6 +456,121 @@ body {
 
 .job-meta { display: flex; flex-wrap: wrap; gap: 6px 10px; color: var(--text-muted); font-size: 0.72rem; }
 .job-meta span { display: flex; align-items: center; gap: 3px; }
+
+/* Job Card Footer & Deadline Pills */
+.job-card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px dashed rgba(255,255,255,0.07);
+}
+.deadline-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 99px;
+}
+.deadline-pill.badge-expired {
+    background: rgba(239,68,68,0.15);
+    color: #f87171;
+    border: 1px solid rgba(239,68,68,0.3);
+}
+.deadline-pill.badge-urgent {
+    background: rgba(249,115,22,0.15);
+    color: #fb923c;
+    border: 1px solid rgba(249,115,22,0.35);
+}
+.deadline-pill.badge-warning {
+    background: rgba(234,179,8,0.15);
+    color: #facc15;
+    border: 1px solid rgba(234,179,8,0.3);
+}
+.deadline-pill.badge-active {
+    background: rgba(52,211,153,0.12);
+    color: #6ee7b7;
+    border: 1px solid rgba(52,211,153,0.25);
+}
+.deadline-pill.badge-none {
+    background: rgba(255,255,255,0.05);
+    color: var(--text-muted);
+    border: 1px solid rgba(255,255,255,0.1);
+}
+.time-ago {
+    color: var(--text-muted);
+    font-size: 0.68rem;
+}
+
+/* ── Job Detail Banners & Grid ────────────────────────── */
+.job-banner {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 12px 14px;
+    border-radius: var(--radius-sm);
+    margin-bottom: 18px;
+}
+.job-banner .banner-icon { font-size: 1.35rem; flex-shrink: 0; line-height: 1; }
+.job-banner .banner-title { font-weight: 700; font-size: 0.85rem; margin-bottom: 2px; }
+.job-banner .banner-sub { font-size: 0.74rem; opacity: 0.9; line-height: 1.4; }
+
+.job-banner.banner-expired {
+    background: rgba(239,68,68,0.12);
+    border: 1px solid rgba(239,68,68,0.35);
+    color: #fca5a5;
+}
+.job-banner.banner-urgent {
+    background: rgba(249,115,22,0.12);
+    border: 1px solid rgba(249,115,22,0.35);
+    color: #fdba74;
+}
+.job-banner.banner-active {
+    background: rgba(52,211,153,0.1);
+    border: 1px solid rgba(52,211,153,0.3);
+    color: #a7f3d0;
+}
+
+.detail-overview-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    background: rgba(0,0,0,0.25);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 14px;
+    margin-bottom: 20px;
+}
+.overview-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.overview-label {
+    font-size: 0.68rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.overview-val {
+    font-size: 0.84rem;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.btn-apply.btn-expired {
+    background: rgba(255,255,255,0.08);
+    color: #94a3b8;
+    box-shadow: none;
+    border: 1px solid var(--border);
+}
+.btn-apply.btn-expired:hover {
+    background: rgba(255,255,255,0.12);
+    color: #f1f5f9;
+}
 
 /* ── Detail Pane ──────────────────────────────────────── */
 .detail-pane {

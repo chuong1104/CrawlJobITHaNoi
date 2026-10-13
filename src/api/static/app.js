@@ -26,6 +26,52 @@ function srcClass(name) {
     return map[(name || "").toLowerCase()] || "src-default";
 }
 
+function formatTimeAgo(dateStr) {
+    if (!dateStr) return null;
+    try {
+        const date = new Date(dateStr);
+        if (isNaN(date.getTime())) return null;
+        const now = new Date();
+        const diffSec = Math.floor((now - date) / 1000);
+        if (diffSec < 60) return "Vừa cập nhật";
+        const diffMin = Math.floor(diffSec / 60);
+        if (diffMin < 60) return `${diffMin} phút trước`;
+        const diffHours = Math.floor(diffMin / 60);
+        if (diffHours < 24) return `${diffHours} giờ trước`;
+        const diffDays = Math.floor(diffHours / 24);
+        if (diffDays === 1) return "Hôm qua";
+        if (diffDays < 7) return `${diffDays} ngày trước`;
+        if (diffDays < 30) return `${Math.floor(diffDays / 7)} tuần trước`;
+        return date.toLocaleDateString("vi-VN");
+    } catch (e) {
+        return null;
+    }
+}
+
+function getDeadlineInfo(job) {
+    if (job.is_expired) {
+        const days = job.remaining_days !== null && job.remaining_days !== undefined ? Math.abs(job.remaining_days) : null;
+        const text = days !== null && days > 0 ? `❌ Hết hạn (${days} ngày trước)` : `❌ Đã hết hạn`;
+        return { badgeClass: "badge-expired", text, isExpired: true };
+    }
+    if (job.remaining_days !== null && job.remaining_days !== undefined) {
+        if (job.remaining_days === 0) {
+            return { badgeClass: "badge-urgent", text: `🚨 Hết hạn hôm nay!`, isExpired: false };
+        }
+        if (job.remaining_days <= 3) {
+            return { badgeClass: "badge-urgent", text: `🚨 Còn ${job.remaining_days} ngày`, isExpired: false };
+        }
+        if (job.remaining_days <= 7) {
+            return { badgeClass: "badge-warning", text: `⏳ Còn ${job.remaining_days} ngày`, isExpired: false };
+        }
+        return { badgeClass: "badge-active", text: `📅 Còn ${job.remaining_days} ngày`, isExpired: false };
+    }
+    if (job.deadline_raw) {
+        return { badgeClass: "badge-active", text: `⏳ Hạn: ${job.deadline_raw}`, isExpired: false };
+    }
+    return { badgeClass: "badge-none", text: `⏳ Không thời hạn`, isExpired: false };
+}
+
 // ── DOMContentLoaded ─────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
     // Tab navigation
@@ -60,8 +106,9 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("search-input").addEventListener("keypress", e => { if (e.key === "Enter") { currentPage = 1; loadJobs(); } });
 
     // Filters
-    ["filter-location", "filter-salary", "filter-experience", "filter-source", "filter-sort"].forEach(id => {
-        document.getElementById(id).addEventListener("change", () => { currentPage = 1; loadJobs(); });
+    ["filter-status", "filter-location", "filter-salary", "filter-experience", "filter-source", "filter-sort"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener("change", () => { currentPage = 1; loadJobs(); });
     });
 
     // Pagination
@@ -127,6 +174,8 @@ function setKPIVal(id, html) {
 // ── Jobs list ─────────────────────────────────────────────
 async function loadJobs() {
     const search = document.getElementById("search-input").value;
+    const statusEl = document.getElementById("filter-status");
+    const status = statusEl ? statusEl.value : "";
     const location = document.getElementById("filter-location").value;
     const salary = document.getElementById("filter-salary").value;
     const experience = document.getElementById("filter-experience").value;
@@ -135,6 +184,7 @@ async function loadJobs() {
 
     let url = `${API_URL}/jobs?page=${currentPage}&limit=10`;
     if (search)     url += `&search=${encodeURIComponent(search)}`;
+    if (status)     url += `&status=${encodeURIComponent(status)}`;
     if (location)   url += `&location=${encodeURIComponent(location)}`;
     if (salary)     url += `&salary=${encodeURIComponent(salary)}`;
     if (experience) url += `&experience=${encodeURIComponent(experience)}`;
@@ -196,14 +246,17 @@ function renderJobs(jobs, container) {
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M15.182 16.318A4.486 4.486 0 0 0 12.016 15a4.486 4.486 0 0 0-3.198 1.318M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM9.75 9.75c0 .414-.168.75-.375.75S9 10.164 9 9.75 9.168 9 9.375 9s.375.336.375.75Zm-.375 0h.008v.015h-.008V9.75Zm5.625 0c0 .414-.168.75-.375.75s-.375-.336-.375-.75.168-.75.375-.75.375.336.375.75Zm-.375 0h.008v.015h-.008V9.75Z" />
                 </svg>
-                <p>Không tìm thấy công việc phù hợp.</p>
+                <p>Không tìm thấy công việc phù hợp với bộ lọc hiện tại.</p>
             </div>`;
         return;
     }
 
     jobs.forEach(job => {
         const card = document.createElement("div");
-        card.className = "job-card";
+        const deadlineInfo = getDeadlineInfo(job);
+        const timeAgo = formatTimeAgo(job.last_seen_at || job.crawled_at);
+
+        card.className = `job-card ${deadlineInfo.isExpired ? "is-expired" : ""}`;
         card.innerHTML = `
             <div class="job-card-top">
                 <h4>${job.title_clean || job.job_title || "Không có tiêu đề"}</h4>
@@ -214,9 +267,10 @@ function renderJobs(jobs, container) {
                 <span>📍 ${job.location_clean || "Hà Nội"}</span>
                 <span>💰 ${job.salary_raw || "Thỏa thuận"}</span>
                 <span>💼 ${job.experience_raw || "Không yêu cầu"}</span>
-                ${job.deadline_raw
-                    ? `<span>⏳ Hạn: ${job.deadline_raw}</span>`
-                    : `<span style="opacity:0.5">⏳ Không thời hạn</span>`}
+            </div>
+            <div class="job-card-footer">
+                <span class="deadline-pill ${deadlineInfo.badgeClass}">${deadlineInfo.text}</span>
+                ${timeAgo ? `<span class="time-ago">🕒 ${timeAgo}</span>` : ""}
             </div>
         `;
         card.addEventListener("click", () => {
@@ -244,17 +298,53 @@ async function loadJobDetail(jobId) {
 
         const firstLetter = (job.company_name || "C").charAt(0).toUpperCase();
 
-        // Tính experience_raw nhất quán với list (vì API detail giờ trả về cả 2 field)
+        // Tính experience text
         const expMin = job.experience_min_years;
         const expMax = job.experience_max_years;
-        let expText = "Không yêu cầu";
+        let expText = "Không yêu cầu kinh nghiệm";
         if (expMin !== null && expMin !== undefined && expMax !== null && expMax !== undefined) {
-            if (expMin === expMax) expText = expMin > 0 ? `${expMin} năm` : "Dưới 1 năm";
-            else expText = `${expMin} - ${expMax} năm`;
+            if (expMin === expMax) expText = expMin > 0 ? `${expMin} năm kinh nghiệm` : "Dưới 1 năm kinh nghiệm";
+            else expText = `${expMin} - ${expMax} năm kinh nghiệm`;
         } else if (expMin !== null && expMin !== undefined) {
-            expText = `Từ ${expMin} năm`;
+            expText = `Từ ${expMin} năm kinh nghiệm`;
         } else if (expMax !== null && expMax !== undefined) {
-            expText = `Đến ${expMax} năm`;
+            expText = `Đến ${expMax} năm kinh nghiệm`;
+        }
+
+        const deadlineInfo = getDeadlineInfo(job);
+        const timeAgo = formatTimeAgo(job.last_seen_at || job.crawled_at);
+
+        let bannerHtml = "";
+        if (deadlineInfo.isExpired) {
+            bannerHtml = `
+                <div class="job-banner banner-expired">
+                    <div class="banner-icon">⚠️</div>
+                    <div>
+                        <div class="banner-title">Công việc đã hết hạn nhận hồ sơ</div>
+                        <div class="banner-sub">Hạn nộp: ${job.deadline_raw || job.deadline_date || "Đã hết hạn"}. Thông tin được lưu trữ để tham khảo yêu cầu công việc và mặt bằng lương.</div>
+                    </div>
+                </div>
+            `;
+        } else if (job.remaining_days !== null && job.remaining_days !== undefined && job.remaining_days <= 3) {
+            bannerHtml = `
+                <div class="job-banner banner-urgent">
+                    <div class="banner-icon">🚨</div>
+                    <div>
+                        <div class="banner-title">Sắp hết hạn ứng tuyển!</div>
+                        <div class="banner-sub">Chỉ còn ${job.remaining_days === 0 ? "hôm nay" : job.remaining_days + " ngày"} để nộp CV (${job.deadline_raw || job.deadline_date}). Hãy ứng tuyển sớm!</div>
+                    </div>
+                </div>
+            `;
+        } else {
+            bannerHtml = `
+                <div class="job-banner banner-active">
+                    <div class="banner-icon">✅</div>
+                    <div>
+                        <div class="banner-title">Đang mở nhận hồ sơ ứng tuyển</div>
+                        <div class="banner-sub">Hạn nộp: ${job.deadline_raw || (job.remaining_days ? `Còn ${job.remaining_days} ngày` : "Nhận hồ sơ liên tục")}</div>
+                    </div>
+                </div>
+            `;
         }
 
         let desc = (job.description || "Không có mô tả chi tiết.")
@@ -270,10 +360,42 @@ async function loadJobDetail(jobId) {
                     <div class="detail-company">${job.company_name || "—"}</div>
                 </div>
             </div>
+
+            ${bannerHtml}
+
+            <div class="detail-overview-grid">
+                <div class="overview-item">
+                    <span class="overview-label">📍 Địa điểm</span>
+                    <strong class="overview-val">${job.location_clean || "Hà Nội"}</strong>
+                </div>
+                <div class="overview-item">
+                    <span class="overview-label">💰 Mức lương</span>
+                    <strong class="overview-val text-green">${job.salary_raw || "Thỏa thuận"}</strong>
+                </div>
+                <div class="overview-item">
+                    <span class="overview-label">💼 Kinh nghiệm</span>
+                    <strong class="overview-val">${expText}</strong>
+                </div>
+                <div class="overview-item">
+                    <span class="overview-label">🏢 Nguồn cào</span>
+                    <strong class="overview-val">${job.source_name || "—"}</strong>
+                </div>
+                <div class="overview-item">
+                    <span class="overview-label">🕒 Cập nhật</span>
+                    <strong class="overview-val">${timeAgo ? timeAgo : "Gần đây"}</strong>
+                </div>
+                <div class="overview-item">
+                    <span class="overview-label">⏳ Hạn ứng tuyển</span>
+                    <strong class="overview-val">${job.deadline_raw || (job.deadline_date ? new Date(job.deadline_date).toLocaleDateString("vi-VN") : "Không thời hạn")}</strong>
+                </div>
+            </div>
+
             <hr class="detail-divider">
             <div class="detail-desc">${desc}</div>
             <div class="apply-sticky">
-                <a href="${job.canonical_url || "#"}" target="_blank" class="btn-apply">Ứng Tuyển / Xem Nguồn Gốc ↗</a>
+                <a href="${job.canonical_url || "#"}" target="_blank" class="btn-apply ${deadlineInfo.isExpired ? "btn-expired" : ""}">
+                    ${deadlineInfo.isExpired ? "Xem Bài Tuyển Gốc (Đã Hết Hạn) ↗" : "Ứng Tuyển / Xem Nguồn Gốc ↗"}
+                </a>
             </div>
         `;
     } catch (err) {

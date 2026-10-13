@@ -16,6 +16,8 @@ def clean_str(val) -> Optional[str]:
     val_str = str(val).strip()
     if val_str.lower() in ("nan", "none", "null", ""):
         return None
+    if "\x00" in val_str:
+        val_str = val_str.replace("\x00", "")
     return val_str
 
 
@@ -30,6 +32,77 @@ class SilverSyncEngine:
         self.pg_conn.autocommit = False # We manage transactions manually
         self.duck_conn = duckdb.connect(self.duckdb_path)
         logger.info("Connected to PostgreSQL and DuckDB.")
+        self._ensure_schema_compatibility()
+
+    def _ensure_schema_compatibility(self):
+        """
+        Đảm bảo các trường chuỗi có thể chứa dữ liệu dài (URL, Title, Company, ...)
+        được chuyển sang TEXT, tránh lỗi:
+        'psycopg2.errors.StringDataRightTruncation: value too long for type character varying(255)'
+
+        Mỗi cột được ALTER độc lập trong transaction riêng để tránh việc lỗi phụ thuộc View/Materialized View
+        ở một bảng (ví dụ silver.jobs) làm rollback các bảng khác (đặc biệt là bảng đệm staging.stg_jobs).
+        """
+        # 1. Bảng đệm staging.stg_jobs: Bắt buộc toàn bộ cột chuỗi thô và đã chuẩn hóa phải là TEXT
+        stg_columns = [
+            "canonical_url", "title_raw", "title_clean", "company_raw",
+            "company_normalized", "location_raw", "location_normalized",
+            "salary_raw", "experience_raw", "deadline_raw", "description",
+            "source_job_id", "job_type_raw", "job_family"
+        ]
+
+        # Lấy thêm động các cột character varying hiện có trong staging.stg_jobs (nếu có)
+        try:
+            with self.pg_conn.cursor() as cur:
+                cur.execute("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_schema = 'staging' 
+                      AND table_name = 'stg_jobs' 
+                      AND data_type = 'character varying'
+                      AND column_name NOT IN ('source_code', 'salary_currency', 'pipeline_version', 'change_type');
+                """)
+                dynamic_cols = [r[0] for r in cur.fetchall()]
+                for c in dynamic_cols:
+                    if c not in stg_columns:
+                        stg_columns.append(c)
+            self.pg_conn.commit()
+        except Exception as e:
+            self.pg_conn.rollback()
+            logger.debug(f"Could not query dynamic varchar columns in staging.stg_jobs: {e}")
+
+        for col in stg_columns:
+            try:
+                with self.pg_conn.cursor() as cur:
+                    cur.execute(f"ALTER TABLE staging.stg_jobs ALTER COLUMN {col} TYPE TEXT;")
+                self.pg_conn.commit()
+                logger.info(f"Verified column staging.stg_jobs.{col} as TEXT.")
+            except Exception as e:
+                self.pg_conn.rollback()
+                logger.debug(f"Note: staging.stg_jobs.{col} alter skipped or already TEXT: {e}")
+
+        # 2. Tầng Silver: Thử nâng cấp các cột bảng silver sang TEXT (từng cột độc lập)
+        silver_targets = [
+            ("silver.companies", ["normalized_name", "display_name", "website"]),
+            ("silver.company_aliases", ["alias_text"]),
+            ("silver.jobs", ["source_job_id", "canonical_url"]),
+            ("silver.job_snapshots", [
+                "title_raw", "title_clean", "salary_raw", "experience_raw",
+                "deadline_raw", "description", "requirements"
+            ]),
+        ]
+        for tbl, cols in silver_targets:
+            for col in cols:
+                try:
+                    with self.pg_conn.cursor() as cur:
+                        cur.execute(f"ALTER TABLE {tbl} ALTER COLUMN {col} TYPE TEXT;")
+                    self.pg_conn.commit()
+                except Exception as e:
+                    self.pg_conn.rollback()
+                    # Nếu cột đang được Materialized View tham chiếu, Postgres sẽ báo lỗi và bị bỏ qua an toàn
+                    logger.debug(f"Skipping {tbl}.{col} (already TEXT or used by view): {e}")
+
+        logger.info("Schema compatibility verified (VARCHAR columns widened to TEXT).")
 
     def close(self):
         if self.pg_conn:
@@ -70,36 +143,82 @@ class SilverSyncEngine:
 
         batch_date = date.today()
         records_to_insert = []
+        skipped_count = 0
         for _, row in df.iterrows():
-            if hasattr(row['skills_raw'], 'tolist') and row['skills_raw'] is not None:
+            title_r = clean_str(row.get('title_raw'))
+            company_r = clean_str(row.get('company_raw'))
+            id_hash = clean_str(row.get('identity_hash'))
+            c_hash = clean_str(row.get('content_hash'))
+
+            # Bắt buộc phải có title_raw, company_raw và các hash để thỏa mãn ràng buộc NOT NULL của DB
+            if not title_r or not company_r or not id_hash or not c_hash:
+                skipped_count += 1
+                continue
+
+            if len(id_hash) > 16:
+                id_hash = id_hash[:16]
+            if len(c_hash) > 16:
+                c_hash = c_hash[:16]
+
+            if hasattr(row.get('skills_raw'), 'tolist') and row.get('skills_raw') is not None:
                 skills = row['skills_raw'].tolist()
-            elif isinstance(row['skills_raw'], (list, tuple, pd.Series)):
+            elif isinstance(row.get('skills_raw'), (list, tuple, pd.Series)):
                 skills = list(row['skills_raw'])
             else:
                 skills = None
+
+            source_c = clean_str(row.get('source_code'))
+            if source_c and len(source_c) > 50:
+                source_c = source_c[:50]
+
+            sal_min = row['salary_min'] if not pd.isna(row.get('salary_min')) else None
+            sal_max = row['salary_max'] if not pd.isna(row.get('salary_max')) else None
+            if sal_min is not None and sal_max is not None and sal_min > sal_max:
+                logger.warning(
+                    f"Inconsistent salary range (min={sal_min} > max={sal_max}) for job {clean_str(row.get('source_job_id'))}. "
+                    "Swapping to satisfy constraint."
+                )
+                sal_min, sal_max = sal_max, sal_min
+
+            exp_raw = clean_str(row.get('experience_raw'))
+            exp_min = int(row['experience_min_years']) if not pd.isna(row.get('experience_min_years')) else None
+            exp_max = int(row['experience_max_years']) if not pd.isna(row.get('experience_max_years')) else None
+            if exp_min is not None and exp_max is not None and exp_min > exp_max:
+                if exp_raw and any(d in exp_raw for d in ['0.5', '0,5']):
+                    exp_min, exp_max = 0, exp_max
+                else:
+                    exp_min, exp_max = min(exp_min, exp_max), max(exp_min, exp_max)
+                logger.warning(
+                    f"Adjusted inconsistent experience range for job {clean_str(row.get('source_job_id'))} "
+                    f"(raw='{exp_raw}'): set min={exp_min}, max={exp_max} to satisfy chk_snapshot_exp constraint."
+                )
+
             records_to_insert.append((
-                clean_str(row['source_code']),
-                clean_str(str(row['source_job_id'])),
-                clean_str(row['canonical_url']),
-                clean_str(row['title_raw']),
-                clean_str(row['company_raw']),
-                clean_str(row['location_raw']),
-                clean_str(row['salary_raw']),
-                clean_str(row['experience_raw']),
+                source_c,
+                clean_str(row.get('source_job_id')),
+                clean_str(row.get('canonical_url')),
+                title_r,
+                company_r,
+                clean_str(row.get('location_raw')),
+                clean_str(row.get('salary_raw')),
+                exp_raw,
                 skills,
-                clean_str(row['description']),
-                clean_str(row['deadline_raw']),
-                clean_str(row['title_clean']),
-                clean_str(row['company_normalized'] if 'company_normalized' in row else row['company_raw']),
-                row['salary_min'] if not pd.isna(row['salary_min']) else None,
-                row['salary_max'] if not pd.isna(row['salary_max']) else None,
-                row['experience_min_years'] if not pd.isna(row['experience_min_years']) else None,
-                row['experience_max_years'] if not pd.isna(row['experience_max_years']) else None,
-                row['identity_hash'],
-                row['content_hash'],
-                row['scraped_at'],
+                clean_str(row.get('description')),
+                clean_str(row.get('deadline_raw')),
+                clean_str(row.get('title_clean')) or title_r,
+                clean_str(row.get('company_normalized') if 'company_normalized' in row else company_r),
+                sal_min,
+                sal_max,
+                exp_min,
+                exp_max,
+                id_hash,
+                c_hash,
+                row.get('scraped_at'),
                 batch_date
             ))
+
+        if skipped_count > 0:
+            logger.warning(f"Skipped {skipped_count} invalid records missing title_raw, company_raw or hash keys.")
 
         with self.pg_conn.cursor() as cur:
             try:

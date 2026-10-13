@@ -54,6 +54,19 @@ class DataToParquetS3Syncer:
             else:
                 logger.warning(f"  ⚠ Không thể khởi tạo bucket: {bucket}")
 
+    def has_existing_data(self) -> tuple[bool, int]:
+        """
+        Kiểm tra xem S3 đã có sẵn dữ liệu Bronze Parquet / Delta hay chưa.
+        Returns: (has_data, file_count)
+        """
+        try:
+            objects = self.s3_client.list_objects(self.bronze_bucket, prefix="bronze/")
+            parquet_files = [f for f in objects if f.endswith(".parquet")]
+            return len(parquet_files) > 0, len(parquet_files)
+        except Exception as e:
+            logger.warning(f"Không thể kiểm tra dữ liệu S3: {e}")
+            return False, 0
+
     def convert_jsonl_to_parquet(self, jsonl_file: Path) -> Path | None:
         """Đọc file JSONL và chuyển đổi thành file Parquet song song trên local."""
         parquet_file = jsonl_file.with_suffix(".parquet")
@@ -88,45 +101,55 @@ class DataToParquetS3Syncer:
             logger.error(f"Lỗi khi convert {jsonl_file}: {e}")
             return None
 
-    def sync_bronze_jsonl_as_parquet(self) -> int:
+    def sync_bronze_jsonl_as_parquet(self, force: bool = False) -> int:
         """
         Quét tất cả các file JSONL trong data/bronze, convert sang Parquet và upload lên S3.
-        Key trên S3: bronze/{source}/{date}/{filename}.parquet
+        Bỏ qua các file đã tồn tại trên S3 nếu không truyền force=True.
         """
         logger.info("\n=== BẮT ĐẦU CHUYỂN ĐỔI JSONL BRONZE -> PARQUET -> S3 ===")
         if not DATA_BRONZE_DIR.exists():
             logger.warning(f"Thư mục không tồn tại: {DATA_BRONZE_DIR}")
             return 0
 
+        existing_keys = set()
+        if not force:
+            existing_keys = set(self.s3_client.list_objects(self.bronze_bucket, prefix="bronze/"))
+
         jsonl_files = list(DATA_BRONZE_DIR.rglob("*_valid.jsonl"))
         logger.info(f"Tìm thấy {len(jsonl_files)} file valid JSONL trong {DATA_BRONZE_DIR}")
 
         uploaded_count = 0
+        skipped_count = 0
         for jf in jsonl_files:
             # Bỏ qua thư mục ẩn hoặc backup
             if "_delta" in jf.parts:
                 continue
 
+            rel_path = jf.with_suffix(".parquet").relative_to(DATA_BRONZE_DIR)
+            s3_key = f"bronze/{rel_path.as_posix()}"
+
+            if not force and s3_key in existing_keys:
+                skipped_count += 1
+                continue
+
             parquet_file = self.convert_jsonl_to_parquet(jf)
             if parquet_file and parquet_file.exists():
-                # Tạo S3 Key: ví dụ bronze/topcv/2026-10-12/topcv_2026-10-12_valid.parquet
-                rel_path = parquet_file.relative_to(DATA_BRONZE_DIR)
-                s3_key = f"bronze/{rel_path.as_posix()}"
-                
                 success = self.s3_client.upload_file(parquet_file, self.bronze_bucket, s3_key)
                 if success:
                     uploaded_count += 1
 
-        logger.info(f"✓ Đã convert và upload {uploaded_count}/{len(jsonl_files)} file Parquet Bronze lên s3://{self.bronze_bucket}/")
+        logger.info(f"✓ Đã convert & upload {uploaded_count} file mới (đã bỏ qua {skipped_count} file đã có sẵn) lên s3://{self.bronze_bucket}/")
         return uploaded_count
 
-    def sync_delta_tables(self) -> int:
+    def sync_delta_tables(self, force: bool = False) -> int:
         """
         Đồng bộ toàn bộ các bảng Delta Lake (bao gồm các file Parquet phân vùng và _delta_log)
         lên S3 Floci cho cả Bronze và Gold.
         """
         logger.info("\n=== BẮT ĐẦU ĐỒNG BỘ DELTA LAKE (PARQUET + LOGS) LÊN S3 ===")
         synced_files = 0
+        bronze_keys = set(self.s3_client.list_objects(self.bronze_bucket, prefix="bronze/")) if not force else set()
+        gold_keys = set(self.s3_client.list_objects(self.gold_bucket, prefix="gold/")) if not force else set()
 
         # 1. Đồng bộ Bronze Delta Tables
         if DATA_BRONZE_DIR.exists():
@@ -136,6 +159,8 @@ class DataToParquetS3Syncer:
                     if file_path.is_file():
                         rel = file_path.relative_to(delta_dir)
                         s3_key = f"bronze/{source}/{rel.as_posix()}"
+                        if not force and s3_key in bronze_keys:
+                            continue
                         if self.s3_client.upload_file(file_path, self.bronze_bucket, s3_key):
                             synced_files += 1
 
@@ -145,6 +170,8 @@ class DataToParquetS3Syncer:
                 if file_path.is_file() and not file_path.name.startswith("."):
                     rel = file_path.relative_to(DATA_GOLD_DIR)
                     s3_key = f"gold/{rel.as_posix()}"
+                    if not force and s3_key in gold_keys:
+                        continue
                     if self.s3_client.upload_file(file_path, self.gold_bucket, s3_key):
                         synced_files += 1
 
@@ -182,14 +209,36 @@ class DataToParquetS3Syncer:
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Chuyển đổi dữ liệu local sang Parquet và đồng bộ lên S3 Floci.")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Bắt buộc convert và đồng bộ lại toàn bộ, bỏ qua kiểm tra dữ liệu đã có trên S3"
+    )
+    args = parser.parse_args()
+
     syncer = DataToParquetS3Syncer()
     syncer.ensure_buckets()
-    
+
+    # Smart Skip cấp độ toàn bộ: Nếu S3 đã có sẵn dữ liệu và không yêu cầu --force
+    if not args.force:
+        has_data, count = syncer.has_existing_data()
+        if has_data:
+            logger.info("=" * 60)
+            logger.info(f"⚡ [SMART SKIP] S3 Floci đã có sẵn {count} file Parquet.")
+            logger.info("⚡ Dữ liệu đã được lưu vĩnh viễn trên S3 -> Bỏ qua bước đồng bộ để Airflow khởi động tức thì!")
+            logger.info("⚡ (Nếu muốn ép đồng bộ lại từ đầu, chạy script với cờ --force)")
+            logger.info("=" * 60)
+            syncer.print_s3_summary()
+            return
+
+    # Nếu S3 chưa có dữ liệu hoặc chạy với --force:
     # 1. Convert JSONL Bronze sang Parquet & upload
-    syncer.sync_bronze_jsonl_as_parquet()
+    syncer.sync_bronze_jsonl_as_parquet(force=args.force)
 
     # 2. Upload các bảng Delta Lake Parquet (Bronze & Gold)
-    syncer.sync_delta_tables()
+    syncer.sync_delta_tables(force=args.force)
 
     # 3. Upload Gold Marts Parquet (nếu có)
     syncer.sync_gold_marts_parquet()

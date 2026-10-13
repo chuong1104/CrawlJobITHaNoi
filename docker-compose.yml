@@ -1,9 +1,10 @@
 x-logging: &default-logging
   logging:
-    driver: "json-file"
+    driver: "local"
     options:
       max-size: "10m"
       max-file: "3"
+      compress: "true"
 
 x-airflow-common: &airflow-common
   build: .
@@ -35,7 +36,10 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: 1
     AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_SIZE: 3
     AIRFLOW__DATABASE__SQL_ALCHEMY_MAX_OVERFLOW: 1
-    AIRFLOW__WEBSERVER__WORKER_CLASS: gevent
+    AIRFLOW__WEBSERVER__WORKER_CLASS: sync
+    AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT: 120
+    AIRFLOW__TRIGGERER__JOB_HEARTBEAT_SEC: 10
+    AIRFLOW__TRIGGERER__DEFAULT_CAPACITY: 100
   volumes:
     - ./dags:/opt/airflow/dags
     - ./logs:/opt/airflow/logs
@@ -75,6 +79,7 @@ services:
       - "4566:4566"
     environment:
       - FLOCI_RUN_AS_ROOT=true
+      - FLOCI_STORAGE_MODE=hybrid
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data/floci:/app/data
@@ -116,6 +121,9 @@ services:
         echo "Initializing S3 Buckets..."
         python -m src.storage.init_buckets
 
+        echo "Syncing local data (Bronze JSONL -> Parquet & Delta Lake) to S3 Floci..."
+        python /opt/airflow/scripts/sync_data_to_s3_parquet.py || true
+
 
   airflow:
     <<: *airflow-common
@@ -132,15 +140,16 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2.0'
-          memory: 2G
+          cpus: '3.0'
+          memory: 4G
         reservations:
-          memory: 1G
+          memory: 1.5G
     restart: unless-stopped
 
   web-api:
     build: .
     image: jobitvn-platform:latest
+    <<: *default-logging
     entrypoint: []
     command: python -m src.api.main
     ports:

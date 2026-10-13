@@ -1,4 +1,4 @@
-﻿from datetime import datetime
+from datetime import datetime
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
 from scrapling.parser import Adaptor
@@ -16,16 +16,19 @@ class JobsGoScraper(BaseScraper):
 	DEFAULT_START_URL = "https://jobsgo.vn/viec-lam-tai-ha-noi.html"
 
 	def __init__(self, start_url: str | None = None, **kwargs) -> None:
-		kwargs.setdefault("delay_range", (8.0, 15.0))
-		kwargs.setdefault("max_retries", 5)
+		kwargs.setdefault("delay_range", (3.0, 6.0))
+		kwargs.setdefault("max_retries", 2)
 		kwargs.setdefault("use_playwright", False)
 		super().__init__(**kwargs)
 		self.start_url = self._canonicalize_list_url(start_url or self.DEFAULT_START_URL)
+		self._company_cache: dict[str, tuple[str | None, str | None]] = {}
 
 	def _is_valid_html(self, html: str, url: str) -> bool:
 		"""Kiểm tra xem trang có bị chặn hoặc lỗi không."""
+		if not html or len(html.strip()) < 200:
+			return False
 		html_lower = html.lower()
-		if "cf-browser-verification" in html_lower or "just a moment" in html_lower:
+		if "cf-browser-verification" in html_lower or "just a moment" in html_lower or "challenges.cloudflare.com" in html_lower:
 			return False
 		if "429 too many requests" in html_lower or "mã lỗi: 429" in html_lower:
 			return False
@@ -33,14 +36,13 @@ class JobsGoScraper(BaseScraper):
 			return False
 
 		page = Adaptor(html)
-		is_list_page = bool(page.css("div.card.job-card a.text-decoration-none, h3.job-title a"))
+		is_list_page = bool(page.css("div.card.job-card a.text-decoration-none, h3.job-title a, div.job-item"))
 		if not is_list_page:
 			if "/tuyen-dung/" in url or "/brand/" in url:
-				return bool(page.css("h1, h2, #company-description, .company-info, div.card-body"))
+				return bool(page.css("h1, h2, #company-description, .company-info, div.card-body, title"))
 			
-			title_el = page.css("h1.job-title")
-			company_el = page.css("h6.fw-semibold.mb-1.text-dark")
-			if not title_el and not company_el:
+			has_detail_content = bool(page.css("h1, h6, div.job-detail, div.list-place, title"))
+			if not has_detail_content:
 				return False
 				
 		return True
@@ -176,16 +178,23 @@ class JobsGoScraper(BaseScraper):
 		page = Adaptor(detail_html)
 
 		# ── Tên job ─────────────────────────────────────────────────────
-		# <h1 class="job-title mb-2 mb-sm-3 fs-4">Business Development Intern</h1>
-		title_el = page.css("h1.job-title")
+		title_el = page.css("h1.job-title, h1.title, h1.fs-4, div.job-title h1, h1")
 		title = None
 		if title_el:
 			parts = title_el.css("::text").getall()
 			title = " ".join(p.strip() for p in parts if p.strip()) or None
 
+		if not title:
+			page_title = page.css("title::text").get() or ""
+			if " - " in page_title:
+				title = page_title.split(" - ")[0].strip()
+			elif "|" in page_title:
+				title = page_title.split("|")[0].strip()
+			elif page_title:
+				title = page_title.strip()
+
 		# ── Tên công ty ─────────────────────────────────────────────────
-		# <h6 class="fw-semibold mb-1 text-dark">Công Ty TNHH Gzone Media Việt Nam</h6>
-		company_el = page.css("h6.fw-semibold.mb-1.text-dark")
+		company_el = page.css("h6.fw-semibold.mb-1.text-dark, h6.fw-semibold, .company-name, div.company-info h6, h6 a, h6")
 		company = None
 		if company_el:
 			parts = company_el.css("::text").getall()
@@ -298,35 +307,40 @@ class JobsGoScraper(BaseScraper):
 				break
 
 		if company_page_url:
-			self.logger.info(f"Fetching company page: {company_page_url}")
-			comp_html = self._fetch_html(company_page_url)
-			if comp_html:
-				comp_page = Adaptor(comp_html)
+			if company_page_url in self._company_cache:
+				company_info, company_website = self._company_cache[company_page_url]
+			else:
+				self.logger.info(f"Fetching company page: {company_page_url}")
+				comp_html = self._fetch_html(company_page_url)
+				if comp_html:
+					comp_page = Adaptor(comp_html)
 
-				# --- 1. Lấy mô tả công ty ---
-				# Cách 1 (trang thường): div#company-description
-				desc_el = comp_page.css("div#company-description")
-				if desc_el:
-					parts = desc_el.css("::text").getall()
-					lines = [p.strip() for p in parts if p.strip()]
-					company_info = "\n".join(lines) or None
-
-				# Cách 2 (trang brand): .vp-intro-content
-				if not company_info:
-					desc_el = comp_page.css(".vp-intro-content")
+					# --- 1. Lấy mô tả công ty ---
+					# Cách 1 (trang thường): div#company-description
+					desc_el = comp_page.css("div#company-description")
 					if desc_el:
 						parts = desc_el.css("::text").getall()
 						lines = [p.strip() for p in parts if p.strip()]
-						filtered_lines = [l for l in lines if l.lower() not in ("về chúng tôi", "giới thiệu", "01", "02", "03")]
-						company_info = "\n".join(filtered_lines) or None
+						company_info = "\n".join(lines) or None
 
-				# --- 2. Lấy website công ty ---
-				# Hỗ trợ cả 2 dạng: 
-				# - Trang thường: i.pb-heroicons-globe-alt + span -> a
-				# - Trang brand: i.bi-globe2 + a
-				web_href = comp_page.css("i[class*='globe'] + a::attr(href), i[class*='globe'] + span a::attr(href)").get()
-				if web_href:
-					company_website = web_href.strip() or None
+					# Cách 2 (trang brand): .vp-intro-content
+					if not company_info:
+						desc_el = comp_page.css(".vp-intro-content")
+						if desc_el:
+							parts = desc_el.css("::text").getall()
+							lines = [p.strip() for p in parts if p.strip()]
+							filtered_lines = [l for l in lines if l.lower() not in ("về chúng tôi", "giới thiệu", "01", "02", "03")]
+							company_info = "\n".join(filtered_lines) or None
+
+					# --- 2. Lấy website công ty ---
+					# Hỗ trợ cả 2 dạng: 
+					# - Trang thường: i.pb-heroicons-globe-alt + span -> a
+					# - Trang brand: i.bi-globe2 + a
+					web_href = comp_page.css("i[class*='globe'] + a::attr(href), i[class*='globe'] + span a::attr(href)").get()
+					if web_href:
+						company_website = web_href.strip() or None
+
+				self._company_cache[company_page_url] = (company_info, company_website)
 
 		# Fallback: lấy company_info từ trang chi tiết nếu có
 		if not company_info:

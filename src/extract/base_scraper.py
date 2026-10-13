@@ -492,6 +492,12 @@ class BaseScraper(abc.ABC):
             if not job:
                 return None
             
+            # Đảm bảo bản ghi có title hợp lệ, tránh thu thập các trang rác / banner không phải việc làm
+            title_val = str(job.get("title") or "").strip()
+            if not title_val or title_val.lower() in ("none", "nan", "null"):
+                self.logger.warning(f"[Phase 3] Bỏ qua bản ghi không có title hợp lệ: {url}")
+                return None
+            
             # --- Thêm Regex Fallback tự động ---
             full_text = f"{job.get('job_description', '')}\n{job.get('requirements', '')}\n{job.get('benefits', '')}".strip()
             if full_text:

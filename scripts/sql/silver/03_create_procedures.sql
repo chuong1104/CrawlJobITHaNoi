@@ -140,8 +140,12 @@ BEGIN
         ) VALUES (
             v_job_id, TRUE, p_scraped_at, 1,
             p_title_raw, p_title_clean, p_description,
-            p_salary_raw, p_salary_min, p_salary_max,
-            p_experience_raw, p_experience_min, p_experience_max,
+            p_salary_raw, 
+            CASE WHEN p_salary_min IS NOT NULL AND p_salary_max IS NOT NULL AND p_salary_min > p_salary_max THEN p_salary_max ELSE p_salary_min END,
+            CASE WHEN p_salary_min IS NOT NULL AND p_salary_max IS NOT NULL AND p_salary_min > p_salary_max THEN p_salary_min ELSE p_salary_max END,
+            p_experience_raw, 
+            CASE WHEN p_experience_min IS NOT NULL AND p_experience_max IS NOT NULL AND p_experience_min > p_experience_max THEN p_experience_max ELSE p_experience_min END,
+            CASE WHEN p_experience_min IS NOT NULL AND p_experience_max IS NOT NULL AND p_experience_min > p_experience_max THEN p_experience_min ELSE p_experience_max END,
             p_job_level, p_job_type, p_work_mode, p_job_family,
             p_deadline_raw, p_deadline_date, p_is_intern, p_is_fresher, p_content_hash
         ) RETURNING snapshot_id INTO v_snapshot_id;
@@ -226,8 +230,12 @@ BEGIN
         ) VALUES (
             v_job_id, TRUE, p_scraped_at, COALESCE(v_old_version, 0) + 1,
             p_title_raw, p_title_clean, p_description,
-            p_salary_raw, p_salary_min, p_salary_max,
-            p_experience_raw, p_experience_min, p_experience_max,
+            p_salary_raw, 
+            CASE WHEN p_salary_min IS NOT NULL AND p_salary_max IS NOT NULL AND p_salary_min > p_salary_max THEN p_salary_max ELSE p_salary_min END,
+            CASE WHEN p_salary_min IS NOT NULL AND p_salary_max IS NOT NULL AND p_salary_min > p_salary_max THEN p_salary_min ELSE p_salary_max END,
+            p_experience_raw, 
+            CASE WHEN p_experience_min IS NOT NULL AND p_experience_max IS NOT NULL AND p_experience_min > p_experience_max THEN p_experience_max ELSE p_experience_min END,
+            CASE WHEN p_experience_min IS NOT NULL AND p_experience_max IS NOT NULL AND p_experience_min > p_experience_max THEN p_experience_min ELSE p_experience_max END,
             p_job_level, p_job_type, p_work_mode, p_job_family,
             p_deadline_raw, p_deadline_date, p_is_intern, p_is_fresher, p_content_hash
         ) RETURNING snapshot_id INTO v_snapshot_id;

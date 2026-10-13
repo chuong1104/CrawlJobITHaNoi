@@ -17,15 +17,18 @@ class JobokoScraper(BaseScraper):
 	DEFAULT_START_URL = "https://vn.joboko.com/jobs?l=2&ind=30"
 
 	def __init__(self, start_url: str | None = None, **kwargs) -> None:
-		kwargs.setdefault("delay_range", (8.0, 15.0))
-		kwargs.setdefault("max_retries", 5)
+		kwargs.setdefault("delay_range", (3.0, 6.0))
+		kwargs.setdefault("max_retries", 2)
 		super().__init__(**kwargs)
 		self.start_url = self._canonicalize_list_url(start_url or self.DEFAULT_START_URL)
+		self._company_cache: dict[str, tuple[str | None, str | None]] = {}
 
 	def _is_valid_html(self, html: str, url: str) -> bool:
 		"""Kiểm tra xem trang có bị chặn hoặc lỗi không."""
+		if not html or len(html.strip()) < 200:
+			return False
 		html_lower = html.lower()
-		if "cf-browser-verification" in html_lower or "just a moment" in html_lower:
+		if "cf-browser-verification" in html_lower or "just a moment" in html_lower or "challenges.cloudflare.com" in html_lower:
 			return False
 		if "429 too many requests" in html_lower or "mã lỗi: 429" in html_lower:
 			return False
@@ -33,11 +36,12 @@ class JobokoScraper(BaseScraper):
 			return False
 
 		page = Adaptor(html)
-		is_list_page = bool(page.css("h2.item-title a, a.block-detail"))
+		is_list_page = bool(page.css("h2.item-title a, a.block-detail, div.nw-job-list"))
 		if not is_list_page:
-			title_el = page.css("h1.nw-company-hero__title")
-			company_el = page.css("h2 a.nw-company-hero__text")
-			if not title_el and not company_el:
+			if "/cong-ty" in url:
+				return bool(page.css("h1, h2, div.nw-company-hero, div.nw-sidebar-company, title"))
+			has_detail_content = bool(page.css("h1, h2, title, div.job-desc, div.job-requirement, div.nw-company-hero, div.item-content"))
+			if not has_detail_content:
 				return False
 				
 		return True
@@ -159,41 +163,69 @@ class JobokoScraper(BaseScraper):
 		page = Adaptor(detail_html)
 
 		# ── Tên job ─────────────────────────────────────────────────────
-		# <h1 class="fz-20 fw-bold text-capitalize nw-company-hero__title">
-		#   <a href="...">Thực Tập Sinh Tuyển Dụng</a> Part Time/Full Time
-		# </h1>
 		title = None
-		title_el = page.css("h1.nw-company-hero__title")
-		if title_el:
-			parts = title_el.css("::text").getall()
-			title = " ".join(p.strip() for p in parts if p.strip()) or None
+		for sel in [
+			"h1.nw-company-hero__title",
+			"h1.fz-20",
+			"h1.job-title",
+			"h1.title",
+			"div.nw-company-hero h1",
+			"div.job-detail h1",
+			"h1",
+		]:
+			title_el = page.css(sel)
+			if title_el:
+				parts = title_el.css("::text").getall()
+				title = " ".join(p.strip() for p in parts if p.strip()) or None
+				if title:
+					break
+
+		if not title:
+			page_title = page.css("title::text").get() or ""
+			if " - " in page_title:
+				title = page_title.split(" - ")[0].strip()
+			elif "|" in page_title:
+				title = page_title.split("|")[0].strip()
+			elif page_title:
+				title = page_title.strip()
 
 		# ── Tên công ty ─────────────────────────────────────────────────
-		# <h2><a class="... nw-company-hero__text" href="/cong-ty-...">CÔNG TY CỔ PHẦN X-MEDIA</a></h2>
 		company = None
-		company_a = page.css("h2 a.nw-company-hero__text")
-		if company_a:
-			# Lấy text trực tiếp (bỏ qua SVG/button bên trong)
-			parts = [
-				t.strip()
-				for t in company_a.css("::text").getall()
-				if t.strip()
-			]
-			company = " ".join(parts) or None
+		for sel in [
+			"h2 a.nw-company-hero__text",
+			"h2.nw-company-hero__text",
+			"a.nw-company-hero__text",
+			"div.nw-sidebar-company a[href*='/cong-ty']",
+			"h2 a",
+			"a[href*='/cong-ty-']",
+			"div.company-name",
+		]:
+			company_el = page.css(sel)
+			if company_el:
+				parts = [
+					t.strip()
+					for t in company_el.css("::text").getall()
+					if t.strip()
+				]
+				company = " ".join(parts) or None
+				if company:
+					break
 
 		# ── Địa chỉ ─────────────────────────────────────────────────────
-		# <div class="nw-sidebar-company__address">
-		#   <span class="fz-13 fw-medium letter-spacing-1 c-text-2">Địa chỉ công ty: Số 48 Tố Hữu...</span>
-		# </div>
 		location = None
-		addr_el = page.css("div.nw-sidebar-company__address span.c-text-2")
-		if addr_el:
-			raw = addr_el.css("::text").get() or ""
-			# Bỏ prefix "Địa chỉ công ty: "
-			location = raw.replace("Địa chỉ công ty:", "").strip() or None
+		for sel in [
+			"div.nw-sidebar-company__address span.c-text-2",
+			"div.nw-sidebar-company__address",
+			"div.item:has(div.item-content) span.fw-bold",
+		]:
+			addr_el = page.css(sel)
+			if addr_el:
+				raw = " ".join(t.strip() for t in addr_el.css("::text").getall() if t.strip())
+				location = raw.replace("Địa chỉ công ty:", "").replace("Địa chỉ:", "").strip() or None
+				if location:
+					break
 
 		# ── Lương ────────────────────────────────────────────────────────
-		# <div class="fz-15 ... item-content">Thu nhập: <span class="fw-bold">Thỏa thuận</span></div>
 		salary = None
 		for div in page.css("div.item-content"):
 			texts = div.css("::text").getall()
@@ -205,11 +237,9 @@ class JobokoScraper(BaseScraper):
 				break
 
 		# ── Kinh nghiệm ─────────────────────────────────────────────────
-		# <div class="item"> → <div class="item-content">Kinh nghiệm: <span class="fw-bold">2 - 4 năm</span></div>
 		experience = self._find_item_content(page, "kinh nghiệm")
 
 		# ── Hạn ứng tuyển ────────────────────────────────────────────────
-		# <div class="mt-1 fz-16">Hạn nộp: 17/07/2026</div>
 		deadline = None
 		for div in page.css("div.mt-1.fz-16"):
 			raw = " ".join(t.strip() for t in div.css("::text").getall() if t.strip())
@@ -218,34 +248,39 @@ class JobokoScraper(BaseScraper):
 				break
 
 		# ── Loại hình làm việc ───────────────────────────────────────────
-		# <div class="item-content">Loại hình: <span class="fw-bold">Toàn thời gian</span></div>
 		job_type = self._find_item_content(page, "loại hình")
 
 		# ── Cấp bậc ─────────────────────────────────────────────────────
-		# <div class="item-content">Chức vụ: <span class="fw-bold">Nhân viên</span></div>
 		job_position = self._find_item_content(page, "chức vụ")
 
 		# ── Ngành nghề / Tags kỹ năng ────────────────────────────────────
-		# <div class="block-tags"><a ...>phần mềm</a><a ...>sql</a>...</div>
 		job_industry = None
 		tags = page.css("div.block-tags a::text").getall()
 		if tags:
 			job_industry = ", ".join(t.strip() for t in tags if t.strip()) or None
 
 		# ── Mô tả công việc ──────────────────────────────────────────────
-		# <div class="text-left job-desc"><ul><li>...</li></ul></div>
-		job_description = self._get_block_text(page, "div.job-desc")
+		job_description = (
+			self._get_block_text(page, "div.job-desc") or
+			self._get_block_text(page, "div.job-description") or
+			self._get_block_text(page, "div.content-desc")
+		)
 
 		# ── Kỹ năng / Yêu cầu công việc ─────────────────────────────────
-		# <div class="text-left job-requirement"><ul><li>...</li></ul></div>
-		requirements = self._get_block_text(page, "div.job-requirement")
+		requirements = (
+			self._get_block_text(page, "div.job-requirement") or
+			self._get_block_text(page, "div.job-requirements") or
+			self._get_block_text(page, "div.requirements")
+		)
 
 		# ── Phúc lợi / Quyền lợi ────────────────────────────────────────
-		# <div class="text-left job-benefit"><ul><li>...</li></ul></div>
-		benefits = self._get_block_text(page, "div.job-benefit")
+		benefits = (
+			self._get_block_text(page, "div.job-benefit") or
+			self._get_block_text(page, "div.job-benefits") or
+			self._get_block_text(page, "div.benefits")
+		)
 
 		# ── Thông tin công ty & Website ──────────────────────────────────
-		# Vào trang công ty: <a href="/cong-ty-..."><span class="c-green">Xem trang công ty</span></a>
 		company_info = None
 		company_website = None
 
@@ -257,32 +292,31 @@ class JobokoScraper(BaseScraper):
 				company_page_url = urljoin(self.base_url, href.strip())
 				break
 
-		# Fallback: lấy từ link <h2 a.nw-company-hero__text> nếu có href /cong-ty-
 		if not company_page_url:
 			company_href = page.css("h2 a.nw-company-hero__text::attr(href)").get() or ""
 			if company_href.startswith("/cong-ty"):
 				company_page_url = urljoin(self.base_url, company_href.strip())
 
 		if company_page_url:
-			self.logger.info(f"Fetching company page: {company_page_url}")
-			comp_html = self._fetch_html(company_page_url)
-			if comp_html:
-				comp_page = Adaptor(comp_html)
+			if company_page_url in self._company_cache:
+				company_info, company_website = self._company_cache[company_page_url]
+			else:
+				self.logger.info(f"Fetching company page: {company_page_url}")
+				comp_html = self._fetch_html(company_page_url)
+				if comp_html:
+					comp_page = Adaptor(comp_html)
+					desc_el = comp_page.css("div.nw-company-hero__detail.nw-wysiwyg, div.company-desc, div.company-info")
+					if desc_el:
+						parts = desc_el.css("::text").getall()
+						lines = [p.strip() for p in parts if p.strip()]
+						company_info = "\n".join(lines) or None
 
-				# Thông tin công ty: <div class="fz-15 nw-company-hero__detail nw-wysiwyg ns-body">
-				desc_el = comp_page.css("div.nw-company-hero__detail.nw-wysiwyg")
-				if desc_el:
-					parts = desc_el.css("::text").getall()
-					lines = [p.strip() for p in parts if p.strip()]
-					company_info = "\n".join(lines) or None
-
-				# Website công ty: tìm trong sidebar các link ngoài domain joboko
-				for a in comp_page.css("div.nw-sidebar-company a[href]"):
-					href = a.css("::attr(href)").get() or ""
-					# Lấy link không phải nội bộ joboko
-					if href.startswith("http") and "joboko.com" not in href:
-						company_website = href.strip()
-						break
+					for a in comp_page.css("div.nw-sidebar-company a[href], a[href*='http']"):
+						href = a.css("::attr(href)").get() or ""
+						if href.startswith("http") and "joboko.com" not in href:
+							company_website = href.strip()
+							break
+				self._company_cache[company_page_url] = (company_info, company_website)
 
 		return {
 			"title": title,
