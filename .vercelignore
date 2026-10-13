@@ -1,0 +1,22 @@
+# Vercel Deployment Ignore
+data/
+logs/
+dags/
+scripts/
+tests/
+dbt/
+dbt_project/
+*.parquet
+*.csv
+*.sql
+*.pyc
+__pycache__/
+.venv/
+venv/
+.pytest_cache/
+.dockerignore
+Dockerfile
+docker-compose*.yml
+.env
+.git
+.github

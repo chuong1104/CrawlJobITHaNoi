@@ -25,8 +25,9 @@ USER airflow
 # 2. Cài đặt Python packages trực tiếp vào ~/.local
 # (Không dùng multi-stage COPY để loại bỏ 100% rủi ro OOM do tar stream)
 COPY requirements.txt /tmp/requirements.txt
+COPY requirements-pipeline.txt /tmp/requirements-pipeline.txt
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r /tmp/requirements.txt
+    pip install --no-cache-dir -r /tmp/requirements.txt -r /tmp/requirements-pipeline.txt
 
 USER root
 
