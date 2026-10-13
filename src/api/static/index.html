@@ -132,7 +132,8 @@
                         <div class="search-icon">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.608 10.608Z"/></svg>
                         </div>
-                        <input type="text" id="search-input" placeholder="Tìm kiếm: Python, Data Engineer, Backend...">
+                        <input type="text" id="search-input" placeholder="Tìm kiếm nhanh: Python, Data Engineer, React, Fresher, FPT..." autocomplete="off">
+                        <button type="button" id="search-clear-btn" class="search-clear-btn hidden" title="Xóa tìm kiếm">✕</button>
                         <button class="btn-search" id="search-btn">Tìm Kiếm</button>
                     </div>
                     <button id="toggle-filter-btn" class="btn-filter">
@@ -140,6 +141,20 @@
                         Lọc Nâng Cao
                     </button>
                 </div>
+
+                <!-- Quick search suggestions -->
+                <div class="quick-search-chips">
+                    <span class="quick-chip-label">Từ khóa phổ biến:</span>
+                    <button type="button" class="search-chip" data-query="Data Engineer"> Data Engineer</button>
+                    <button type="button" class="search-chip" data-query="Python"> Python</button>
+                    <button type="button" class="search-chip" data-query="Java"> Java</button>
+                    <button type="button" class="search-chip" data-query="React"> React</button>
+                    <button type="button" class="search-chip" data-query="Backend"> Backend</button>
+                    <button type="button" class="search-chip" data-query="Frontend"> Frontend</button>
+                    <button type="button" class="search-chip" data-query="Fresher"> Fresher</button>
+                    <button type="button" class="search-chip" data-query="AI"> AI / LLM</button>
+                </div>
+
                 <div class="filters-grid hidden" id="advanced-filters">
                     <div class="filter-group">
                         <label for="filter-status" class="filter-label">Hạn Tuyển Dụng</label>
@@ -217,10 +232,29 @@
                         <span class="count-badge" id="results-count">0 kết quả</span>
                     </div>
                     <div id="jobs-container" class="jobs-list"></div>
-                    <div class="pagination">
-                        <button id="prev-btn" disabled>« Trang trước</button>
-                        <span class="page-info" id="page-num">Trang 1 / 1</span>
-                        <button id="next-btn" disabled>Trang sau »</button>
+
+                    <!-- Comprehensive Pagination Bar -->
+                    <div class="pagination-wrapper">
+                        <div class="pagination-size">
+                            <label for="page-size-select">Hiển thị:</label>
+                            <select id="page-size-select">
+                                <option value="10" selected>10 / trang</option>
+                                <option value="20">20 / trang</option>
+                                <option value="50">50 / trang</option>
+                            </select>
+                        </div>
+                        <div class="pagination" id="pagination-controls">
+                            <button id="first-btn" class="page-nav-btn" title="Trang đầu" disabled>««</button>
+                            <button id="prev-btn" class="page-nav-btn" title="Trang trước" disabled>‹</button>
+                            <div id="page-numbers" class="page-numbers"></div>
+                            <button id="next-btn" class="page-nav-btn" title="Trang sau" disabled>›</button>
+                            <button id="last-btn" class="page-nav-btn" title="Trang cuối" disabled>»»</button>
+                        </div>
+                        <div class="pagination-jump">
+                            <span>Đến:</span>
+                            <input type="number" id="jump-page-input" min="1" placeholder="1">
+                            <button type="button" id="jump-page-btn">Đi</button>
+                        </div>
                     </div>
                 </div>
 

@@ -1,10 +1,17 @@
-// src/api/static/app.js — v5
+// src/api/static/app.js — v6 (Tối ưu tải siêu tốc, phân trang toàn diện, tìm kiếm thông minh)
 const API_URL = "";
 
 let currentPage = 1;
+let pageSize = 10;
+let totalPages = 1;
 let salaryChartInstance = null;
 let locationChartInstance = null;
 let skillsChartInstance = null;
+let searchDebounceTimer = null;
+
+// Bộ nhớ đệm Client-side (TTL 60s) giúp chuyển trang và tìm kiếm tức thì (0ms)
+const clientCache = new Map();
+const CLIENT_CACHE_TTL_MS = 60000;
 
 // ── Helpers ──────────────────────────────────────────────
 function fmt(num) {
@@ -72,6 +79,18 @@ function getDeadlineInfo(job) {
     return { badgeClass: "badge-none", text: `⏳ Không thời hạn`, isExpired: false };
 }
 
+function highlightKeyword(text, query) {
+    if (!text || !query || !query.trim()) return text || "";
+    const words = query.trim().split(/\s+/).filter(w => w.length > 0).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    if (words.length === 0) return text;
+    try {
+        const regex = new RegExp(`(${words.join("|")})`, "gi");
+        return text.replace(regex, '<mark class="highlight-kw">$1</mark>');
+    } catch (e) {
+        return text;
+    }
+}
+
 // ── DOMContentLoaded ─────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
     // Tab navigation
@@ -96,26 +115,121 @@ document.addEventListener("DOMContentLoaded", () => {
     // Toggle advanced filters
     const toggleBtn = document.getElementById("toggle-filter-btn");
     const advFilters = document.getElementById("advanced-filters");
-    toggleBtn.addEventListener("click", () => {
-        advFilters.classList.toggle("hidden");
-        toggleBtn.classList.toggle("active");
+    if (toggleBtn && advFilters) {
+        toggleBtn.addEventListener("click", () => {
+            advFilters.classList.toggle("hidden");
+            toggleBtn.classList.toggle("active");
+        });
+    }
+
+    // Search input & Debounce
+    const searchInput = document.getElementById("search-input");
+    const searchClearBtn = document.getElementById("search-clear-btn");
+
+    function updateClearBtn() {
+        if (!searchClearBtn) return;
+        if (searchInput.value.trim().length > 0) {
+            searchClearBtn.classList.remove("hidden");
+        } else {
+            searchClearBtn.classList.add("hidden");
+        }
+    }
+
+    if (searchInput) {
+        // Debounce tự động tìm kiếm sau 350ms ngừng gõ
+        searchInput.addEventListener("input", () => {
+            updateClearBtn();
+            clearTimeout(searchDebounceTimer);
+            searchDebounceTimer = setTimeout(() => {
+                currentPage = 1;
+                loadJobs();
+            }, 350);
+        });
+
+        searchInput.addEventListener("keypress", e => {
+            if (e.key === "Enter") {
+                clearTimeout(searchDebounceTimer);
+                currentPage = 1;
+                loadJobs();
+            }
+        });
+    }
+
+    if (searchClearBtn) {
+        searchClearBtn.addEventListener("click", () => {
+            searchInput.value = "";
+            updateClearBtn();
+            document.querySelectorAll(".search-chip").forEach(c => c.classList.remove("active"));
+            currentPage = 1;
+            loadJobs();
+        });
+    }
+
+    const searchBtn = document.getElementById("search-btn");
+    if (searchBtn) {
+        searchBtn.addEventListener("click", () => {
+            clearTimeout(searchDebounceTimer);
+            currentPage = 1;
+            loadJobs();
+        });
+    }
+
+    // Quick search chips
+    document.querySelectorAll(".search-chip").forEach(chip => {
+        chip.addEventListener("click", () => {
+            const query = chip.getAttribute("data-query");
+            if (searchInput) {
+                searchInput.value = query;
+                updateClearBtn();
+            }
+            document.querySelectorAll(".search-chip").forEach(c => c.classList.remove("active"));
+            chip.classList.add("active");
+            currentPage = 1;
+            loadJobs();
+        });
     });
 
-    // Search
-    document.getElementById("search-btn").addEventListener("click", () => { currentPage = 1; loadJobs(); });
-    document.getElementById("search-input").addEventListener("keypress", e => { if (e.key === "Enter") { currentPage = 1; loadJobs(); } });
-
-    // Filters
+    // Filters change
     ["filter-status", "filter-location", "filter-salary", "filter-experience", "filter-source", "filter-sort"].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.addEventListener("change", () => { currentPage = 1; loadJobs(); });
     });
 
-    // Pagination
-    document.getElementById("prev-btn").addEventListener("click", () => { if (currentPage > 1) { currentPage--; loadJobs(); } });
-    document.getElementById("next-btn").addEventListener("click", () => { currentPage++; loadJobs(); });
+    // Page size dropdown
+    const pageSizeSelect = document.getElementById("page-size-select");
+    if (pageSizeSelect) {
+        pageSizeSelect.addEventListener("change", (e) => {
+            pageSize = parseInt(e.target.value, 10) || 10;
+            currentPage = 1;
+            loadJobs();
+        });
+    }
 
-    // Initial data
+    // Pagination buttons
+    const firstBtn = document.getElementById("first-btn");
+    const prevBtn = document.getElementById("prev-btn");
+    const nextBtn = document.getElementById("next-btn");
+    const lastBtn = document.getElementById("last-btn");
+
+    if (firstBtn) firstBtn.addEventListener("click", () => { if (currentPage > 1) { currentPage = 1; loadJobs(); } });
+    if (prevBtn) prevBtn.addEventListener("click", () => { if (currentPage > 1) { currentPage--; loadJobs(); } });
+    if (nextBtn) nextBtn.addEventListener("click", () => { if (currentPage < totalPages) { currentPage++; loadJobs(); } });
+    if (lastBtn) lastBtn.addEventListener("click", () => { if (currentPage < totalPages) { currentPage = totalPages; loadJobs(); } });
+
+    // Jump to page
+    const jumpInput = document.getElementById("jump-page-input");
+    const jumpBtn = document.getElementById("jump-page-btn");
+    function doJump() {
+        const val = parseInt(jumpInput.value, 10);
+        if (val && val >= 1 && val <= totalPages && val !== currentPage) {
+            currentPage = val;
+            loadJobs();
+        }
+    }
+    if (jumpBtn) jumpBtn.addEventListener("click", doJump);
+    if (jumpInput) jumpInput.addEventListener("keypress", e => { if (e.key === "Enter") doJump(); });
+
+    // Load song song KPIs và Jobs để trang web hiển thị nhanh nhất
     loadKPIs();
     loadJobs();
 });
@@ -124,38 +238,27 @@ document.addEventListener("DOMContentLoaded", () => {
 async function loadKPIs() {
     try {
         const res = await fetch(`${API_URL}/stats/kpi`);
-        if (!res.ok) {
-            console.error("KPI load HTTP error:", res.status);
-            return;
-        }
+        if (!res.ok) return;
         const d = await res.json();
 
-        // Total jobs
         setKPIVal("stat-total-jobs", fmt(d.total_jobs));
 
-        // New jobs in 7 days
         const sub = document.getElementById("stat-new-jobs-sub");
         if (sub) sub.textContent = "+" + fmt(d.new_jobs_7d || 0);
 
-        // Average salary
         const avgSal = d.average_salary_million;
         setKPIVal("stat-avg-salary", avgSal && avgSal !== "N/A" ? `${avgSal} <small style="font-size:0.8rem;font-weight:500;color:var(--text-muted)">Tr. VNĐ</small>` : "N/A");
 
-        // Median salary
         const med = document.getElementById("stat-median-salary");
         if (med) med.textContent = d.median_salary && d.median_salary !== "0" ? d.median_salary : "N/A";
 
-        // Companies
         setKPIVal("stat-total-companies", fmt(d.total_companies));
 
-        // Disclosure rate
         const disc = parseFloat(d.disclosure_rate || 0);
         setKPIVal("stat-disclosure-rate", `${disc.toFixed(1)}<span style="font-size:1rem;font-weight:600;color:var(--text-muted)">%</span>`);
 
-        // Fresher jobs
         setKPIVal("stat-fresher-jobs", fmt(d.fresher_jobs));
 
-        // Top skills → skills bar
         const skillsEl = document.getElementById("stat-top-skills");
         if (skillsEl && Array.isArray(d.top_skills)) {
             skillsEl.innerHTML = d.top_skills.slice(0, 10).map(s => {
@@ -177,16 +280,16 @@ function setKPIVal(id, html) {
 
 // ── Jobs list ─────────────────────────────────────────────
 async function loadJobs() {
-    const search = document.getElementById("search-input").value;
+    const search = document.getElementById("search-input") ? document.getElementById("search-input").value.trim() : "";
     const statusEl = document.getElementById("filter-status");
     const status = statusEl ? statusEl.value : "";
-    const location = document.getElementById("filter-location").value;
-    const salary = document.getElementById("filter-salary").value;
-    const experience = document.getElementById("filter-experience").value;
-    const source = document.getElementById("filter-source").value;
-    const sort = document.getElementById("filter-sort").value;
+    const location = document.getElementById("filter-location") ? document.getElementById("filter-location").value : "";
+    const salary = document.getElementById("filter-salary") ? document.getElementById("filter-salary").value : "";
+    const experience = document.getElementById("filter-experience") ? document.getElementById("filter-experience").value : "";
+    const source = document.getElementById("filter-source") ? document.getElementById("filter-source").value : "";
+    const sort = document.getElementById("filter-sort") ? document.getElementById("filter-sort").value : "";
 
-    let url = `${API_URL}/jobs?page=${currentPage}&limit=10`;
+    let url = `${API_URL}/jobs?page=${currentPage}&limit=${pageSize}`;
     if (search)     url += `&search=${encodeURIComponent(search)}`;
     if (status)     url += `&status=${encodeURIComponent(status)}`;
     if (location)   url += `&location=${encodeURIComponent(location)}`;
@@ -195,10 +298,19 @@ async function loadJobs() {
     if (source)     url += `&source=${encodeURIComponent(source)}`;
     if (sort)       url += `&sort=${encodeURIComponent(sort)}`;
 
-    // Show skeleton
     const container = document.getElementById("jobs-container");
-    container.innerHTML = buildSkeletons(4);
-    container.scrollTop = 0;
+
+    // Kiểm tra Client Cache để phản hồi tức thì
+    const cacheKey = url;
+    const cached = clientCache.get(cacheKey);
+    const now = Date.now();
+    if (cached && (now - cached.timestamp < CLIENT_CACHE_TTL_MS)) {
+        applyJobsData(cached.data, search, container);
+        return;
+    }
+
+    // Hiển thị khung chờ tải (Skeleton)
+    container.innerHTML = buildSkeletons(Math.min(pageSize, 6));
 
     try {
         const res = await fetch(url);
@@ -207,25 +319,28 @@ async function loadJobs() {
             throw new Error(d.detail || `Máy chủ phản hồi mã lỗi ${res.status}`);
         }
 
-        // Support both flat and paginated response shapes
-        const jobs = Array.isArray(d.data) ? d.data : (Array.isArray(d) ? d : []);
-        const total = d.total ?? jobs.length;
-        const page = d.page || currentPage;
-        const totalPages = d.total_pages || d.pagination?.total_pages || 1;
+        // Lưu vào Client Cache
+        clientCache.set(cacheKey, { data: d, timestamp: now });
 
-        const countEl = document.getElementById("results-count");
-        if (countEl) countEl.textContent = `${fmt(total)} kết quả`;
-
-        renderJobs(jobs, container);
-
-        document.getElementById("page-num").textContent = `Trang ${page} / ${totalPages}`;
-        document.getElementById("prev-btn").disabled = page <= 1;
-        document.getElementById("next-btn").disabled = page >= totalPages;
+        applyJobsData(d, search, container);
 
     } catch (err) {
         console.error("Jobs load error:", err);
         container.innerHTML = `<div class="empty-state"><p style="color:#ef4444">Không thể tải dữ liệu: ${err.message || "Vui lòng thử lại"}</p></div>`;
     }
+}
+
+function applyJobsData(d, search, container) {
+    const jobs = Array.isArray(d.data) ? d.data : (Array.isArray(d) ? d : []);
+    const total = d.total ?? jobs.length;
+    const page = d.page || currentPage;
+    totalPages = d.total_pages || Math.max(1, Math.ceil(total / pageSize));
+
+    const countEl = document.getElementById("results-count");
+    if (countEl) countEl.textContent = `${fmt(total)} kết quả`;
+
+    renderJobs(jobs, container, search);
+    renderPagination(page, totalPages, total);
 }
 
 function buildSkeletons(n) {
@@ -245,7 +360,71 @@ function buildSkeletons(n) {
     `).join("");
 }
 
-function renderJobs(jobs, container) {
+function renderPagination(page, maxPages, total) {
+    totalPages = maxPages;
+
+    const firstBtn = document.getElementById("first-btn");
+    const prevBtn = document.getElementById("prev-btn");
+    const nextBtn = document.getElementById("next-btn");
+    const lastBtn = document.getElementById("last-btn");
+
+    if (firstBtn) firstBtn.disabled = page <= 1;
+    if (prevBtn) prevBtn.disabled = page <= 1;
+    if (nextBtn) nextBtn.disabled = page >= maxPages;
+    if (lastBtn) lastBtn.disabled = page >= maxPages;
+
+    const jumpInput = document.getElementById("jump-page-input");
+    if (jumpInput) {
+        jumpInput.max = maxPages;
+        jumpInput.value = page;
+    }
+
+    const pageNumbersEl = document.getElementById("page-numbers");
+    if (!pageNumbersEl) return;
+    pageNumbersEl.innerHTML = "";
+
+    // Thuật toán hiển thị số trang trực quan với dấu "..."
+    const visiblePages = [];
+    if (maxPages <= 7) {
+        for (let i = 1; i <= maxPages; i++) visiblePages.push(i);
+    } else {
+        visiblePages.push(1);
+        if (page > 3) visiblePages.push("...");
+
+        const start = Math.max(2, page - 1);
+        const end = Math.min(maxPages - 1, page + 1);
+        for (let i = start; i <= end; i++) {
+            if (!visiblePages.includes(i)) visiblePages.push(i);
+        }
+
+        if (page < maxPages - 2) visiblePages.push("...");
+        if (!visiblePages.includes(maxPages)) visiblePages.push(maxPages);
+    }
+
+    visiblePages.forEach(p => {
+        if (p === "...") {
+            const span = document.createElement("span");
+            span.className = "page-ellipsis";
+            span.textContent = "…";
+            pageNumbersEl.appendChild(span);
+        } else {
+            const btn = document.createElement("button");
+            btn.className = `page-num-btn ${p === page ? "active" : ""}`;
+            btn.textContent = p;
+            btn.addEventListener("click", () => {
+                if (p !== currentPage) {
+                    currentPage = p;
+                    loadJobs();
+                    const container = document.getElementById("jobs-container");
+                    if (container) container.scrollIntoView({ behavior: "smooth", block: "start" });
+                }
+            });
+            pageNumbersEl.appendChild(btn);
+        }
+    });
+}
+
+function renderJobs(jobs, container, searchQuery = "") {
     container.innerHTML = "";
     if (!Array.isArray(jobs) || jobs.length === 0) {
         container.innerHTML = `
@@ -253,7 +432,7 @@ function renderJobs(jobs, container) {
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M15.182 16.318A4.486 4.486 0 0 0 12.016 15a4.486 4.486 0 0 0-3.198 1.318M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM9.75 9.75c0 .414-.168.75-.375.75S9 10.164 9 9.75 9.168 9 9.375 9s.375.336.375.75Zm-.375 0h.008v.015h-.008V9.75Zm5.625 0c0 .414-.168.75-.375.75s-.375-.336-.375-.75.168-.75.375-.75.375.336.375.75Zm-.375 0h.008v.015h-.008V9.75Z" />
                 </svg>
-                <p>Không tìm thấy công việc phù hợp với bộ lọc hiện tại.</p>
+                <p>Không tìm thấy công việc phù hợp với từ khóa và bộ lọc hiện tại.</p>
             </div>`;
         return;
     }
@@ -263,13 +442,19 @@ function renderJobs(jobs, container) {
         const deadlineInfo = getDeadlineInfo(job);
         const timeAgo = formatTimeAgo(job.last_seen_at || job.crawled_at);
 
+        const rawTitle = job.title_clean || job.job_title || "Không có tiêu đề";
+        const rawCompany = job.company_display_name || job.company_name || "—";
+
+        const titleHtml = highlightKeyword(rawTitle, searchQuery);
+        const companyHtml = highlightKeyword(rawCompany, searchQuery);
+
         card.className = `job-card ${deadlineInfo.isExpired ? "is-expired" : ""}`;
         card.innerHTML = `
             <div class="job-card-top">
-                <h4>${job.title_clean || job.job_title || "Không có tiêu đề"}</h4>
+                <h4>${titleHtml}</h4>
                 <span class="src-badge ${srcClass(job.source_name)}">${job.source_name || "—"}</span>
             </div>
-            <div class="company">${job.company_display_name || job.company_name || "—"}</div>
+            <div class="company">${companyHtml}</div>
             <div class="job-meta">
                 <span>📍 ${job.location_clean || "Hà Nội"}</span>
                 <span>💰 ${job.salary_raw || "Thỏa thuận"}</span>

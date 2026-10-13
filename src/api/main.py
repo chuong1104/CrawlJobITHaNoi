@@ -207,13 +207,7 @@ def get_jobs(
             s.title_clean,
             c.display_name AS company_name,
             COALESCE(
-                (
-                    SELECT loc.display_name 
-                    FROM silver.job_snapshot_locations jsl 
-                    JOIN silver.locations loc ON jsl.location_id = loc.location_id 
-                    WHERE jsl.snapshot_id = s.snapshot_id 
-                    LIMIT 1
-                ),
+                loc_sub.location_name,
                 CASE 
                     WHEN s.title_clean ILIKE '%Hồ Chí Minh%' OR s.title_clean ILIKE '%HCM%' OR s.title_clean ILIKE '%HCMC%' OR s.title_clean ILIKE '%Sài Gòn%' THEN 'Hồ Chí Minh'
                     WHEN s.title_clean ILIKE '%Đà Nẵng%' OR s.title_clean ILIKE '%ĐN%' THEN 'Đà Nẵng'
@@ -240,12 +234,18 @@ def get_jobs(
             j.canonical_url,
             j.is_active,
             j.created_at,
-            j.last_seen_at
+            j.last_seen_at,
+            COUNT(*) OVER() AS full_count
         FROM silver.jobs j
         JOIN silver.job_snapshots s ON j.job_id = s.job_id AND s.is_current = true
         JOIN silver.companies c ON j.company_id = c.company_id
         JOIN silver.sources src ON j.source_id = src.source_id
         LEFT JOIN silver.job_duplicate_groups dg ON j.duplicate_group_id = dg.group_id
+        LEFT JOIN (
+            SELECT DISTINCT ON (jsl.snapshot_id) jsl.snapshot_id, loc.display_name AS location_name
+            FROM silver.job_snapshot_locations jsl
+            JOIN silver.locations loc ON jsl.location_id = loc.location_id
+        ) loc_sub ON loc_sub.snapshot_id = s.snapshot_id
         WHERE j.is_active = :is_active
           AND (j.duplicate_group_id IS NULL OR j.job_id = dg.canonical_job_id)
           AND COALESCE(s.title_clean, '') NOT IN ('NaN', 'nan', '')
@@ -258,40 +258,38 @@ def get_jobs(
         params["source"] = source
 
     if search:
-        base_sql += " AND (s.title_clean ILIKE :search OR c.display_name ILIKE :search OR s.description ILIKE :search)"
-        params["search"] = f"%{search}%"
+        search = search.strip()
+        tokens = [t for t in search.split() if len(t) >= 1]
+        if len(tokens) > 1:
+            term_clauses = []
+            for i, token in enumerate(tokens):
+                key = f"token_{i}"
+                term_clauses.append(f"(s.title_clean ILIKE :{key} OR c.display_name ILIKE :{key})")
+                params[key] = f"%{token}%"
+            base_sql += " AND (" + " AND ".join(term_clauses) + ")"
+        else:
+            base_sql += " AND (s.title_clean ILIKE :search OR c.display_name ILIKE :search)"
+            params["search"] = f"%{search}%"
 
     if location:
         if location in ("Hà Nội", "ha_noi"):
             base_sql += """ AND (
                 s.title_clean ILIKE '%Hà Nội%' OR s.title_clean ILIKE '%HN%'
-                OR EXISTS (
-                    SELECT 1 FROM silver.job_snapshot_locations jsl 
-                    JOIN silver.locations loc ON jsl.location_id = loc.location_id 
-                    WHERE jsl.snapshot_id = s.snapshot_id AND loc.location_code = 'ha_noi'
-                )
+                OR loc_sub.location_name ILIKE '%Hà Nội%'
                 OR (
-                    NOT EXISTS (SELECT 1 FROM silver.job_snapshot_locations jsl WHERE jsl.snapshot_id = s.snapshot_id)
+                    loc_sub.location_name IS NULL
                     AND s.title_clean NOT ILIKE '%Hồ Chí Minh%' AND s.title_clean NOT ILIKE '%HCM%' AND s.title_clean NOT ILIKE '%Đà Nẵng%'
                 )
             )"""
         elif location in ("Hồ Chí Minh", "TP. Hồ Chí Minh", "ho_chi_minh", "HCM"):
             base_sql += """ AND (
                 s.title_clean ILIKE '%Hồ Chí Minh%' OR s.title_clean ILIKE '%HCM%' OR s.title_clean ILIKE '%HCMC%' OR s.title_clean ILIKE '%Sài Gòn%'
-                OR EXISTS (
-                    SELECT 1 FROM silver.job_snapshot_locations jsl 
-                    JOIN silver.locations loc ON jsl.location_id = loc.location_id 
-                    WHERE jsl.snapshot_id = s.snapshot_id AND loc.location_code = 'ho_chi_minh'
-                )
+                OR loc_sub.location_name ILIKE '%Hồ Chí Minh%' OR loc_sub.location_name ILIKE '%HCM%'
             )"""
         elif location in ("Đà Nẵng", "da_nang"):
             base_sql += """ AND (
                 s.title_clean ILIKE '%Đà Nẵng%' OR s.title_clean ILIKE '%ĐN%'
-                OR EXISTS (
-                    SELECT 1 FROM silver.job_snapshot_locations jsl 
-                    JOIN silver.locations loc ON jsl.location_id = loc.location_id 
-                    WHERE jsl.snapshot_id = s.snapshot_id AND loc.location_code = 'da_nang'
-                )
+                OR loc_sub.location_name ILIKE '%Đà Nẵng%'
             )"""
         elif location in ("Remote", "remote"):
             base_sql += """ AND (
@@ -299,14 +297,7 @@ def get_jobs(
             )"""
         else:
             params["location"] = f"%{location}%"
-            base_sql += """ AND (
-                s.title_clean ILIKE :location
-                OR EXISTS (
-                    SELECT 1 FROM silver.job_snapshot_locations jsl 
-                    JOIN silver.locations loc ON jsl.location_id = loc.location_id 
-                    WHERE jsl.snapshot_id = s.snapshot_id AND loc.display_name ILIKE :location
-                )
-            )"""
+            base_sql += " AND (s.title_clean ILIKE :location OR loc_sub.location_name ILIKE :location)"
 
     if salary == "negotiable":
         base_sql += " AND (s.salary_min IS NULL AND s.salary_max IS NULL)"
@@ -355,17 +346,14 @@ def get_jobs(
 
     # Sắp xếp (Sorting logic)
     if sort == "newest":
-        # Sắp xếp theo ngày cào/thấy mới nhất trước
         base_sql += " ORDER BY j.last_seen_at DESC NULLS LAST, j.job_id DESC LIMIT :limit OFFSET :offset"
     elif sort in ("oldest", "deadline_asc"):
-        # Sắp hết hạn trước: Ưu tiên tin còn hạn trước
         base_sql += """ ORDER BY 
             CASE WHEN s.deadline_date IS NULL OR s.deadline_date < CURRENT_DATE THEN 1 ELSE 0 END ASC,
             s.deadline_date ASC NULLS LAST, 
             j.job_id DESC 
             LIMIT :limit OFFSET :offset"""
     elif sort == "deadline_desc":
-        # Hạn nộp xa nhất trước
         base_sql += " ORDER BY s.deadline_date DESC NULLS LAST, j.job_id DESC LIMIT :limit OFFSET :offset"
     elif sort == "salary_desc":
         base_sql += " ORDER BY COALESCE(s.salary_max, s.salary_min) DESC NULLS LAST, j.job_id DESC LIMIT :limit OFFSET :offset"
@@ -374,47 +362,46 @@ def get_jobs(
     else:
         base_sql += " ORDER BY j.last_seen_at DESC NULLS LAST, j.job_id DESC LIMIT :limit OFFSET :offset"
 
-    # Count query
-    count_sql = base_sql.split("ORDER BY")[0]
-    count_sql = f"SELECT COUNT(*) AS total FROM ({count_sql}) AS sub"
-    count_params = {k: v for k, v in params.items() if k not in ("limit", "offset")}
-
     try:
         jobs = _query(base_sql, params)
-        for j in jobs:
-            # Clean NaN strings that slipped through
-            for key in ("title_clean", "company_name", "salary_raw", "deadline_raw", "location_clean"):
-                val = j.get(key)
-                if val in ("NaN", "nan", "None", "none", ""):
-                    j[key] = None
-            j["deadline_raw"] = clean_deadline(j.get("deadline_raw"))
+        total = 0
+        if jobs:
+            total = int(jobs[0].get("full_count", len(jobs)))
+            for j in jobs:
+                j.pop("full_count", None)
+                for key in ("title_clean", "company_name", "salary_raw", "deadline_raw", "location_clean"):
+                    val = j.get(key)
+                    if val in ("NaN", "nan", "None", "none", ""):
+                        j[key] = None
+                j["deadline_raw"] = clean_deadline(j.get("deadline_raw"))
 
-            # Scraped date ISO string
-            if j.get("last_seen_at"):
-                j["scraped_at"] = j["last_seen_at"].isoformat() if hasattr(j["last_seen_at"], "isoformat") else str(j["last_seen_at"])
-            elif j.get("created_at"):
-                j["scraped_at"] = j["created_at"].isoformat() if hasattr(j["created_at"], "isoformat") else str(j["created_at"])
+                if j.get("last_seen_at"):
+                    j["scraped_at"] = j["last_seen_at"].isoformat() if hasattr(j["last_seen_at"], "isoformat") else str(j["last_seen_at"])
+                elif j.get("created_at"):
+                    j["scraped_at"] = j["created_at"].isoformat() if hasattr(j["created_at"], "isoformat") else str(j["created_at"])
 
-            # Clean experience display
-            exp_min = j.get('experience_min_years')
-            exp_max = j.get('experience_max_years')
-            if exp_min is not None and exp_max is not None:
-                if exp_min == exp_max:
-                    j['experience_raw'] = f"{exp_min} năm" if exp_min > 0 else "Dưới 1 năm"
-                else:
-                    j['experience_raw'] = f"{exp_min} - {exp_max} năm"
-            elif exp_min is not None:
-                j['experience_raw'] = f"Từ {exp_min} năm"
-            elif exp_max is not None:
-                j['experience_raw'] = f"Đến {exp_max} năm"
-            elif not j.get('experience_raw'):
-                j['experience_raw'] = "Không yêu cầu"
-
-        try:
-            total_row = _query(count_sql, count_params)
-            total = total_row[0]["total"] if total_row else 0
-        except Exception:
-            total = len(jobs)  # fallback
+                exp_min = j.get('experience_min_years')
+                exp_max = j.get('experience_max_years')
+                if exp_min is not None and exp_max is not None:
+                    if exp_min == exp_max:
+                        j['experience_raw'] = f"{exp_min} năm" if exp_min > 0 else "Dưới 1 năm"
+                    else:
+                        j['experience_raw'] = f"{exp_min} - {exp_max} năm"
+                elif exp_min is not None:
+                    j['experience_raw'] = f"Từ {exp_min} năm"
+                elif exp_max is not None:
+                    j['experience_raw'] = f"Đến {exp_max} năm"
+                elif not j.get('experience_raw'):
+                    j['experience_raw'] = "Không yêu cầu"
+        elif page > 1:
+            try:
+                count_sql = base_sql.split("ORDER BY")[0]
+                count_sql = f"SELECT COUNT(*) AS total FROM ({count_sql}) AS sub"
+                count_params = {k: v for k, v in params.items() if k not in ("limit", "offset")}
+                total_row = _query(count_sql, count_params)
+                total = total_row[0]["total"] if total_row else 0
+            except Exception:
+                total = 0
 
         total_pages = max(1, (total + limit - 1) // limit)
 
@@ -422,6 +409,7 @@ def get_jobs(
             "data": jobs,
             "total": total,
             "page": page,
+            "limit": limit,
             "total_pages": total_pages,
         }
     except Exception as e:
