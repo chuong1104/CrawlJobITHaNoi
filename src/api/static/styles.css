@@ -150,23 +150,24 @@ mark { background: #fff1a8; color: inherit; padding: 0 1px; }
 
 /* ---------- Phân trang ---------- */
 .pager {
-    margin-top: 10px;
+    margin-top: 8px;
     display: flex;
     flex-wrap: wrap;
-    gap: 8px 14px;
+    gap: 6px 10px;
     align-items: center;
     justify-content: space-between;
-    font-size: 0.85rem;
+    font-size: 0.82rem;
     color: var(--muted);
 }
 .pager-size, .pager-jump { display: flex; align-items: center; gap: 6px; }
-.pager-nav { display: flex; align-items: center; gap: 4px; }
-.page-numbers { display: inline-flex; gap: 4px; }
-.pg-btn { min-width: 32px; padding: 5px 8px; font-size: 0.85rem; }
+.pager-nav { order: -1; flex: 1 1 100%; display: flex; align-items: center; justify-content: center; gap: 3px; }
+.page-numbers { display: inline-flex; gap: 3px; }
+.pg-btn { min-width: 28px; padding: 3px 7px; font-size: 0.82rem; }
 .pg-btn:disabled { opacity: 0.4; cursor: default; }
 .pg-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-.page-ellipsis { padding: 5px 2px; }
-.pager-jump input { width: 52px; padding: 5px; border: 1px solid var(--line); text-align: center; }
+.page-ellipsis { padding: 3px 2px; }
+.pager select { padding: 3px 5px; font-size: 0.82rem; }
+.pager-jump input { width: 48px; padding: 3px; border: 1px solid var(--line); text-align: center; }
 
 /* ---------- Chi tiết ---------- */
 .detail-col {
@@ -218,5 +219,26 @@ mark { background: #fff1a8; color: inherit; padding: 0 1px; }
     .filter-grid { grid-template-columns: 1fr 1fr; }
     .search-row { flex-wrap: wrap; }
     .search-row input { flex-basis: 100%; }
-    .pager { justify-content: center; }
+}
+
+/* ---------- Vừa một màn hình (desktop) ---------- */
+@media (min-width: 961px) and (min-height: 640px) {
+    html, body { height: 100%; }
+    body { display: flex; flex-direction: column; overflow: hidden; font-size: 14px; }
+    .topbar-inner { height: 44px; }
+    main.wrap { flex: 1; min-height: 0; width: 100%; display: flex; flex-direction: column; }
+    #dashboard-tab.active { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    #analytics-tab.active { flex: 1; min-height: 0; overflow-y: auto; display: block; }
+    .page-title { font-size: 1.1rem; margin: 10px 0 8px; }
+    .stat { padding: 7px 12px; }
+    .stat-value { font-size: 1.25rem; line-height: 1.2; }
+    .skills-line { margin: 8px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .filters { margin-bottom: 10px; padding: 8px 10px; }
+    .quick { margin-top: 6px; }
+    .columns { flex: 1; min-height: 0; align-items: stretch; grid-template-rows: minmax(0, 1fr); }
+    .list-col { display: flex; flex-direction: column; min-height: 0; }
+    .jobs-list { flex: 1; min-height: 0; overflow-y: auto; }
+    .list-head, .pager { flex: none; }
+    .detail-col { position: static; max-height: none; height: 100%; min-height: 0; }
+    .foot { display: none; }
 }
