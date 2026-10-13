@@ -18,11 +18,6 @@ const CACHE_MS = 60000;
 // ---------- Tiện ích ----------
 function $(id) { return document.getElementById(id); }
 
-// Màn hình đủ lớn: giao diện vừa một khung nhìn, danh sách/chi tiết cuộn bên trong
-function isFit() {
-    return window.matchMedia("(min-width: 961px) and (min-height: 640px)").matches;
-}
-
 function esc(s) {
     return String(s == null ? "" : s)
         .replace(/&/g, "&amp;")
@@ -186,10 +181,7 @@ function goPage(p) {
     currentPage = p;
     loadJobs();
     const top = $("jobs-container");
-    if (top) {
-        top.scrollTop = 0;
-        if (!isFit()) top.scrollIntoView({ block: "start" });
-    }
+    if (top) top.scrollIntoView({ block: "start", behavior: "smooth" });
 }
 
 // ---------- Số liệu tổng quan ----------
@@ -458,7 +450,9 @@ async function loadJobDetail(jobId) {
                 '<div class="detail-desc">' + esc(job.description || "Không có mô tả chi tiết.") + "</div>" +
             "</div>";
         pane.scrollTop = 0;
-        if (!isFit()) pane.scrollIntoView({ block: "start" });
+        if (window.innerWidth <= 960) {
+            pane.scrollIntoView({ block: "start", behavior: "smooth" });
+        }
     } catch (err) {
         console.error("Job detail error:", err);
         pane.innerHTML = '<p class="detail-empty">Không tải được chi tiết. Vui lòng thử lại.</p>';

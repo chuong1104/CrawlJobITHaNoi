@@ -506,24 +506,18 @@ mark { background: #fef08a; color: inherit; padding: 0 2px; border-radius: 2px; 
     .detail-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
-/* ---------- Vừa một màn hình (Desktop app mode) ---------- */
-@media (min-width: 961px) and (min-height: 640px) {
-    html, body { height: 100%; }
-    body { display: flex; flex-direction: column; overflow: hidden; font-size: 14px; }
-    .topbar-inner { height: 46px; }
-    main.wrap { flex: 1; min-height: 0; width: 100%; display: flex; flex-direction: column; padding-bottom: 8px; }
-    #dashboard-tab.active { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-    #analytics-tab.active { flex: 1; min-height: 0; overflow-y: auto; display: block; }
-    .page-title { display: none; } /* Ẩn bớt tiêu đề lớn để nhường chỗ tối đa cho danh sách */
-    .stat { padding: 6px 12px; }
-    .stat-value { font-size: 1.25rem; line-height: 1.2; }
-    .skills-line { margin: 6px 0; }
-    .filters { margin-bottom: 8px; padding: 8px 12px; }
-    .quick { margin-top: 5px; }
-    .columns { flex: 1; min-height: 0; align-items: stretch; grid-template-rows: minmax(0, 1fr); gap: 12px; }
-    .list-col { display: flex; flex-direction: column; min-height: 0; }
-    .jobs-list { flex: 1; min-height: 0; overflow-y: auto; }
-    .list-head, .pager { flex: none; }
-    .detail-col { position: static; max-height: none; height: 100%; min-height: 0; }
-    .foot { display: none; }
+/* ---------- Desktop: cuộn trang tự nhiên, cột chi tiết dính theo màn hình ---------- */
+@media (min-width: 961px) {
+    .columns {
+        grid-template-columns: 460px 1fr;
+        gap: 18px;
+        align-items: start;
+    }
+    .detail-col {
+        position: sticky;
+        top: 16px;
+        max-height: calc(100vh - 32px);
+        overflow-y: auto;
+    }
 }
+
