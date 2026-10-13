@@ -207,12 +207,16 @@ function renderKPIs(d) {
     setText("stat-fresher-jobs", fmt(d.fresher_jobs));
 
     const box = $("stat-top-skills");
-    if (box && Array.isArray(d.top_skills)) {
+    const skillsLine = document.querySelector(".skills-line");
+    if (box && Array.isArray(d.top_skills) && d.top_skills.length > 0) {
+        if (skillsLine) skillsLine.style.display = "";
         box.innerHTML = d.top_skills.slice(0, 10).map(s => {
             const name = typeof s === "object" ? s.name : s;
             const count = typeof s === "object" ? s.count : null;
             return '<span class="tag">' + esc(name) + (count ? "<b>" + fmt(count) + "</b>" : "") + "</span>";
         }).join("");
+    } else {
+        if (skillsLine) skillsLine.style.display = "none";
     }
 }
 
@@ -301,9 +305,18 @@ function applyJobs(d, search, container) {
     const page = d.page || currentPage;
     totalPages = d.total_pages || Math.max(1, Math.ceil(total / pageSize));
 
-    setText("results-count", fmt(total) + " kết quả");
+    setText("results-count", fmt(total) + " việc làm");
     renderJobs(jobs, container, search);
     renderPager(page, totalPages);
+
+    // Tự động kích hoạt tin đầu tiên nếu chưa chọn tin nào
+    if (jobs.length > 0) {
+        const firstCard = container.querySelector(".job-card");
+        if (firstCard && firstCard.dataset.id) {
+            firstCard.classList.add("active");
+            loadJobDetail(firstCard.dataset.id);
+        }
+    }
 }
 
 function renderJobs(jobs, container, query) {
@@ -318,16 +331,27 @@ function renderJobs(jobs, container, query) {
         const title = job.title_clean || job.job_title || "Không có tiêu đề";
         const company = job.company_display_name || job.company_name || "";
         const ago = timeAgo(job.last_seen_at || job.crawled_at);
-        const meta = [job.location_clean || "Hà Nội", job.salary_raw || "Thỏa thuận", job.experience_raw || "Không yêu cầu"];
+        const loc = job.location_clean || "Hà Nội";
+        const salary = job.salary_raw || "Thỏa thuận";
+        const exp = job.experience_raw || "Không yêu cầu";
+        const isNegotiable = !job.salary_raw || /thỏa thuận|thoả thuận|negotiable/i.test(job.salary_raw);
         const id = job.job_id || job.id;
 
         return '<div class="job-card' + (dl.expired ? " is-expired" : "") + '" data-id="' + esc(id) + '">' +
             '<div class="job-title">' + highlight(title, query) + "</div>" +
             (company ? '<div class="job-company">' + highlight(company, query) + "</div>" : "") +
-            '<div class="job-meta">' + meta.map(esc).join(" · ") + "</div>" +
-            '<div class="job-foot"><span><span class="' + dl.cls + '">' + esc(dl.text) + "</span>" +
-            (ago ? " · " + esc(ago) : "") + "</span>" +
-            '<span class="src">' + esc(job.source_name || "") + "</span></div>" +
+            '<div class="job-badges">' +
+                '<span class="badge-salary' + (isNegotiable ? " is-negotiable" : "") + '">' + esc(salary) + "</span>" +
+                '<span class="badge-tag">' + esc(loc) + "</span>" +
+                '<span class="badge-tag">' + esc(exp) + "</span>" +
+            "</div>" +
+            '<div class="job-foot">' +
+                '<div class="job-time">' +
+                    '<span class="' + dl.cls + '">' + esc(dl.text) + "</span>" +
+                    (ago ? '<span class="time-dot">&bull;</span><span class="time-ago">' + esc(ago) + "</span>" : "") +
+                "</div>" +
+                (job.source_name ? '<span class="badge-src">' + esc(job.source_name) + "</span>" : "") +
+            "</div>" +
             "</div>";
     }).join("");
 
@@ -410,22 +434,29 @@ async function loadJobDetail(jobId) {
         const ago = timeAgo(job.last_seen_at || job.crawled_at);
 
         pane.innerHTML =
-            '<div class="detail-title">' + esc(job.title_clean || "Không có tiêu đề") + "</div>" +
-            '<div class="detail-company">' + esc(job.company_name || "") + "</div>" +
-            '<div class="note ' + noteCls + '">' + esc(noteText) + "</div>" +
-            '<dl class="info">' +
-                "<dt>Địa điểm</dt><dd>" + esc(job.location_clean || "Hà Nội") + "</dd>" +
-                "<dt>Mức lương</dt><dd>" + esc(job.salary_raw || "Thỏa thuận") + "</dd>" +
-                "<dt>Kinh nghiệm</dt><dd>" + esc(exp) + "</dd>" +
-                "<dt>Nguồn</dt><dd>" + esc(job.source_name || "") + "</dd>" +
-                "<dt>Cập nhật</dt><dd>" + esc(ago || "gần đây") + "</dd>" +
-                "<dt>Hạn nộp</dt><dd>" + esc(deadlineText) + "</dd>" +
-            "</dl>" +
-            '<div class="detail-desc">' + esc(job.description || "Không có mô tả chi tiết.") + "</div>" +
+            '<div class="detail-header">' +
+                '<h2 class="detail-title">' + esc(job.title_clean || "Không có tiêu đề") + "</h2>" +
+                '<div class="detail-company">' + esc(job.company_name || "") + "</div>" +
+            "</div>" +
+            '<div class="detail-note ' + noteCls + '">' + esc(noteText) + "</div>" +
+            '<div class="detail-grid">' +
+                '<div class="detail-grid-item"><span class="grid-lbl">Mức lương</span><span class="grid-val val-salary">' + esc(job.salary_raw || "Thỏa thuận") + "</span></div>" +
+                '<div class="detail-grid-item"><span class="grid-lbl">Địa điểm</span><span class="grid-val">' + esc(job.location_clean || "Hà Nội") + "</span></div>" +
+                '<div class="detail-grid-item"><span class="grid-lbl">Kinh nghiệm</span><span class="grid-val">' + esc(exp) + "</span></div>" +
+                '<div class="detail-grid-item"><span class="grid-lbl">Nguồn tin</span><span class="grid-val">' + esc(job.source_name || "") + "</span></div>" +
+                '<div class="detail-grid-item"><span class="grid-lbl">Cập nhật</span><span class="grid-val">' + esc(ago || "gần đây") + "</span></div>" +
+                '<div class="detail-grid-item"><span class="grid-lbl">Hạn nộp</span><span class="grid-val">' + esc(deadlineText) + "</span></div>" +
+            "</div>" +
             (job.canonical_url
-                ? '<a class="apply' + (dl.expired ? " old" : "") + '" href="' + esc(job.canonical_url) + '" target="_blank" rel="noopener">' +
-                  (dl.expired ? "Xem tin gốc (đã hết hạn)" : "Xem tin gốc / ứng tuyển") + "</a>"
-                : "");
+                ? '<div class="detail-actions">' +
+                  '<a class="btn-apply' + (dl.expired ? " is-expired" : "") + '" href="' + esc(job.canonical_url) + '" target="_blank" rel="noopener">' +
+                  (dl.expired ? "Xem tin gốc (đã hết hạn)" : "Ứng tuyển / Xem tin gốc &rarr;") + "</a>" +
+                  "</div>"
+                : "") +
+            '<div class="detail-body">' +
+                '<h3 class="detail-section-title">Mô tả công việc</h3>' +
+                '<div class="detail-desc">' + esc(job.description || "Không có mô tả chi tiết.") + "</div>" +
+            "</div>";
         pane.scrollTop = 0;
         if (!isFit()) pane.scrollIntoView({ block: "start" });
     } catch (err) {
