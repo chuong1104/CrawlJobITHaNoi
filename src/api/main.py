@@ -504,16 +504,58 @@ def get_job_detail(job_id: int):
 def get_skill_stats(top_n: int = Query(default=20, le=50)):
     """
     Thống kê top N kỹ năng phổ biến nhất.
-    Cache 1 tiếng vì query aggregation nặng.
-    """
-    sql = """
-        SELECT skill_name, job_count, demand_rank AS rank
-        FROM dwh.mv_salary_by_skill
-        ORDER BY demand_rank ASC
-        LIMIT :top_n
+    Có fallback đa tầng từ Gold -> Silver -> Keyword extraction.
     """
     try:
-        return {"data": _query(sql, {"top_n": top_n})}
+        rows = []
+        try:
+            sql = """
+                SELECT skill_name, job_count, demand_rank AS rank
+                FROM dwh.mv_salary_by_skill
+                ORDER BY demand_rank ASC
+                LIMIT :top_n
+            """
+            rows = _query(sql, {"top_n": top_n})
+        except Exception:
+            rows = []
+
+        if not rows:
+            try:
+                fallback_sql = """
+                    SELECT s.display_name AS skill_name, COUNT(*) AS job_count,
+                           RANK() OVER (ORDER BY COUNT(*) DESC) AS rank
+                    FROM silver.job_snapshot_skills jss
+                    JOIN silver.skills s ON jss.skill_id = s.skill_id
+                    JOIN silver.job_snapshots js ON jss.snapshot_id = js.snapshot_id
+                    WHERE js.is_current = true
+                    GROUP BY s.display_name
+                    ORDER BY job_count DESC
+                    LIMIT :top_n
+                """
+                rows = _query(fallback_sql, {"top_n": top_n})
+            except Exception:
+                rows = []
+
+        if not rows:
+            try:
+                kw_sql = """
+                    SELECT word AS skill_name, COUNT(*) AS job_count,
+                           RANK() OVER (ORDER BY COUNT(*) DESC) AS rank
+                    FROM (
+                        SELECT regexp_split_to_table(lower(title_clean), '\s+') AS word
+                        FROM silver.job_snapshots
+                        WHERE is_current = true
+                    ) t
+                    WHERE word IN ('python', 'sql', 'react', 'java', 'docker', 'golang', 'devops', 'kubernetes', 'aws', 'javascript', 'php', 'c#', 'c++', 'typescript', 'django', 'node', 'nodejs', 'vue')
+                    GROUP BY word
+                    ORDER BY job_count DESC
+                    LIMIT :top_n
+                """
+                rows = _query(kw_sql, {"top_n": top_n})
+            except Exception:
+                rows = []
+
+        return {"data": rows}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -523,16 +565,37 @@ def get_skill_stats(top_n: int = Query(default=20, le=50)):
 def get_company_stats(top_n: int = Query(default=20, le=100)):
     """
     Thống kê top N công ty đăng tuyển nhiều nhất.
-    """
-    sql = """
-        SELECT company_name, COUNT(*) AS active_job_count, COUNT(*) AS total_job_count
-        FROM dwh.mv_active_jobs_summary
-        GROUP BY company_name
-        ORDER BY active_job_count DESC
-        LIMIT :top_n
+    Có fallback sang silver.companies nếu view gold chưa có.
     """
     try:
-        return {"data": _query(sql, {"top_n": top_n})}
+        rows = []
+        try:
+            sql = """
+                SELECT company_name, COUNT(*) AS active_job_count, COUNT(*) AS total_job_count
+                FROM dwh.mv_active_jobs_summary
+                GROUP BY company_name
+                ORDER BY active_job_count DESC
+                LIMIT :top_n
+            """
+            rows = _query(sql, {"top_n": top_n})
+        except Exception:
+            rows = []
+
+        if not rows:
+            fallback_sql = """
+                SELECT c.display_name AS company_name,
+                       COUNT(CASE WHEN j.is_active = true THEN 1 END) AS active_job_count,
+                       COUNT(*) AS total_job_count
+                FROM silver.jobs j
+                JOIN silver.companies c ON j.company_id = c.company_id
+                WHERE c.display_name NOT IN ('__ANONYMOUS__', 'Công ty ẩn danh')
+                GROUP BY c.display_name
+                ORDER BY active_job_count DESC, total_job_count DESC
+                LIMIT :top_n
+            """
+            rows = _query(fallback_sql, {"top_n": top_n})
+
+        return {"data": rows}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -540,15 +603,59 @@ def get_company_stats(top_n: int = Query(default=20, le=100)):
 @app.get("/stats/locations", tags=["Statistics"])
 @ttl_cache(seconds=3600)
 def get_location_stats(top_n: int = Query(default=10, le=50)):
-    """Thống kê phân bổ job theo địa điểm."""
-    sql = """
-        SELECT location_name, total_jobs AS job_count
-        FROM dwh.mv_jobs_by_location
-        ORDER BY total_jobs DESC
-        LIMIT :top_n
+    """
+    Thống kê phân bổ job theo địa điểm.
+    Có fallback sang silver và text parsing nếu view gold chưa có.
     """
     try:
-        return {"data": _query(sql, {"top_n": top_n})}
+        rows = []
+        try:
+            sql = """
+                SELECT location_name, total_jobs AS job_count
+                FROM dwh.mv_jobs_by_location
+                ORDER BY total_jobs DESC
+                LIMIT :top_n
+            """
+            rows = _query(sql, {"top_n": top_n})
+        except Exception:
+            rows = []
+
+        if not rows:
+            try:
+                sql_silver = """
+                    SELECT loc.display_name AS location_name, COUNT(DISTINCT jsl.snapshot_id) AS job_count
+                    FROM silver.job_snapshot_locations jsl
+                    JOIN silver.locations loc ON jsl.location_id = loc.location_id
+                    JOIN silver.job_snapshots js ON jsl.snapshot_id = js.snapshot_id
+                    WHERE js.is_current = true
+                    GROUP BY loc.display_name
+                    ORDER BY job_count DESC
+                    LIMIT :top_n
+                """
+                rows = _query(sql_silver, {"top_n": top_n})
+            except Exception:
+                rows = []
+
+        if not rows:
+            sql_fallback = """
+                SELECT
+                    CASE 
+                        WHEN s.title_clean ILIKE '%Hồ Chí Minh%' OR s.title_clean ILIKE '%HCM%' OR s.title_clean ILIKE '%HCMC%' OR s.title_clean ILIKE '%Sài Gòn%' THEN 'Hồ Chí Minh'
+                        WHEN s.title_clean ILIKE '%Đà Nẵng%' OR s.title_clean ILIKE '%ĐN%' THEN 'Đà Nẵng'
+                        WHEN s.title_clean ILIKE '%Remote%' OR s.work_mode = 'REMOTE' THEN 'Remote'
+                        ELSE 'Hà Nội'
+                    END AS location_name,
+                    COUNT(*) AS job_count
+                FROM silver.jobs j
+                JOIN silver.job_snapshots s ON j.job_id = s.job_id AND s.is_current = true
+                WHERE j.is_active = true
+                GROUP BY 1
+                ORDER BY job_count DESC
+                LIMIT :top_n
+            """
+            rows = _query(sql_fallback, {"top_n": top_n})
+
+        return {"data": rows}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -664,7 +771,7 @@ def get_kpi_summary():
 def get_salary_by_skill(top_n: int = Query(default=15, le=30)):
     """
     Lương trung bình và lương cao nhất theo kỹ năng.
-    Thử mv_salary_by_skill trước, fallback sang silver layer nếu trống.
+    Thử mv_salary_by_skill trước, fallback sang silver layer và keyword matching nếu trống.
     """
     mv_sql = """
         SELECT
@@ -681,24 +788,70 @@ def get_salary_by_skill(top_n: int = Query(default=15, le=30)):
     silver_sql = """
         SELECT
             s.display_name                              AS skill_name,
-            AVG(f.salary_min_vnd)                      AS avg_salary_min_vnd,
-            MAX(f.salary_max_vnd)                      AS max_salary_max_vnd,
+            ROUND(AVG(NULLIF(js.salary_min, 0)))        AS avg_salary_min_vnd,
+            ROUND(MAX(NULLIF(js.salary_max, 0)))        AS max_salary_max_vnd,
             COUNT(*)                                   AS job_count,
             RANK() OVER (ORDER BY COUNT(*) DESC)       AS demand_rank
         FROM silver.job_snapshot_skills jss
         JOIN silver.skills s  ON jss.skill_id = s.skill_id
         JOIN silver.job_snapshots js ON jss.snapshot_id = js.snapshot_id
-        LEFT JOIN mart_api.latest_jobs_flat f ON f.id = js.job_id AND f.is_current = true
-        WHERE js.is_current = true
+        WHERE js.is_current = true AND (js.salary_min IS NOT NULL OR js.salary_max IS NOT NULL)
         GROUP BY s.display_name
-        HAVING COUNT(*) >= 3
-        ORDER BY job_count DESC
+        HAVING COUNT(*) >= 2
+        ORDER BY avg_salary_min_vnd DESC NULLS LAST
+        LIMIT :top_n
+    """
+    kw_sql = """
+        SELECT
+            skill_name,
+            ROUND(AVG(NULLIF(salary_min, 0))) AS avg_salary_min_vnd,
+            ROUND(MAX(NULLIF(salary_max, 0))) AS max_salary_max_vnd,
+            COUNT(*) AS job_count,
+            RANK() OVER (ORDER BY COUNT(*) DESC) AS demand_rank
+        FROM (
+            SELECT 
+                js.salary_min,
+                js.salary_max,
+                CASE 
+                    WHEN js.title_clean ILIKE '%python%' THEN 'Python'
+                    WHEN js.title_clean ILIKE '%java%' THEN 'Java'
+                    WHEN js.title_clean ILIKE '%react%' THEN 'React'
+                    WHEN js.title_clean ILIKE '%data engineer%' OR js.title_clean ILIKE '%kỹ sư dữ liệu%' THEN 'Data Engineer'
+                    WHEN js.title_clean ILIKE '%data analyst%' OR js.title_clean ILIKE '%phân tích dữ liệu%' THEN 'Data Analyst'
+                    WHEN js.title_clean ILIKE '%backend%' THEN 'Backend'
+                    WHEN js.title_clean ILIKE '%frontend%' THEN 'Frontend'
+                    WHEN js.title_clean ILIKE '%devops%' THEN 'DevOps'
+                    WHEN js.title_clean ILIKE '%ai%' OR js.title_clean ILIKE '%machine learning%' THEN 'AI / ML'
+                    WHEN js.title_clean ILIKE '%cloud%' OR js.title_clean ILIKE '%aws%' THEN 'Cloud / AWS'
+                    WHEN js.title_clean ILIKE '%fullstack%' OR js.title_clean ILIKE '%full stack%' THEN 'Fullstack'
+                    WHEN js.title_clean ILIKE '%golang%' OR js.title_clean ILIKE '%go%' THEN 'Golang'
+                    WHEN js.title_clean ILIKE '%qa%' OR js.title_clean ILIKE '%tester%' OR js.title_clean ILIKE '%qc%' THEN 'QA / Tester'
+                    ELSE NULL
+                END AS skill_name
+            FROM silver.job_snapshots js
+            WHERE js.is_current = true AND (js.salary_min IS NOT NULL OR js.salary_max IS NOT NULL)
+        ) t
+        WHERE skill_name IS NOT NULL
+        GROUP BY skill_name
+        ORDER BY avg_salary_min_vnd DESC NULLS LAST
         LIMIT :top_n
     """
     try:
-        rows = _query(mv_sql, {"top_n": top_n})
+        rows = []
+        try:
+            rows = _query(mv_sql, {"top_n": top_n})
+        except Exception:
+            rows = []
         if not rows:
-            rows = _query(silver_sql, {"top_n": top_n})
+            try:
+                rows = _query(silver_sql, {"top_n": top_n})
+            except Exception:
+                rows = []
+        if not rows:
+            try:
+                rows = _query(kw_sql, {"top_n": top_n})
+            except Exception:
+                rows = []
         return rows
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

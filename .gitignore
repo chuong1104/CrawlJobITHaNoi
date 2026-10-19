@@ -113,3 +113,4 @@ dbt_jobitvn/data/
 # Scratch / Temp
 # =========================
 scratch/
+docs/INTERVIEW_PREPARATION_GUIDE.md

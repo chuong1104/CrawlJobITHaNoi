@@ -10,6 +10,7 @@ let requestSeq = 0; // bỏ qua phản hồi cũ khi người dùng gõ/lọc nh
 const salaryChart = { inst: null };
 const locationChart = { inst: null };
 const skillsChart = { inst: null };
+const companyChart = { inst: null };
 
 // Cache trong bộ nhớ (60s) để chuyển trang đã xem không phải gọi lại API
 const ramCache = new Map();
@@ -130,9 +131,29 @@ document.addEventListener("DOMContentLoaded", () => {
             const tab = $(target);
             tab.classList.remove("hidden");
             tab.classList.add("active");
-            if (target === "analytics-tab") loadAnalytics();
+            if (target === "analytics-tab") {
+                setTimeout(() => loadAnalytics(), 40);
+            }
         });
     });
+
+    // Nút chuyển nhanh sang tab Thống kê từ trang chủ
+    const gotoBadge = $("goto-analytics-badge");
+    if (gotoBadge) {
+        gotoBadge.addEventListener("click", e => {
+            e.preventDefault();
+            const analyticsLink = document.querySelector('.nav-link[data-target="analytics-tab"]');
+            if (analyticsLink) analyticsLink.click();
+        });
+    }
+
+    // Nút làm mới biểu đồ
+    const refreshBtn = $("refresh-charts-btn");
+    if (refreshBtn) {
+        refreshBtn.addEventListener("click", () => {
+            loadAnalytics(true);
+        });
+    }
 
     // Bật/tắt bộ lọc
     $("toggle-filter-btn").addEventListener("click", () => {
@@ -490,7 +511,7 @@ async function loadJobDetail(jobId) {
     }
 }
 
-// ---------- Thống kê (Chart.js chỉ tải khi mở tab này) ----------
+// ---------- Thống kê (Chart.js và biểu đồ) ----------
 let chartLibPromise = null;
 function ensureChartLib() {
     if (window.Chart) return Promise.resolve();
@@ -506,91 +527,275 @@ function ensureChartLib() {
     return chartLibPromise;
 }
 
-async function loadAnalytics() {
+function setChartStatus(canvasId, htmlContent) {
+    const statusEl = $("status-" + canvasId);
+    const canvasEl = $(canvasId);
+    if (!statusEl) return;
+    if (htmlContent) {
+        statusEl.innerHTML = htmlContent;
+        statusEl.style.display = "flex";
+        if (canvasEl) canvasEl.style.display = "none";
+    } else {
+        statusEl.innerHTML = "";
+        statusEl.style.display = "none";
+        if (canvasEl) canvasEl.style.display = "block";
+    }
+}
+
+const GRID = { color: "#f1f5f9" };
+const PALETTE = ["#1e5ba3", "#059669", "#d97706", "#7c3aed", "#db2777", "#0284c7", "#ca8a04", "#64748b"];
+
+let isAnalyticsLoaded = false;
+async function loadAnalytics(force = false) {
+    if (isAnalyticsLoaded && !force) return;
+
     try {
         await ensureChartLib();
     } catch (e) {
-        console.error(e);
+        console.error("Lỗi tải thư viện Chart.js:", e);
+        ["salaryChart", "skillsChart", "locationChart", "companyChart"].forEach(id => {
+            setChartStatus(id, '<p>Không thể tải thư viện biểu đồ (Chart.js). Vui lòng kiểm tra kết nối mạng.</p>');
+        });
         return;
     }
-    Chart.defaults.color = "#6a6a64";
-    Chart.defaults.font.family = '"Segoe UI", Tahoma, Arial, sans-serif';
-    Chart.defaults.font.size = 12;
-    Chart.defaults.animation = false;
 
-    await Promise.all([drawSalary(), drawLocation(), drawSkills()]);
+    Chart.defaults.color = "#475569";
+    Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+    Chart.defaults.font.size = 12;
+
+    // Hiển thị trạng thái đang tải
+    ["salaryChart", "skillsChart", "locationChart", "companyChart"].forEach(id => {
+        setChartStatus(id, '<div class="chart-spinner"></div><div class="chart-status-text">Đang tải dữ liệu biểu đồ...</div>');
+    });
+
+    await Promise.allSettled([
+        drawSalary(),
+        drawSkills(),
+        drawLocation(),
+        drawCompany(),
+    ]);
+    isAnalyticsLoaded = true;
 }
 
-const GRID = { color: "#e6e6e1" };
-const PALETTE = ["#1f5f9e", "#c9772b", "#4f8a5b", "#8a5a9e", "#b8453f", "#5f8aa8", "#a89a3a", "#7a7a72"];
-
 async function drawSalary() {
+    const canvasId = "salaryChart";
     try {
-        const res = await fetch(API_URL + "/stats/salary-by-skill");
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!Array.isArray(data)) return;
+        const res = await fetch(API_URL + "/stats/salary-by-skill?top_n=15");
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const raw = await res.json();
+        const data = Array.isArray(raw) ? raw : (Array.isArray(raw.data) ? raw.data : []);
+
+        if (!data.length) {
+            setChartStatus(canvasId, '<p class="chart-empty-text">Chưa có đủ dữ liệu lương theo kỹ năng.</p>');
+            return;
+        }
+
+        setChartStatus(canvasId, null);
         if (salaryChart.inst) salaryChart.inst.destroy();
 
-        salaryChart.inst = new Chart($("salaryChart").getContext("2d"), {
+        const labels = data.map(d => d.skill_name);
+        const minSalaries = data.map(d => {
+            const v = parseFloat(d.avg_salary_min_vnd || d.avg_salary || 0);
+            return v > 0 ? +(v / 1e6).toFixed(1) : 0;
+        });
+        const maxSalaries = data.map(d => {
+            const v = parseFloat(d.max_salary_max_vnd || d.max_salary || 0);
+            return v > 0 ? +(v / 1e6).toFixed(1) : 0;
+        });
+
+        salaryChart.inst = new Chart($(canvasId).getContext("2d"), {
             type: "bar",
             data: {
-                labels: data.map(d => d.skill_name),
+                labels: labels,
                 datasets: [
-                    { label: "Lương thấp nhất TB", data: data.map(d => (d.avg_salary_min_vnd || 0) / 1e6), backgroundColor: "#1f5f9e" },
-                    { label: "Lương cao nhất", data: data.map(d => (d.max_salary_max_vnd || 0) / 1e6), backgroundColor: "#a9bfd6" },
+                    {
+                        label: "Lương tối thiểu TB (triệu)",
+                        data: minSalaries,
+                        backgroundColor: "#1e5ba3",
+                        borderRadius: 4,
+                    },
+                    {
+                        label: "Lương tối đa (triệu)",
+                        data: maxSalaries,
+                        backgroundColor: "#93c5fd",
+                        borderRadius: 4,
+                    },
                 ],
             },
             options: {
-                responsive: true, maintainAspectRatio: false,
-                plugins: { tooltip: { callbacks: { label: c => " " + c.dataset.label + ": " + c.parsed.y.toFixed(1) + " triệu" } } },
-                scales: { x: { grid: GRID, ticks: { maxRotation: 35 } }, y: { beginAtZero: true, grid: GRID } },
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    tooltip: {
+                        callbacks: {
+                            label: c => " " + c.dataset.label + ": " + c.parsed.y + " triệu VNĐ"
+                        }
+                    },
+                    legend: { position: "top" }
+                },
+                scales: {
+                    x: { grid: GRID, ticks: { maxRotation: 35 } },
+                    y: {
+                        beginAtZero: true,
+                        grid: GRID,
+                        title: { display: true, text: "Triệu VNĐ / tháng" }
+                    }
+                },
             },
         });
-    } catch (err) { console.error("Salary chart error:", err); }
-}
-
-async function drawLocation() {
-    try {
-        const res = await fetch(API_URL + "/stats/locations?top_n=8");
-        if (!res.ok) return;
-        const body = await res.json();
-        const data = Array.isArray(body.data) ? body.data : (Array.isArray(body) ? body : []);
-        if (!data.length) return;
-        if (locationChart.inst) locationChart.inst.destroy();
-
-        locationChart.inst = new Chart($("locationChart").getContext("2d"), {
-            type: "doughnut",
-            data: {
-                labels: data.map(d => d.location_name),
-                datasets: [{ data: data.map(d => d.job_count), backgroundColor: PALETTE, borderColor: "#fff", borderWidth: 2 }],
-            },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "right" } } },
-        });
-    } catch (err) { console.error("Location chart error:", err); }
+    } catch (err) {
+        console.error("Salary chart error:", err);
+        setChartStatus(canvasId, '<p class="chart-empty-text">Không tải được biểu đồ lương. Vui lòng bấm "Làm mới dữ liệu".</p>');
+    }
 }
 
 async function drawSkills() {
+    const canvasId = "skillsChart";
     try {
-        const res = await fetch(API_URL + "/stats/skills?top_n=15");
-        if (!res.ok) return;
-        const body = await res.json();
-        const data = Array.isArray(body.data) ? body.data : (Array.isArray(body) ? body : []);
-        if (!data.length) return;
+        const res = await fetch(API_URL + "/stats/skills?top_n=12");
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const raw = await res.json();
+        const data = Array.isArray(raw.data) ? raw.data : (Array.isArray(raw) ? raw : []);
+
+        if (!data.length) {
+            setChartStatus(canvasId, '<p class="chart-empty-text">Chưa có dữ liệu kỹ năng.</p>');
+            return;
+        }
+
+        setChartStatus(canvasId, null);
         if (skillsChart.inst) skillsChart.inst.destroy();
 
-        skillsChart.inst = new Chart($("skillsChart").getContext("2d"), {
+        skillsChart.inst = new Chart($(canvasId).getContext("2d"), {
             type: "bar",
             data: {
                 labels: data.map(d => d.skill_name),
-                datasets: [{ label: "Số tin yêu cầu", data: data.map(d => d.job_count), backgroundColor: "#1f5f9e" }],
+                datasets: [{
+                    label: "Số tin tuyển dụng",
+                    data: data.map(d => parseInt(d.job_count, 10) || 0),
+                    backgroundColor: "#2563eb",
+                    borderRadius: 4,
+                }],
             },
             options: {
                 indexAxis: "y",
-                responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: { x: { grid: GRID, beginAtZero: true }, y: { grid: { display: false } } },
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: c => " " + c.parsed.x + " việc làm yêu cầu"
+                        }
+                    }
+                },
+                scales: {
+                    x: { beginAtZero: true, grid: GRID },
+                    y: { grid: { display: false } }
+                },
             },
         });
-    } catch (err) { console.error("Skills chart error:", err); }
+    } catch (err) {
+        console.error("Skills chart error:", err);
+        setChartStatus(canvasId, '<p class="chart-empty-text">Không tải được dữ liệu kỹ năng.</p>');
+    }
+}
+
+async function drawLocation() {
+    const canvasId = "locationChart";
+    try {
+        const res = await fetch(API_URL + "/stats/locations?top_n=6");
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const raw = await res.json();
+        const data = Array.isArray(raw.data) ? raw.data : (Array.isArray(raw) ? raw : []);
+
+        if (!data.length) {
+            setChartStatus(canvasId, '<p class="chart-empty-text">Chưa có dữ liệu địa điểm.</p>');
+            return;
+        }
+
+        setChartStatus(canvasId, null);
+        if (locationChart.inst) locationChart.inst.destroy();
+
+        locationChart.inst = new Chart($(canvasId).getContext("2d"), {
+            type: "doughnut",
+            data: {
+                labels: data.map(d => d.location_name),
+                datasets: [{
+                    data: data.map(d => parseInt(d.job_count, 10) || 0),
+                    backgroundColor: PALETTE,
+                    borderColor: "#fff",
+                    borderWidth: 2,
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: "right" },
+                    tooltip: {
+                        callbacks: {
+                            label: c => " " + c.label + ": " + c.raw + " việc làm"
+                        }
+                    }
+                },
+            },
+        });
+    } catch (err) {
+        console.error("Location chart error:", err);
+        setChartStatus(canvasId, '<p class="chart-empty-text">Không tải được phân bổ địa điểm.</p>');
+    }
+}
+
+async function drawCompany() {
+    const canvasId = "companyChart";
+    try {
+        const res = await fetch(API_URL + "/stats/companies?top_n=10");
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const raw = await res.json();
+        const data = Array.isArray(raw.data) ? raw.data : (Array.isArray(raw) ? raw : []);
+
+        if (!data.length) {
+            setChartStatus(canvasId, '<p class="chart-empty-text">Chưa có dữ liệu công ty tuyển dụng.</p>');
+            return;
+        }
+
+        setChartStatus(canvasId, null);
+        if (companyChart.inst) companyChart.inst.destroy();
+
+        companyChart.inst = new Chart($(canvasId).getContext("2d"), {
+            type: "bar",
+            data: {
+                labels: data.map(d => {
+                    const name = d.company_name || "";
+                    return name.length > 25 ? name.substring(0, 22) + "…" : name;
+                }),
+                datasets: [{
+                    label: "Số việc đang mở",
+                    data: data.map(d => parseInt(d.active_job_count || d.total_job_count, 10) || 0),
+                    backgroundColor: "#059669",
+                    borderRadius: 4,
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            title: items => items[0] ? data[items[0].dataIndex].company_name : "",
+                            label: c => " " + c.parsed.y + " vị trí đang tuyển"
+                        }
+                    }
+                },
+                scales: {
+                    x: { grid: GRID, ticks: { maxRotation: 25 } },
+                    y: { beginAtZero: true, grid: GRID }
+                },
+            },
+        });
+    } catch (err) {
+        console.error("Company chart error:", err);
+        setChartStatus(canvasId, '<p class="chart-empty-text">Không tải được dữ liệu công ty.</p>');
+    }
 }

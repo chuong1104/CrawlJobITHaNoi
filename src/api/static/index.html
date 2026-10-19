@@ -5,7 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>JobITVN - Việc làm IT tại Việt Nam</title>
     <meta name="description" content="Tổng hợp và thống kê tin tuyển dụng IT tại Việt Nam từ TopCV, LinkedIn, ITviec, VietnamWorks và các nguồn khác.">
-    <link rel="stylesheet" href="styles.css?v=12">
+    <link rel="stylesheet" href="styles.css?v=13">
+    <!-- Chart.js nạp sẵn để hiển thị biểu đồ tức thì -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <header class="topbar">
@@ -57,6 +59,7 @@
             <section class="skills-line">
                 <span class="skills-title">Kỹ năng nhiều nhất:</span>
                 <span id="stat-top-skills" class="tags"></span>
+                <a href="#" class="view-analytics-badge" id="goto-analytics-badge" title="Xem biểu đồ phân tích thị trường">📊 Xem biểu đồ thị trường &rarr;</a>
             </section>
 
             <section class="filters" id="filter-section">
@@ -181,28 +184,65 @@
 
         <!-- ===== Tab: Thống kê ===== -->
         <div id="analytics-tab" class="tab-content hidden">
-            <h1 class="page-title">Thống kê lương và kỹ năng</h1>
+            <div class="analytics-header">
+                <div>
+                    <h1 class="page-title">Thống kê thị trường việc làm IT</h1>
+                    <p class="analytics-intro">Phân tích mức lương, nhu cầu kỹ năng công nghệ và phân bổ địa điểm từ dữ liệu tuyển dụng mới nhất.</p>
+                </div>
+                <button type="button" id="refresh-charts-btn" class="btn-main" title="Cập nhật biểu đồ">Làm mới dữ liệu</button>
+            </div>
 
             <section class="chart-box">
-                <h2>Lương theo kỹ năng (triệu VNĐ)</h2>
-                <div class="chart-wrap tall"><canvas id="salaryChart"></canvas></div>
+                <div class="chart-box-header">
+                    <h2>Mức lương theo kỹ năng công nghệ (triệu VNĐ)</h2>
+                    <span class="chart-subtitle">So sánh mức lương trung bình và mức lương trần theo từng kỹ năng</span>
+                </div>
+                <div class="chart-wrap tall">
+                    <div class="chart-status" id="status-salaryChart"></div>
+                    <canvas id="salaryChart"></canvas>
+                </div>
             </section>
+
             <div class="chart-row">
                 <section class="chart-box">
-                    <h2>Phân bổ theo địa điểm</h2>
-                    <div class="chart-wrap"><canvas id="locationChart"></canvas></div>
+                    <div class="chart-box-header">
+                        <h2>Top kỹ năng được săn đón nhất</h2>
+                        <span class="chart-subtitle">Số lượng tin tuyển dụng yêu cầu kỹ năng</span>
+                    </div>
+                    <div class="chart-wrap">
+                        <div class="chart-status" id="status-skillsChart"></div>
+                        <canvas id="skillsChart"></canvas>
+                    </div>
                 </section>
+
                 <section class="chart-box">
-                    <h2>Kỹ năng được yêu cầu nhiều</h2>
-                    <div class="chart-wrap"><canvas id="skillsChart"></canvas></div>
+                    <div class="chart-box-header">
+                        <h2>Phân bổ việc làm theo địa điểm</h2>
+                        <span class="chart-subtitle">Thị phần nhu cầu tuyển dụng theo khu vực</span>
+                    </div>
+                    <div class="chart-wrap">
+                        <div class="chart-status" id="status-locationChart"></div>
+                        <canvas id="locationChart"></canvas>
+                    </div>
                 </section>
             </div>
+
+            <section class="chart-box" style="margin-top: 16px;">
+                <div class="chart-box-header">
+                    <h2>Top doanh nghiệp đang tích cực tuyển dụng</h2>
+                    <span class="chart-subtitle">Các công ty có nhiều vị trí IT đang mở nhất</span>
+                </div>
+                <div class="chart-wrap">
+                    <div class="chart-status" id="status-companyChart"></div>
+                    <canvas id="companyChart"></canvas>
+                </div>
+            </section>
         </div>
 
     </main>
 
     <footer class="foot wrap">Dữ liệu thu thập tự động từ các trang tuyển dụng.</footer>
 
-    <script src="app.js?v=12"></script>
+    <script src="app.js?v=13"></script>
 </body>
 </html>
