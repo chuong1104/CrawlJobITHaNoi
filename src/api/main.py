@@ -978,25 +978,48 @@ def get_salary_by_experience():
         ORDER BY exp_sort_key NULLS LAST
     """
     silver_sql = """
+        WITH cleaned_jobs AS (
+            SELECT
+                j.job_id,
+                js.title_clean,
+                js.salary_min,
+                js.salary_max,
+                -- Lọc outlier: Số năm kinh nghiệm > 10 năm trong tin tuyển dụng IT thường là do
+                -- bóc tách nhầm tuổi đời thành lập của công ty (VD: MCBooks 15 năm, Viglacera 30 năm...)
+                -- Hoặc các vị trí helpdesk, support, thực tập bị bóc nhầm >= 3 năm kinh nghiệm
+                CASE
+                    WHEN js.experience_min_years IS NULL OR js.experience_min_years < 0 THEN NULL
+                    WHEN js.experience_min_years > 10 THEN NULL
+                    WHEN LOWER(js.title_clean) ~* '(helpdesk|support|cskh|thực tập|intern)' AND js.experience_min_years >= 3 THEN NULL
+                    ELSE js.experience_min_years
+                END AS exp_years
+            FROM silver.jobs j
+            JOIN silver.job_snapshots js ON j.job_id = js.job_id AND js.is_current = true
+            WHERE j.is_active = true
+        )
         SELECT
             CASE
-                WHEN js.experience_min_years IS NULL OR js.experience_min_years < 0 THEN 'Chưa rõ kinh nghiệm'
-                WHEN js.experience_min_years = 0 THEN 'Fresher (0 năm)'
-                WHEN js.experience_min_years <= 1 THEN 'Junior (≤1 năm)'
-                WHEN js.experience_min_years <= 3 THEN 'Mid (1-3 năm)'
-                WHEN js.experience_min_years <= 5 THEN 'Senior (3-5 năm)'
-                WHEN js.experience_min_years <= 8 THEN 'Lead (5-8 năm)'
-                ELSE 'Expert (>8 năm)'
+                WHEN exp_years IS NULL THEN 'Chưa rõ kinh nghiệm'
+                WHEN exp_years = 0 THEN 'Fresher (0 năm)'
+                WHEN exp_years <= 1 THEN 'Junior (≤1 năm)'
+                WHEN exp_years <= 3 THEN 'Mid (1-3 năm)'
+                WHEN exp_years <= 5 THEN 'Senior (3-5 năm)'
+                ELSE 'Lead / Expert (>5 năm)'
             END AS experience_band,
-            MIN(COALESCE(js.experience_min_years, 99)) AS sort_key,
-            COUNT(DISTINCT j.job_id) AS total_jobs,
-            ROUND(AVG(NULLIF(js.salary_min, 0))) AS avg_salary_min_vnd,
-            ROUND(AVG(NULLIF(js.salary_max, 0))) AS avg_salary_max_vnd,
-            ROUND(MAX(NULLIF(js.salary_max, 0))) AS max_salary_vnd
-        FROM silver.jobs j
-        JOIN silver.job_snapshots js ON j.job_id = js.job_id AND js.is_current = true
-        WHERE j.is_active = true
-        GROUP BY 1
+            CASE
+                WHEN exp_years IS NULL THEN 99
+                WHEN exp_years = 0 THEN 0
+                WHEN exp_years <= 1 THEN 1
+                WHEN exp_years <= 3 THEN 2
+                WHEN exp_years <= 5 THEN 3
+                ELSE 4
+            END AS sort_key,
+            COUNT(DISTINCT job_id) AS total_jobs,
+            ROUND(AVG(NULLIF(salary_min, 0))) AS avg_salary_min_vnd,
+            ROUND(AVG(NULLIF(salary_max, 0))) AS avg_salary_max_vnd,
+            ROUND(MAX(NULLIF(salary_max, 0))) AS max_salary_vnd
+        FROM cleaned_jobs
+        GROUP BY 1, 2
         ORDER BY sort_key ASC
     """
     try:

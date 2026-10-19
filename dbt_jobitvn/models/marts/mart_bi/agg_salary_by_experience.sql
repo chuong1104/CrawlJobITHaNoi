@@ -19,15 +19,14 @@ WITH base AS (
         salary_max,
         salary_currency,
         has_salary,
-        -- Xếp nhóm kinh nghiệm (dùng min_years là cơ sở)
+        -- Xếp nhóm kinh nghiệm (dùng min_years là cơ sở, lọc outlier > 10 năm do dính năm thành lập cty)
         CASE
-            WHEN experience_min_years IS NULL                   THEN 'Không xác định'
+            WHEN experience_min_years IS NULL OR experience_min_years > 10 THEN 'Không xác định'
             WHEN experience_min_years = 0                       THEN '0. Fresher (0 năm)'
             WHEN experience_min_years <= 1                      THEN '1. Junior (≤1 năm)'
             WHEN experience_min_years <= 3                      THEN '2. Mid (1-3 năm)'
             WHEN experience_min_years <= 5                      THEN '3. Senior (3-5 năm)'
-            WHEN experience_min_years <= 8                      THEN '4. Lead (5-8 năm)'
-            ELSE                                                     '5. Expert (>8 năm)'
+            ELSE                                                     '4. Lead / Expert (>5 năm)'
         END AS experience_band,
         experience_min_years AS exp_sort_key
     FROM {{ ref('fct_job_posting') }}
