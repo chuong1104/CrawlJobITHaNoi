@@ -148,11 +148,14 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    // Nút làm mới biểu đồ
+    // Nút làm mới biểu đồ và dữ liệu toàn trang
     const refreshBtn = $("refresh-charts-btn");
     if (refreshBtn) {
         refreshBtn.addEventListener("click", () => {
+            try { sessionStorage.removeItem("jobitvn_jobs_p1"); } catch (_) {}
             loadAnalytics(true);
+            currentPage = 1;
+            loadJobs();
         });
     }
 
