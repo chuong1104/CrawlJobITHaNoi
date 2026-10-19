@@ -288,17 +288,69 @@ def get_jobs(
 
     if search:
         search = search.strip()
+        search_lower = search.lower()
+
+        # Mapping các từ khóa tương đương tiếng Việt / tiếng Anh và Job Family
+        synonyms = []
+        if any(k in search_lower for k in ("data engineer", "kỹ sư dữ liệu", "ky su du lieu", "data engineering", "big data")):
+            synonyms.extend(["%data engineer%", "%kỹ sư dữ liệu%", "%ky su du lieu%", "%big data%", "%data pipeline%", "%etl%"])
+        elif any(k in search_lower for k in ("data analyst", "phân tích dữ liệu", "phan tich du lieu", "bi analyst")):
+            synonyms.extend(["%data analyst%", "%phân tích dữ liệu%", "%bi developer%", "%power bi%"])
+        elif any(k in search_lower for k in ("ai engineer", "kỹ sư ai", "machine learning", "trí tuệ nhân tạo")):
+            synonyms.extend(["%ai engineer%", "%machine learning%", "%kỹ sư ai%", "%trí tuệ nhân tạo%"])
+        elif any(k in search_lower for k in ("frontend", "front-end", "front end", "react")):
+            synonyms.extend(["%frontend%", "%front-end%", "%react%", "%vue%"])
+        elif any(k in search_lower for k in ("backend", "back-end", "back end")):
+            synonyms.extend(["%backend%", "%back-end%", "%java%", "%golang%", "%nodejs%"])
+
+        search_clauses = []
+
+        # 1. Khớp cụm từ tìm kiếm đầy đủ trên title_clean, title_raw, company, job_family, skills và description
+        family_clean = search_lower.replace(" ", "_").upper()
+        params["full_search"] = f"%{search}%"
+        params["family_search"] = f"%{family_clean}%"
+
+        main_phrase_cond = """(
+            s.title_clean ILIKE :full_search
+            OR COALESCE(s.title_raw, '') ILIKE :full_search
+            OR c.display_name ILIKE :full_search
+            OR COALESCE(s.job_family::text, '') ILIKE :family_search
+            OR COALESCE(s.description, '') ILIKE :full_search
+            OR EXISTS (
+                SELECT 1 FROM silver.job_snapshot_skills jss
+                JOIN silver.skills sk ON jss.skill_id = sk.skill_id
+                WHERE jss.snapshot_id = s.snapshot_id AND sk.display_name ILIKE :full_search
+            )
+        )"""
+        search_clauses.append(main_phrase_cond)
+
+        # 2. Khớp các từ đồng nghĩa (synonyms) nếu có
+        for idx, syn in enumerate(synonyms):
+            syn_key = f"syn_{idx}"
+            params[syn_key] = syn
+            search_clauses.append(f"(s.title_clean ILIKE :{syn_key} OR COALESCE(s.title_raw, '') ILIKE :{syn_key} OR COALESCE(s.job_family::text, '') ILIKE :{syn_key})")
+
+        # 3. Khớp từng token đơn lẻ (AND các token lại với nhau)
         tokens = [t for t in search.split() if len(t) >= 1]
         if len(tokens) > 1:
-            term_clauses = []
+            token_and_clauses = []
             for i, token in enumerate(tokens):
                 key = f"token_{i}"
-                term_clauses.append(f"(s.title_clean ILIKE :{key} OR c.display_name ILIKE :{key})")
                 params[key] = f"%{token}%"
-            base_sql += " AND (" + " AND ".join(term_clauses) + ")"
-        else:
-            base_sql += " AND (s.title_clean ILIKE :search OR c.display_name ILIKE :search)"
-            params["search"] = f"%{search}%"
+                token_and_clauses.append(f"""(
+                    s.title_clean ILIKE :{key} 
+                    OR COALESCE(s.title_raw, '') ILIKE :{key} 
+                    OR c.display_name ILIKE :{key}
+                    OR COALESCE(s.job_family::text, '') ILIKE :{key}
+                    OR EXISTS (
+                        SELECT 1 FROM silver.job_snapshot_skills jss
+                        JOIN silver.skills sk ON jss.skill_id = sk.skill_id
+                        WHERE jss.snapshot_id = s.snapshot_id AND sk.display_name ILIKE :{key}
+                    )
+                )""")
+            search_clauses.append("(" + " AND ".join(token_and_clauses) + ")")
+
+        base_sql += " AND (" + " OR ".join(search_clauses) + ")"
 
     if location:
         if location in ("Hà Nội", "ha_noi"):

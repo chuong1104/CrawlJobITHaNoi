@@ -396,7 +396,7 @@ async function loadJobs() {
     }
 
     // Trang đầu mặc định: hiện bản lưu của lần trước trong lúc chờ API
-    const isDefault = currentPage === 1 && !q.search && q.status === "active" && !q.location &&
+    const isDefault = currentPage === 1 && !q.search && (!q.status || q.status === "active") && !q.location &&
         !q.salary && !q.experience && !q.source && q.sort === "newest" && pageSize === 10;
     let shownStale = false;
     if (isDefault && container.children.length === 0) {
