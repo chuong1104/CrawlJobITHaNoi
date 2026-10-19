@@ -646,6 +646,9 @@ async function loadAnalytics(force = false) {
     if (force) {
         try {
             await fetch(API_URL + "/cache/invalidate");
+            try { localStorage.removeItem("jobitvn_kpis"); } catch (_) {}
+            ramCache.clear();
+            loadKPIs();
         } catch (_) {}
     }
 

@@ -335,6 +335,21 @@ with DAG(
                 cur.execute("CALL dwh.sp_refresh_mart_api();")
                 cur.execute("CALL dwh.sp_refresh_all_materialized_views();")
                 print("PostgreSQL Gold Sync completed successfully.")
+
+                # Tự động gửi tín hiệu xóa cache tới Web API (FastAPI) để giao diện nhận dữ liệu mới ngay
+                try:
+                    import urllib.request
+                    for api_url in ["http://web-api:8000/cache/invalidate", "http://localhost:8000/cache/invalidate"]:
+                        try:
+                            req = urllib.request.Request(api_url, method="POST")
+                            with urllib.request.urlopen(req, timeout=3) as resp:
+                                if resp.status == 200:
+                                    print(f"Successfully invalidated Web API cache at {api_url}")
+                                    break
+                        except Exception:
+                            pass
+                except Exception as e:
+                    print(f"Note: Could not notify Web API to clear cache: {e}")
         finally:
             conn.close()
             
