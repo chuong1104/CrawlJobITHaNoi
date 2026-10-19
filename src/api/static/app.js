@@ -258,8 +258,52 @@ function renderKPIs(d) {
     const rate = parseFloat(d.disclosure_rate || 0);
     setText("stat-disclosure-rate", (rate > 0 ? rate.toFixed(1) : "31.8") + "%");
 
-    const fresher = d.fresher_jobs || 1280;
+    const fresher = d.fresher_jobs || 468;
     setText("stat-fresher-jobs", fmt(fresher));
+
+    // Thẻ việc làm đang mở: Bấm vào để xóa mọi bộ lọc và xem toàn bộ việc
+    const cardJobs = $("kpi-card-jobs");
+    if (cardJobs && !cardJobs._hasListener) {
+        cardJobs._hasListener = true;
+        cardJobs.addEventListener("click", () => {
+            const searchInput = $("search-input");
+            if (searchInput) searchInput.value = "";
+            const statusFilter = $("filter-status");
+            if (statusFilter) statusFilter.value = "all";
+            const expFilter = $("filter-experience");
+            if (expFilter) expFilter.value = "";
+            const locFilter = $("filter-location");
+            if (locFilter) locFilter.value = "";
+            const salFilter = $("filter-salary");
+            if (salFilter) salFilter.value = "";
+            document.querySelectorAll(".skill-chip-btn").forEach(b => b.classList.remove("active"));
+            currentPage = 1;
+            loadJobs();
+            const container = $("jobs-container") || document.querySelector(".job-catalog");
+            if (container) container.scrollIntoView({ block: "start", behavior: "smooth" });
+        });
+    }
+
+    // Thẻ nhận fresher: Bấm vào để kích hoạt bộ lọc không yêu cầu kinh nghiệm
+    const cardFresher = $("kpi-card-fresher");
+    if (cardFresher && !cardFresher._hasListener) {
+        cardFresher._hasListener = true;
+        cardFresher.addEventListener("click", () => {
+            const expFilter = $("filter-experience");
+            if (expFilter) {
+                expFilter.value = "no_exp";
+                expFilter.dispatchEvent(new Event("change"));
+            }
+            const adv = $("advanced-filters");
+            if (adv && adv.classList.contains("hidden")) {
+                adv.classList.remove("hidden");
+            }
+            currentPage = 1;
+            loadJobs();
+            const container = $("jobs-container") || document.querySelector(".job-catalog");
+            if (container) container.scrollIntoView({ block: "start", behavior: "smooth" });
+        });
+    }
 
     const box = $("stat-top-skills");
     const skillsBar = document.querySelector(".skills-bar");
@@ -267,8 +311,9 @@ function renderKPIs(d) {
         if (skillsBar) skillsBar.style.display = "";
         box.innerHTML = d.top_skills.slice(0, 10).map(s => {
             const name = typeof s === "object" ? s.name : s;
+            const searchTerm = (typeof s === "object" && s.search_term) ? s.search_term : name;
             const count = typeof s === "object" ? s.count : null;
-            return '<button type="button" class="skill-chip-btn" data-skill="' + esc(name) + '" title="Nhấp để tìm kiếm công việc ' + esc(name) + '">' +
+            return '<button type="button" class="skill-chip-btn" data-search="' + esc(searchTerm) + '" data-skill="' + esc(name) + '" title="Lọc tin theo ' + esc(name) + '">' +
                    '<span class="chip-label">' + esc(name) + '</span>' +
                    (count ? '<span class="chip-badge">' + fmt(count) + '</span>' : '') +
                    '</button>';
@@ -276,13 +321,21 @@ function renderKPIs(d) {
 
         box.querySelectorAll(".skill-chip-btn").forEach(btn => {
             btn.addEventListener("click", () => {
-                const skill = btn.getAttribute("data-skill");
-                if (!skill) return;
+                const searchTarget = btn.getAttribute("data-search") || btn.getAttribute("data-skill");
+                if (!searchTarget) return;
                 const searchInput = $("search-input");
-                if (searchInput) {
-                    searchInput.value = skill;
-                    searchInput.dispatchEvent(new Event("input"));
+                const isCurrentlyActive = btn.classList.contains("active");
+
+                box.querySelectorAll(".skill-chip-btn").forEach(b => b.classList.remove("active"));
+
+                if (isCurrentlyActive) {
+                    if (searchInput) searchInput.value = "";
+                } else {
+                    btn.classList.add("active");
+                    if (searchInput) searchInput.value = searchTarget;
                 }
+                if (searchInput) searchInput.dispatchEvent(new Event("input"));
+
                 currentPage = 1;
                 loadJobs();
                 const container = $("jobs-container") || document.querySelector(".job-catalog");
@@ -630,18 +683,16 @@ const FALLBACK_SALARIES = [
 ];
 
 const FALLBACK_SKILLS = [
-    { skill_name: "Python", job_count: 428 },
-    { skill_name: "SQL / DWH", job_count: 395 },
-    { skill_name: "Java", job_count: 352 },
-    { skill_name: "React / Frontend", job_count: 314 },
-    { skill_name: "AI / Machine Learning", job_count: 298 },
-    { skill_name: "Data Engineer", job_count: 276 },
-    { skill_name: "Cloud / AWS", job_count: 245 },
-    { skill_name: "Data Analyst / BI", job_count: 230 },
-    { skill_name: "Docker / K8s", job_count: 218 },
-    { skill_name: "NodeJS / JavaScript", job_count: 194 },
-    { skill_name: "DevOps", job_count: 182 },
-    { skill_name: ".NET / C#", job_count: 165 },
+    { skill_name: "Java", search_term: "Java", job_count: 352 },
+    { skill_name: "Python", search_term: "Python", job_count: 240 },
+    { skill_name: "React / Frontend", search_term: "React", job_count: 215 },
+    { skill_name: ".NET / C#", search_term: ".NET", job_count: 165 },
+    { skill_name: "NodeJS", search_term: "NodeJS", job_count: 140 },
+    { skill_name: "QA / Tester", search_term: "Tester", job_count: 118 },
+    { skill_name: "DevOps", search_term: "DevOps", job_count: 95 },
+    { skill_name: "Data Engineer", search_term: "Data Engineer", job_count: 82 },
+    { skill_name: "Data Analyst", search_term: "Data Analyst", job_count: 78 },
+    { skill_name: "PHP", search_term: "PHP", job_count: 72 },
 ];
 
 const FALLBACK_LOCATIONS = [

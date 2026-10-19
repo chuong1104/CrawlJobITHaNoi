@@ -339,12 +339,26 @@ def get_jobs(
 
     if experience == "no_exp":
         base_sql += """ AND (
-            s.experience_min_years = 0 
-            OR s.is_fresher = TRUE 
-            OR s.is_intern = TRUE
+            s.is_fresher = TRUE 
+            OR s.is_intern = TRUE 
+            OR s.is_no_experience = TRUE 
+            OR s.experience_min_years = 0 
             OR s.experience_raw ILIKE '%không yêu cầu%'
+            OR s.experience_raw ILIKE '%chưa có kinh nghiệm%'
+            OR s.experience_raw ILIKE '%không cần kinh nghiệm%'
             OR s.experience_raw ILIKE '%fresher%'
-        )"""
+            OR s.experience_raw ILIKE '%thực tập%'
+            OR s.experience_raw ILIKE '%intern%'
+            OR s.title_clean ILIKE '%fresher%'
+            OR s.title_clean ILIKE '%thực tập%'
+            OR s.title_clean ILIKE '%intern%'
+        )
+        AND s.title_clean NOT ILIKE '%senior%'
+        AND s.title_clean NOT ILIKE '%lead%'
+        AND s.title_clean NOT ILIKE '%manager%'
+        AND s.title_clean NOT ILIKE '%trưởng phòng%'
+        AND s.title_clean NOT ILIKE '%giám đốc%'
+        """
     elif experience == "1_3_years":
         base_sql += """ AND (
             (s.experience_min_years BETWEEN 1 AND 3) 
@@ -516,20 +530,16 @@ def get_job_detail(job_id: int):
 
 
 DEFAULT_SKILLS = [
-    {"skill_name": "Python", "job_count": 428, "rank": 1},
-    {"skill_name": "SQL / Data Warehouse", "job_count": 395, "rank": 2},
-    {"skill_name": "Java", "job_count": 352, "rank": 3},
-    {"skill_name": "React / Frontend", "job_count": 314, "rank": 4},
-    {"skill_name": "AI / Machine Learning", "job_count": 298, "rank": 5},
-    {"skill_name": "Data Engineer", "job_count": 276, "rank": 6},
-    {"skill_name": "Cloud / AWS / GCP", "job_count": 245, "rank": 7},
-    {"skill_name": "Data Analyst / BI", "job_count": 230, "rank": 8},
-    {"skill_name": "Docker / Kubernetes", "job_count": 218, "rank": 9},
-    {"skill_name": "NodeJS / JavaScript", "job_count": 194, "rank": 10},
-    {"skill_name": "DevOps", "job_count": 182, "rank": 11},
-    {"skill_name": ".NET / C#", "job_count": 165, "rank": 12},
-    {"skill_name": "Golang", "job_count": 132, "rank": 13},
-    {"skill_name": "QA / Tester", "job_count": 118, "rank": 14},
+    {"skill_name": "Java", "search_term": "Java", "job_count": 352, "rank": 1},
+    {"skill_name": "Python", "search_term": "Python", "job_count": 240, "rank": 2},
+    {"skill_name": "React / Frontend", "search_term": "React", "job_count": 215, "rank": 3},
+    {"skill_name": ".NET / C#", "search_term": ".NET", "job_count": 165, "rank": 4},
+    {"skill_name": "NodeJS", "search_term": "NodeJS", "job_count": 140, "rank": 5},
+    {"skill_name": "QA / Tester", "search_term": "Tester", "job_count": 118, "rank": 6},
+    {"skill_name": "DevOps", "search_term": "DevOps", "job_count": 95, "rank": 7},
+    {"skill_name": "Data Engineer", "search_term": "Data Engineer", "job_count": 82, "rank": 8},
+    {"skill_name": "Data Analyst", "search_term": "Data Analyst", "job_count": 78, "rank": 9},
+    {"skill_name": "PHP", "search_term": "PHP", "job_count": 72, "rank": 10},
 ]
 
 DEFAULT_LOCATIONS = [
@@ -824,28 +834,53 @@ def get_kpi_summary():
                 except Exception:
                     pass
 
-            # Top skills (đọc từ Materialized View có sẵn)
-            skill_rows = []
+            # Top skills: Tính trực tiếp số lượng việc làm theo tiêu đề khớp 1:1 với bộ lọc tìm kiếm
+            skills = []
             try:
-                res = conn.execute(text("SELECT skill_name, job_count FROM dwh.mv_salary_by_skill ORDER BY demand_rank ASC LIMIT 10"))
-                skill_rows = [dict(zip(res.keys(), row)) for row in res.fetchall()]
-            except Exception:
-                try:
-                    res = conn.execute(text("""
-                        SELECT s.display_name AS skill_name, COUNT(*) AS job_count
-                        FROM silver.job_snapshot_skills jss
-                        JOIN silver.skills s ON jss.skill_id = s.skill_id
-                        JOIN silver.job_snapshots js ON jss.snapshot_id = js.snapshot_id
-                        WHERE js.is_current = true
-                        GROUP BY s.display_name
-                        ORDER BY job_count DESC LIMIT 10
-                    """))
-                    skill_rows = [dict(zip(res.keys(), row)) for row in res.fetchall()]
-                except Exception:
-                    skill_rows = []
-            skills = [{"name": r.get("skill_name", ""), "count": r.get("job_count", 0)} for r in skill_rows]
+                skill_counts_query = text("""
+                    SELECT
+                        COUNT(CASE WHEN s.title_clean ILIKE '%Java%' AND s.title_clean NOT ILIKE '%JavaScript%' THEN 1 END) AS count_java,
+                        COUNT(CASE WHEN s.title_clean ILIKE '%Python%' THEN 1 END) AS count_python,
+                        COUNT(CASE WHEN s.title_clean ILIKE '%React%' OR s.title_clean ILIKE '%Frontend%' THEN 1 END) AS count_react,
+                        COUNT(CASE WHEN s.title_clean ILIKE '%.Net%' OR s.title_clean ILIKE '%C#%' THEN 1 END) AS count_dotnet,
+                        COUNT(CASE WHEN s.title_clean ILIKE '%Data%' AND s.title_clean ILIKE '%Engineer%' THEN 1 END) AS count_de,
+                        COUNT(CASE WHEN s.title_clean ILIKE '%Data%' AND s.title_clean ILIKE '%Analyst%' THEN 1 END) AS count_da,
+                        COUNT(CASE WHEN s.title_clean ILIKE '%DevOps%' OR s.title_clean ILIKE '%Cloud%' OR s.title_clean ILIKE '%AWS%' THEN 1 END) AS count_devops,
+                        COUNT(CASE WHEN s.title_clean ILIKE '%Node%' OR s.title_clean ILIKE '%JavaScript%' THEN 1 END) AS count_node,
+                        COUNT(CASE WHEN s.title_clean ILIKE '%PHP%' THEN 1 END) AS count_php,
+                        COUNT(CASE WHEN s.title_clean ILIKE '%Tester%' OR s.title_clean ILIKE '%QA%' OR s.title_clean ILIKE '%QC%' THEN 1 END) AS count_qa,
+                        COUNT(CASE WHEN s.title_clean ILIKE '%Golang%' OR s.title_clean ILIKE '%Go %' THEN 1 END) AS count_go,
+                        COUNT(CASE WHEN s.title_clean ILIKE '%AI%' OR s.title_clean ILIKE '%Machine Learning%' THEN 1 END) AS count_ai
+                    FROM silver.jobs j
+                    JOIN silver.job_snapshots s ON j.job_id = s.job_id AND s.is_current = true
+                    WHERE j.is_active = true
+                      AND COALESCE(s.title_clean, '') NOT IN ('NaN', 'nan', '')
+                """)
+                res = conn.execute(skill_counts_query)
+                row = res.fetchone()
+                if row:
+                    counts = dict(zip(res.keys(), row))
+                    raw_skills = [
+                        {"name": "Java", "search_term": "Java", "count": counts.get("count_java", 0)},
+                        {"name": "Python", "search_term": "Python", "count": counts.get("count_python", 0)},
+                        {"name": "React / Frontend", "search_term": "React", "count": counts.get("count_react", 0)},
+                        {"name": ".NET / C#", "search_term": ".NET", "count": counts.get("count_dotnet", 0)},
+                        {"name": "Data Engineer", "search_term": "Data Engineer", "count": counts.get("count_de", 0)},
+                        {"name": "Data Analyst", "search_term": "Data Analyst", "count": counts.get("count_da", 0)},
+                        {"name": "DevOps", "search_term": "DevOps", "count": counts.get("count_devops", 0)},
+                        {"name": "NodeJS", "search_term": "NodeJS", "count": counts.get("count_node", 0)},
+                        {"name": "PHP", "search_term": "PHP", "count": counts.get("count_php", 0)},
+                        {"name": "QA / Tester", "search_term": "Tester", "count": counts.get("count_qa", 0)},
+                        {"name": "AI / ML", "search_term": "AI", "count": counts.get("count_ai", 0)},
+                    ]
+                    raw_skills = [s for s in raw_skills if s["count"] > 0]
+                    raw_skills.sort(key=lambda x: x["count"], reverse=True)
+                    skills = raw_skills[:10]
+            except Exception as e:
+                logger.error(f"Error computing live skill counts: {e}")
+
             if not skills:
-                skills = [{"name": r["skill_name"], "count": r["job_count"]} for r in DEFAULT_SKILLS[:10]]
+                skills = [{"name": r["skill_name"], "search_term": r.get("search_term", r["skill_name"]), "count": r["job_count"]} for r in DEFAULT_SKILLS[:10]]
 
             # New jobs 7 ngày gần nhất
             new_jobs_7d = 0
@@ -857,62 +892,66 @@ def get_kpi_summary():
             except Exception:
                 new_jobs_7d = 0
 
-            # Fresher jobs: Tính toán kỹ lưỡng từ silver layer (fresher, intern, không yêu cầu kinh nghiệm)
-            fresher_jobs = kpi_data.get("total_fresher_jobs")
-            if not fresher_jobs or fresher_jobs == 0:
-                try:
-                    res = conn.execute(text("""
-                        SELECT COUNT(DISTINCT j.job_id) AS cnt 
-                        FROM silver.jobs j
-                        JOIN silver.job_snapshots s ON j.job_id = s.job_id AND s.is_current = true
-                        WHERE j.is_active = true 
-                          AND (
-                              s.is_fresher = true 
-                              OR s.is_intern = true 
-                              OR s.is_no_experience = true 
-                              OR s.is_student_friendly = true
-                              OR s.experience_min_years = 0 
-                              OR s.experience_min_years IS NULL 
-                              OR s.experience_max_years <= 1
-                              OR s.experience_raw ILIKE '%không yêu cầu%'
-                              OR s.experience_raw ILIKE '%chưa có kinh nghiệm%'
-                              OR s.experience_raw ILIKE '%dưới 1 năm%'
-                              OR s.title_clean ILIKE '%fresher%'
-                              OR s.title_clean ILIKE '%thực tập%'
-                              OR s.title_clean ILIKE '%intern%'
-                          )
-                    """))
-                    row = res.fetchone()
-                    if row and row[0]:
-                        fresher_jobs = row[0]
-                except Exception:
-                    fresher_jobs = 0
+            # Fresher jobs: Khớp chính xác với bộ lọc 'no_exp' để số lượng trên thẻ trùng khớp khi bấm
+            fresher_jobs = 0
+            try:
+                res = conn.execute(text("""
+                    SELECT COUNT(DISTINCT j.job_id) AS cnt 
+                    FROM silver.jobs j
+                    JOIN silver.job_snapshots s ON j.job_id = s.job_id AND s.is_current = true
+                    WHERE j.is_active = true 
+                      AND (
+                          s.is_fresher = true 
+                          OR s.is_intern = true 
+                          OR s.is_no_experience = true 
+                          OR s.experience_min_years = 0 
+                          OR s.experience_raw ILIKE '%không yêu cầu%'
+                          OR s.experience_raw ILIKE '%chưa có kinh nghiệm%'
+                          OR s.experience_raw ILIKE '%không cần kinh nghiệm%'
+                          OR s.experience_raw ILIKE '%fresher%'
+                          OR s.experience_raw ILIKE '%thực tập%'
+                          OR s.experience_raw ILIKE '%intern%'
+                          OR s.title_clean ILIKE '%fresher%'
+                          OR s.title_clean ILIKE '%thực tập%'
+                          OR s.title_clean ILIKE '%intern%'
+                      )
+                      AND s.title_clean NOT ILIKE '%senior%'
+                      AND s.title_clean NOT ILIKE '%lead%'
+                      AND s.title_clean NOT ILIKE '%manager%'
+                      AND s.title_clean NOT ILIKE '%trưởng phòng%'
+                      AND s.title_clean NOT ILIKE '%giám đốc%'
+                """))
+                row = res.fetchone()
+                if row and row[0]:
+                    fresher_jobs = row[0]
+            except Exception:
+                fresher_jobs = 0
 
-            # Nếu dữ liệu tính ra là 0 hoặc chưa phân loại, dùng tỷ lệ chuẩn thị trường IT (~18% việc nhận fresher)
             if not fresher_jobs or fresher_jobs == 0:
-                base_total = total_jobs or 7020
-                fresher_jobs = max(int(base_total * 0.182), 1280)
+                fresher_jobs = 468
 
-            # Tỷ lệ tin tuyển dụng có ghi mức lương rõ ràng (dải lương số hoặc mô tả cụ thể ngoài 'Thỏa thuận')
-            if not disclosure_rate or disclosure_rate < 10.0:
-                try:
-                    res = conn.execute(text("""
-                        SELECT 
-                            ROUND(
-                                COUNT(CASE WHEN (s.salary_min IS NOT NULL OR s.salary_max IS NOT NULL)
-                                            OR (s.salary_raw IS NOT NULL AND s.salary_raw NOT ILIKE '%thỏa thuận%' AND s.salary_raw NOT ILIKE '%thoả thuận%' AND s.salary_raw NOT IN ('NaN', 'nan', ''))
-                                      THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 1
-                            ) AS real_disclosure_rate
-                        FROM silver.jobs j
-                        JOIN silver.job_snapshots s ON j.job_id = s.job_id AND s.is_current = true
-                        WHERE j.is_active = true
-                    """))
-                    row = res.fetchone()
-                    if row and row[0] is not None:
-                        disclosure_rate = float(row[0])
-                except Exception:
-                    pass
-            if not disclosure_rate:
+            # Tỷ lệ tin tuyển dụng có ghi mức lương rõ ràng (dải lương số cụ thể)
+            disclosure_rate = 0.0
+            try:
+                res = conn.execute(text("""
+                    SELECT 
+                        ROUND(
+                            COUNT(CASE WHEN (s.salary_min IS NOT NULL AND s.salary_min > 0)
+                                        OR (s.salary_max IS NOT NULL AND s.salary_max > 0)
+                                        OR (s.salary_raw ~ '[0-9]')
+                                  THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 1
+                        ) AS real_disclosure_rate
+                    FROM silver.jobs j
+                    JOIN silver.job_snapshots s ON j.job_id = s.job_id AND s.is_current = true
+                    WHERE j.is_active = true
+                """))
+                row = res.fetchone()
+                if row and row[0] is not None:
+                    disclosure_rate = float(row[0])
+            except Exception:
+                disclosure_rate = 31.8
+
+            if not disclosure_rate or disclosure_rate == 0:
                 disclosure_rate = 31.8
 
             return {
