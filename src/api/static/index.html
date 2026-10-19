@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>JobITVN - Việc làm IT tại Việt Nam</title>
     <meta name="description" content="Tổng hợp và thống kê tin tuyển dụng IT tại Việt Nam từ TopCV, LinkedIn, ITviec, VietnamWorks và các nguồn khác.">
-    <link rel="stylesheet" href="styles.css?v=13">
+    <link rel="stylesheet" href="styles.css?v=15">
     <!-- Chart.js nạp sẵn để hiển thị biểu đồ tức thì -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 </head>
@@ -26,40 +26,93 @@
         <!-- ===== Tab: Việc làm ===== -->
         <div id="dashboard-tab" class="tab-content active">
 
-            <h1 class="page-title">Việc làm IT tại Việt Nam</h1>
+            <!-- ===== Header & Thị trường tổng quan ===== -->
+            <div class="dashboard-hero">
+                <div class="dashboard-hero-main">
+                    <div class="hero-title-row">
+                        <h1 class="page-title">Việc làm IT tại Việt Nam</h1>
+                        <span class="live-status-pill">
+                            <span class="live-dot-pulse"></span> Cập nhật thời gian thực
+                        </span>
+                    </div>
+                    <p class="hero-subtitle">Tổng hợp & phân tích từ các nguồn tuyển dụng hàng đầu (TopCV, ITviec, VietnamWorks, LinkedIn)</p>
+                </div>
+                <div class="dashboard-hero-action">
+                    <a href="#" class="btn-analytics-nav" id="goto-analytics-badge" title="Khám phá biểu đồ thống kê thị trường chi tiết">
+                        <span class="analytics-nav-icon">📊</span>
+                        <span>Xem biểu đồ thị trường</span>
+                        <span class="analytics-nav-arrow">&rarr;</span>
+                    </a>
+                </div>
+            </div>
 
-            <section class="stats" aria-label="Số liệu tổng quan">
-                <div class="stat">
-                    <div class="stat-label">Việc đang mở</div>
-                    <div class="stat-value" id="stat-total-jobs">…</div>
-                    <div class="stat-note"><span id="stat-new-jobs-sub">+0</span> trong 7 ngày qua</div>
+            <!-- ===== Thẻ chỉ số thị trường (5 KPI Cards) ===== -->
+            <section class="kpi-deck" aria-label="Số liệu tổng quan thị trường IT">
+                <div class="kpi-tile tile-jobs">
+                    <div class="kpi-tile-header">
+                        <span class="kpi-tile-title">Việc đang mở</span>
+                        <span class="kpi-icon-bubble bubble-jobs">💼</span>
+                    </div>
+                    <div class="kpi-tile-num" id="stat-total-jobs">7.020</div>
+                    <div class="kpi-tile-meta">
+                        <span class="meta-tag-growth" id="stat-new-jobs-sub">+1.684 mới</span>
+                        <span class="meta-desc">trong 7 ngày qua</span>
+                    </div>
                 </div>
-                <div class="stat">
-                    <div class="stat-label">Lương trung bình</div>
-                    <div class="stat-value" id="stat-avg-salary">…</div>
-                    <div class="stat-note">Trung vị: <span id="stat-median-salary">--</span> triệu</div>
+
+                <div class="kpi-tile tile-salary">
+                    <div class="kpi-tile-header">
+                        <span class="kpi-tile-title">Lương trung bình</span>
+                        <span class="kpi-icon-bubble bubble-salary">💰</span>
+                    </div>
+                    <div class="kpi-tile-num num-salary" id="stat-avg-salary">23.4 Tr</div>
+                    <div class="kpi-tile-meta">
+                        <span class="meta-desc">Trung vị: <strong id="stat-median-salary">20.0</strong> triệu / tháng</span>
+                    </div>
                 </div>
-                <div class="stat">
-                    <div class="stat-label">Công ty tuyển</div>
-                    <div class="stat-value" id="stat-total-companies">…</div>
-                    <div class="stat-note">Đang có vị trí mở</div>
+
+                <div class="kpi-tile tile-companies">
+                    <div class="kpi-tile-header">
+                        <span class="kpi-tile-title">Công ty tuyển</span>
+                        <span class="kpi-icon-bubble bubble-companies">🏢</span>
+                    </div>
+                    <div class="kpi-tile-num" id="stat-total-companies">2.995</div>
+                    <div class="kpi-tile-meta">
+                        <span class="meta-desc">Doanh nghiệp đang mở tuyển</span>
+                    </div>
                 </div>
-                <div class="stat">
-                    <div class="stat-label">Có ghi lương</div>
-                    <div class="stat-value" id="stat-disclosure-rate">…</div>
-                    <div class="stat-note">Trên tổng số tin</div>
+
+                <div class="kpi-tile tile-disclosure">
+                    <div class="kpi-tile-header">
+                        <span class="kpi-tile-title">Có ghi mức lương</span>
+                        <span class="kpi-icon-bubble bubble-disclosure">🏷️</span>
+                    </div>
+                    <div class="kpi-tile-num" id="stat-disclosure-rate">31.8%</div>
+                    <div class="kpi-tile-meta">
+                        <span class="meta-desc">Tin có dải lương công khai</span>
+                    </div>
                 </div>
-                <div class="stat">
-                    <div class="stat-label">Nhận fresher</div>
-                    <div class="stat-value" id="stat-fresher-jobs">…</div>
-                    <div class="stat-note">Không yêu cầu kinh nghiệm</div>
+
+                <div class="kpi-tile tile-fresher">
+                    <div class="kpi-tile-header">
+                        <span class="kpi-tile-title">Nhận Fresher / Thực tập</span>
+                        <span class="kpi-icon-bubble bubble-fresher">🎓</span>
+                    </div>
+                    <div class="kpi-tile-num num-fresher" id="stat-fresher-jobs">1.280</div>
+                    <div class="kpi-tile-meta">
+                        <span class="meta-desc">Không yêu cầu kinh nghiệm</span>
+                    </div>
                 </div>
             </section>
 
-            <section class="skills-line">
-                <span class="skills-title">Kỹ năng nhiều nhất:</span>
-                <span id="stat-top-skills" class="tags"></span>
-                <a href="#" class="view-analytics-badge" id="goto-analytics-badge" title="Xem biểu đồ phân tích thị trường">📊 Xem biểu đồ thị trường &rarr;</a>
+            <!-- ===== Kỹ năng được yêu cầu nhiều nhất (Interactive Filter Chips) ===== -->
+            <section class="skills-bar" aria-label="Kỹ năng được yêu cầu nhiều">
+                <div class="skills-bar-lead">
+                    <span class="skills-lead-icon">🔥</span>
+                    <span class="skills-lead-text">Kỹ năng nhiều nhất:</span>
+                    <span class="skills-lead-hint">Nhấp để lọc</span>
+                </div>
+                <div id="stat-top-skills" class="skills-chips-list"></div>
             </section>
 
             <section class="filters" id="filter-section">
@@ -243,6 +296,6 @@
 
     <footer class="foot wrap">Dữ liệu thu thập tự động từ các trang tuyển dụng.</footer>
 
-    <script src="app.js?v=14"></script>
+    <script src="app.js?v=15"></script>
 </body>
 </html>

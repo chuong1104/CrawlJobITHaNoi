@@ -48,26 +48,258 @@ button, input, select { font: inherit; color: inherit; }
 .nav-link:hover { color: var(--text); }
 .nav-link.active { color: var(--accent); border-bottom-color: var(--accent); }
 
-.page-title { font-size: 1.25rem; font-weight: 700; margin: 18px 0 12px; color: var(--text); }
+/* ---------- Dashboard Hero & Title ---------- */
+.dashboard-hero {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 18px 0 14px;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+.dashboard-hero-main {
+    flex: 1;
+    min-width: 280px;
+}
+.hero-title-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.dashboard-hero .page-title {
+    margin: 0;
+    font-size: 1.35rem;
+    font-weight: 800;
+    color: var(--text);
+    letter-spacing: -0.4px;
+}
+.hero-subtitle {
+    margin: 4px 0 0;
+    font-size: 0.82rem;
+    color: var(--muted);
+}
 
-/* ---------- Số liệu tổng quan (Stats) ---------- */
-.stats {
+/* Pulsing live badge */
+.live-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
+    border-radius: 20px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #047857;
+}
+.live-dot-pulse {
+    width: 7px;
+    height: 7px;
+    background: #10b981;
+    border-radius: 50%;
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+    animation: livePulse 2s infinite cubic-bezier(0.4, 0, 0.6, 1);
+}
+@keyframes livePulse {
+    0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+    70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+    100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+/* Analytics navigation button */
+.btn-analytics-nav {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: linear-gradient(135deg, #1e5ba3 0%, #174a85 100%);
+    color: #ffffff !important;
+    font-size: 0.84rem;
+    font-weight: 600;
+    border-radius: 10px;
+    text-decoration: none;
+    box-shadow: 0 2px 8px rgba(30, 91, 163, 0.25);
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    white-space: nowrap;
+}
+.btn-analytics-nav:hover {
+    background: linear-gradient(135deg, #2563eb 0%, #1e5ba3 100%);
+    box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35);
+    transform: translateY(-1px);
+}
+.btn-analytics-nav:hover .analytics-nav-arrow {
+    transform: translateX(3px);
+}
+.analytics-nav-arrow {
+    transition: transform 0.2s ease;
+}
+
+/* ---------- 5 KPI Tiles Deck ---------- */
+.kpi-deck {
     display: grid;
     grid-template-columns: repeat(5, 1fr);
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow-sm);
-    overflow: hidden;
+    gap: 12px;
+    margin-bottom: 14px;
 }
-.stat { padding: 10px 14px; border-right: 1px solid var(--line); }
-.stat:last-child { border-right: 0; }
-.stat-label { font-size: 0.78rem; font-weight: 500; color: var(--muted); }
-.stat-value { font-size: 1.35rem; font-weight: 700; color: var(--text); line-height: 1.25; margin: 2px 0; }
-.stat-note { font-size: 0.75rem; color: var(--muted); }
+.kpi-tile {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 14px 16px;
+    position: relative;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.02);
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+.kpi-tile:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 18px -2px rgba(15, 23, 42, 0.08);
+    border-color: #cbd5e1;
+}
 
-.skills-line { margin: 10px 0 14px; font-size: 0.85rem; display: flex; align-items: center; gap: 6px; }
-.skills-title { color: var(--muted); font-weight: 500; white-space: nowrap; }
+/* Color themed borders / accents */
+.tile-jobs { border-top: 3px solid #2563eb; }
+.tile-salary { border-top: 3px solid #059669; }
+.tile-companies { border-top: 3px solid #7c3aed; }
+.tile-disclosure { border-top: 3px solid #d97706; }
+.tile-fresher { border-top: 3px solid #0284c7; }
+
+.kpi-tile-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+.kpi-tile-title {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+.kpi-icon-bubble {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.88rem;
+}
+.bubble-jobs { background: #eff6ff; }
+.bubble-salary { background: #ecfdf5; }
+.bubble-companies { background: #faf5ff; }
+.bubble-disclosure { background: #fffbeb; }
+.bubble-fresher { background: #f0f9ff; }
+
+.kpi-tile-num {
+    font-size: 1.6rem;
+    font-weight: 800;
+    color: #0f172a;
+    line-height: 1.2;
+    margin: 4px 0 6px;
+    letter-spacing: -0.5px;
+}
+.num-salary { color: #047857; }
+.num-fresher { color: #0369a1; }
+
+.kpi-tile-meta {
+    font-size: 0.75rem;
+    color: #64748b;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.meta-tag-growth {
+    background: #dcfce7;
+    color: #15803d;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.72rem;
+}
+.meta-desc strong {
+    color: #334155;
+    font-weight: 600;
+}
+
+/* ---------- Skills Strip (Horizontal interactive chips) ---------- */
+.skills-bar {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 10px 14px;
+    margin-bottom: 14px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.skills-bar-lead {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: #1e293b;
+    white-space: nowrap;
+}
+.skills-lead-icon {
+    font-size: 0.95rem;
+}
+.skills-lead-hint {
+    font-size: 0.72rem;
+    font-weight: 400;
+    color: #94a3b8;
+    background: #f1f5f9;
+    padding: 1px 6px;
+    border-radius: 4px;
+}
+.skills-chips-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    flex: 1;
+}
+.skill-chip-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 18px;
+    font-size: 0.78rem;
+    color: #334155;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.skill-chip-btn:hover {
+    background: #eff6ff;
+    border-color: #93c5fd;
+    color: #1d4ed8;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 5px rgba(37, 99, 235, 0.12);
+}
+.chip-label {
+    font-weight: 500;
+}
+.chip-badge {
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    color: #1e5ba3;
+    font-weight: 700;
+    font-size: 0.7rem;
+    padding: 0 5px;
+    border-radius: 10px;
+}
+
+/* Fallback tag styles */
 .tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .tag {
     display: inline-flex;
@@ -591,18 +823,25 @@ mark { background: #fef08a; color: inherit; padding: 0 2px; border-radius: 2px; 
 .foot { padding: 24px 16px; color: var(--muted); font-size: 0.82rem; }
 
 /* ---------- Màn hình vừa / nhỏ ---------- */
+@media (max-width: 1040px) {
+    .kpi-deck { grid-template-columns: repeat(3, 1fr); }
+}
 @media (max-width: 960px) {
     .columns { grid-template-columns: 1fr; }
     .detail-col { position: static; max-height: none; }
-    .stats { grid-template-columns: repeat(2, 1fr); }
-    .stat { border-bottom: 1px solid var(--line); }
+    .kpi-deck { grid-template-columns: repeat(2, 1fr); }
+    .kpi-deck .kpi-tile:last-child { grid-column: span 2; }
     .chart-row { grid-template-columns: 1fr; }
+    .dashboard-hero { flex-direction: column; align-items: flex-start; gap: 12px; }
 }
 @media (max-width: 600px) {
+    .kpi-deck { grid-template-columns: 1fr; }
+    .kpi-deck .kpi-tile:last-child { grid-column: span 1; }
     .filter-grid { grid-template-columns: 1fr 1fr; }
     .search-row { flex-wrap: wrap; }
     .search-row input { flex-basis: 100%; }
     .detail-grid { grid-template-columns: repeat(2, 1fr); }
+    .skills-bar { flex-direction: column; align-items: flex-start; }
 }
 
 /* ---------- Desktop: cuộn trang tự nhiên, cột chi tiết dính theo màn hình ---------- */
