@@ -11,6 +11,7 @@ const salaryChart = { inst: null };
 const locationChart = { inst: null };
 const skillsChart = { inst: null };
 const companyChart = { inst: null };
+const experienceChart = { inst: null };
 
 // Cache trong bộ nhớ (60s) để chuyển trang đã xem không phải gọi lại API
 const ramCache = new Map();
@@ -239,26 +240,26 @@ function goPage(p) {
 // ---------- Số liệu tổng quan ----------
 function renderKPIs(d) {
     if (!d) return;
-    setText("stat-total-jobs", fmt(d.total_jobs || 7020));
-    setText("stat-new-jobs-sub", "+" + fmt(d.new_jobs_7d || 1684) + " mới");
+    setText("stat-total-jobs", d.total_jobs !== undefined && d.total_jobs !== null ? fmt(d.total_jobs) : "—");
+    setText("stat-new-jobs-sub", d.new_jobs_7d !== undefined && d.new_jobs_7d !== null ? ("+" + fmt(d.new_jobs_7d) + " mới") : "");
 
     let avg = d.average_salary_million;
-    if (avg && avg !== "N/A") {
+    if (avg && avg !== "N/A" && avg !== "Chưa có dữ liệu") {
         if (!String(avg).includes("Tr") && !String(avg).includes("triệu")) {
             avg = avg + " Tr";
         }
         setText("stat-avg-salary", avg);
     } else {
-        setText("stat-avg-salary", "23.4 Tr");
+        setText("stat-avg-salary", "—");
     }
 
-    setText("stat-median-salary", d.median_salary && d.median_salary !== "0" ? d.median_salary : "20.0");
-    setText("stat-total-companies", fmt(d.total_companies || 2995));
+    setText("stat-median-salary", d.median_salary && d.median_salary !== "0" ? d.median_salary : "—");
+    setText("stat-total-companies", d.total_companies !== undefined && d.total_companies !== null ? fmt(d.total_companies) : "—");
 
     const rate = parseFloat(d.disclosure_rate || 0);
-    setText("stat-disclosure-rate", (rate > 0 ? rate.toFixed(1) : "31.8") + "%");
+    setText("stat-disclosure-rate", (rate > 0 ? rate.toFixed(1) : "0.0") + "%");
 
-    const fresher = d.fresher_jobs || 468;
+    const fresher = d.fresher_jobs !== undefined && d.fresher_jobs !== null ? d.fresher_jobs : 0;
     setText("stat-fresher-jobs", fmt(fresher));
 
     // Thẻ việc làm đang mở: Bấm vào để xóa mọi bộ lọc và xem toàn bộ việc
@@ -636,7 +637,7 @@ async function loadAnalytics(force = false) {
         await ensureChartLib();
     } catch (e) {
         console.error("Lỗi tải thư viện Chart.js:", e);
-        ["salaryChart", "skillsChart", "locationChart", "companyChart"].forEach(id => {
+        ["salaryChart", "skillsChart", "locationChart", "experienceChart", "companyChart"].forEach(id => {
             setChartStatus(id, '<p>Không thể tải thư viện biểu đồ (Chart.js). Vui lòng kiểm tra kết nối mạng.</p>');
         });
         return;
@@ -653,7 +654,7 @@ async function loadAnalytics(force = false) {
     Chart.defaults.font.size = 12;
 
     // Hiển thị trạng thái đang tải
-    ["salaryChart", "skillsChart", "locationChart", "companyChart"].forEach(id => {
+    ["salaryChart", "skillsChart", "locationChart", "experienceChart", "companyChart"].forEach(id => {
         setChartStatus(id, '<div class="chart-spinner"></div><div class="chart-status-text">Đang tải dữ liệu biểu đồ...</div>');
     });
 
@@ -661,61 +662,11 @@ async function loadAnalytics(force = false) {
         drawSalary(),
         drawSkills(),
         drawLocation(),
+        drawExperience(),
         drawCompany(),
     ]);
     isAnalyticsLoaded = true;
 }
-
-// Dữ liệu dự phòng chuẩn để không bao giờ bị trắng màn hình
-const FALLBACK_SALARIES = [
-    { skill_name: "AI / ML", avg_salary_min_vnd: 32000000, max_salary_max_vnd: 65000000 },
-    { skill_name: "Data Engineer", avg_salary_min_vnd: 28000000, max_salary_max_vnd: 55000000 },
-    { skill_name: "Cloud / AWS", avg_salary_min_vnd: 27000000, max_salary_max_vnd: 52000000 },
-    { skill_name: "Golang", avg_salary_min_vnd: 26000000, max_salary_max_vnd: 50000000 },
-    { skill_name: "DevOps", avg_salary_min_vnd: 25000000, max_salary_max_vnd: 48000000 },
-    { skill_name: "Python", avg_salary_min_vnd: 24000000, max_salary_max_vnd: 45000000 },
-    { skill_name: "Backend", avg_salary_min_vnd: 23000000, max_salary_max_vnd: 45000000 },
-    { skill_name: "Java", avg_salary_min_vnd: 22000000, max_salary_max_vnd: 42000000 },
-    { skill_name: "React", avg_salary_min_vnd: 21000000, max_salary_max_vnd: 40000000 },
-    { skill_name: "Data Analyst", avg_salary_min_vnd: 19000000, max_salary_max_vnd: 36000000 },
-    { skill_name: "Fullstack", avg_salary_min_vnd: 22000000, max_salary_max_vnd: 42000000 },
-    { skill_name: "QA / Tester", avg_salary_min_vnd: 16000000, max_salary_max_vnd: 30000000 },
-];
-
-const FALLBACK_SKILLS = [
-    { skill_name: "Java", search_term: "Java", job_count: 352 },
-    { skill_name: "Python", search_term: "Python", job_count: 240 },
-    { skill_name: "React / Frontend", search_term: "React", job_count: 215 },
-    { skill_name: ".NET / C#", search_term: ".NET", job_count: 165 },
-    { skill_name: "NodeJS", search_term: "NodeJS", job_count: 140 },
-    { skill_name: "QA / Tester", search_term: "Tester", job_count: 118 },
-    { skill_name: "DevOps", search_term: "DevOps", job_count: 95 },
-    { skill_name: "Data Engineer", search_term: "Data Engineer", job_count: 82 },
-    { skill_name: "Data Analyst", search_term: "Data Analyst", job_count: 78 },
-    { skill_name: "PHP", search_term: "PHP", job_count: 72 },
-];
-
-const FALLBACK_LOCATIONS = [
-    { location_name: "Hà Nội", job_count: 685 },
-    { location_name: "Hồ Chí Minh", job_count: 482 },
-    { location_name: "Đà Nẵng", job_count: 118 },
-    { location_name: "Remote", job_count: 76 },
-    { location_name: "Bình Dương", job_count: 34 },
-    { location_name: "Hải Phòng", job_count: 22 },
-];
-
-const FALLBACK_COMPANIES = [
-    { company_name: "FPT Software", active_job_count: 45 },
-    { company_name: "Viettel Group", active_job_count: 38 },
-    { company_name: "VNG Corporation", active_job_count: 31 },
-    { company_name: "Techcombank", active_job_count: 27 },
-    { company_name: "MB Bank", active_job_count: 24 },
-    { company_name: "Shopee Vietnam", active_job_count: 21 },
-    { company_name: "MoMo", active_job_count: 18 },
-    { company_name: "KMS Technology", active_job_count: 16 },
-    { company_name: "One Mount Group", active_job_count: 15 },
-    { company_name: "VNPT-IT", active_job_count: 14 },
-];
 
 async function drawSalary() {
     const canvasId = "salaryChart";
@@ -724,14 +675,19 @@ async function drawSalary() {
         const res = await fetch(API_URL + "/stats/salary-by-skill?top_n=15");
         if (res.ok) {
             const raw = await res.json();
-            data = Array.isArray(raw) ? raw : (Array.isArray(raw.data) ? raw.data : []);
+            data = Array.isArray(raw.data) ? raw.data : (Array.isArray(raw) ? raw : []);
         }
     } catch (err) {
         console.error("Salary chart fetch error:", err);
     }
 
-    if (!data.length) {
-        data = FALLBACK_SALARIES;
+    if (!data || !data.length) {
+        setChartStatus(canvasId, '<div class="chart-status-text">Chưa có dữ liệu thống kê từ hệ thống.</div>');
+        if (salaryChart.inst) {
+            salaryChart.inst.destroy();
+            salaryChart.inst = null;
+        }
+        return;
     }
 
     setChartStatus(canvasId, null);
@@ -802,8 +758,13 @@ async function drawSkills() {
         console.error("Skills chart fetch error:", err);
     }
 
-    if (!data.length) {
-        data = FALLBACK_SKILLS;
+    if (!data || !data.length) {
+        setChartStatus(canvasId, '<div class="chart-status-text">Chưa có dữ liệu thống kê từ hệ thống.</div>');
+        if (skillsChart.inst) {
+            skillsChart.inst.destroy();
+            skillsChart.inst = null;
+        }
+        return;
     }
 
     setChartStatus(canvasId, null);
@@ -853,8 +814,13 @@ async function drawLocation() {
         console.error("Location chart fetch error:", err);
     }
 
-    if (!data.length) {
-        data = FALLBACK_LOCATIONS;
+    if (!data || !data.length) {
+        setChartStatus(canvasId, '<div class="chart-status-text">Chưa có dữ liệu thống kê từ hệ thống.</div>');
+        if (locationChart.inst) {
+            locationChart.inst.destroy();
+            locationChart.inst = null;
+        }
+        return;
     }
 
     setChartStatus(canvasId, null);
@@ -886,6 +852,83 @@ async function drawLocation() {
     });
 }
 
+async function drawExperience() {
+    const canvasId = "experienceChart";
+    let data = [];
+    try {
+        const res = await fetch(API_URL + "/stats/salary-by-experience");
+        if (res.ok) {
+            const raw = await res.json();
+            data = Array.isArray(raw.data) ? raw.data : (Array.isArray(raw) ? raw : []);
+        }
+    } catch (err) {
+        console.error("Experience chart fetch error:", err);
+    }
+
+    if (!data || !data.length) {
+        setChartStatus(canvasId, '<div class="chart-status-text">Chưa có dữ liệu thống kê từ hệ thống.</div>');
+        if (experienceChart.inst) {
+            experienceChart.inst.destroy();
+            experienceChart.inst = null;
+        }
+        return;
+    }
+
+    setChartStatus(canvasId, null);
+    if (experienceChart.inst) experienceChart.inst.destroy();
+
+    const labels = data.map(d => d.experience_band);
+    const minSalaries = data.map(d => {
+        const v = parseFloat(d.avg_salary_min_vnd || d.min_salary_vnd || 0);
+        return v > 0 ? +(v / 1e6).toFixed(1) : 0;
+    });
+    const maxSalaries = data.map(d => {
+        const v = parseFloat(d.avg_salary_max_vnd || d.max_salary_vnd || 0);
+        return v > 0 ? +(v / 1e6).toFixed(1) : 0;
+    });
+
+    experienceChart.inst = new Chart($(canvasId).getContext("2d"), {
+        type: "bar",
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: "Lương tối thiểu TB (triệu)",
+                    data: minSalaries,
+                    backgroundColor: "#1e5ba3",
+                    borderRadius: 4,
+                },
+                {
+                    label: "Lương tối đa TB (triệu)",
+                    data: maxSalaries,
+                    backgroundColor: "#93c5fd",
+                    borderRadius: 4,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        label: c => " " + c.dataset.label + ": " + c.parsed.y + " triệu VNĐ"
+                    }
+                },
+                legend: { position: "top" }
+            },
+            scales: {
+                x: { grid: GRID, ticks: { maxRotation: 25 } },
+                y: {
+                    beginAtZero: true,
+                    grid: GRID,
+                    title: { display: true, text: "Triệu VNĐ / tháng" }
+                }
+            },
+        },
+    });
+}
+
 async function drawCompany() {
     const canvasId = "companyChart";
     let data = [];
@@ -899,8 +942,13 @@ async function drawCompany() {
         console.error("Company chart fetch error:", err);
     }
 
-    if (!data.length) {
-        data = FALLBACK_COMPANIES;
+    if (!data || !data.length) {
+        setChartStatus(canvasId, '<div class="chart-status-text">Chưa có dữ liệu thống kê từ hệ thống.</div>');
+        if (companyChart.inst) {
+            companyChart.inst.destroy();
+            companyChart.inst = null;
+        }
+        return;
     }
 
     setChartStatus(canvasId, null);
@@ -939,3 +987,4 @@ async function drawCompany() {
         },
     });
 }
+
